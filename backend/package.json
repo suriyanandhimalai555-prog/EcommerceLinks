@@ -1,0 +1,48 @@
+{
+  "name": "avg-backend",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/api/server.ts",
+    "migrate": "tsx db/migrate.ts",
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "topics": "tsx scripts/createTopics.ts",
+    "seed": "tsx scripts/seedRoot.ts",
+    "simulate": "tsx scripts/simulate.ts",
+    "worker:outbox": "tsx src/workers/outboxRelay.ts",
+    "worker:fanout": "tsx src/workers/fanout.ts",
+    "worker:counter": "tsx src/workers/counterPair.ts",
+    "worker:qualification": "tsx src/workers/qualification.ts",
+    "worker:ledger": "tsx src/workers/ledger.ts",
+    "worker:rank": "tsx src/workers/rank.ts",
+    "worker:cutoff": "tsx src/workers/cutoff.ts",
+    "worker:payout": "tsx src/workers/payout.ts",
+    "worker:reconciler": "tsx src/workers/reconciler.ts"
+  },
+  "dependencies": {
+    "@fastify/cors": "^9.0.0",
+    "@fastify/jwt": "^8.0.1",
+    "argon2": "^0.40.3",
+    "big.js": "^6.2.1",
+    "dotenv": "^16.4.5",
+    "fastify": "^4.28.1",
+    "ioredis": "^5.4.1",
+    "kafkajs": "^2.2.4",
+    "luxon": "^3.5.0",
+    "pg": "^8.12.0",
+    "uuid": "^10.0.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/big.js": "^6.2.2",
+    "@types/luxon": "^3.4.2",
+    "@types/node": "^22.0.0",
+    "@types/pg": "^8.11.6",
+    "@types/uuid": "^10.0.0",
+    "tsx": "^4.17.0",
+    "typescript": "^5.5.4",
+    "vitest": "^2.0.5"
+  }
+}

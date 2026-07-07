@@ -1,0 +1,86 @@
+{
+  "nav": {
+    "dashboard": "Dashboard",
+    "profile": "My Profile",
+    "network": "My Network",
+    "buyProduct": "Buy Product",
+    "pairMatch": "Pair Match",
+    "wallet": "Wallet",
+    "payoutHistory": "Payout History",
+    "directMembers": "Direct Members",
+    "incomeReport": "Income Report",
+    "genealogy": "Genealogy Tree",
+    "rankRewards": "Rank & Rewards",
+    "support": "Support Ticket",
+    "notifications": "Notifications",
+    "settings": "Settings",
+    "logout": "Logout"
+  },
+  "counters": {
+    "active": "Active",
+    "qualified": "Qualified for Rank",
+    "qualifiedTooltip": "Members count toward your rank only after their own team starts building."
+  },
+  "ranks": {
+    "l1": "Starter Achiever",
+    "l2": "International Achiever",
+    "l3": "Bike Achiever",
+    "l4": "Car Achiever",
+    "l5": "Gold Achiever",
+    "l6": "10L Gold Achiever",
+    "l7": "30L Gold Achiever",
+    "l8": "Villa Achiever",
+    "l9": "Crorepati Gold Achiever",
+    "l10": "Dubai Villa Achiever",
+    "l11": "Global Luxury Achiever",
+    "l12": "Royal Achiever",
+    "fulfillmentNote": "Rewards are verified and fulfilled by AVG admin."
+  },
+  "dashboard": {
+    "totalIncome": "Total Income",
+    "pairMatchIncome": "Pair Match Income",
+    "walletBalance": "Wallet Balance",
+    "deferred": "Deferred Balance",
+    "networkOverview": "My Network Overview",
+    "pairSummary": "Pair Match Summary",
+    "recentTransactions": "Recent Transactions",
+    "rankStatus": "Rank & Status",
+    "referEarn": "Refer & Earn"
+  },
+  "auth": {
+    "sessionExpired": "Your session has expired. Please log in again.",
+    "login": "Sign In",
+    "register": "Create Account",
+    "phone": "Phone Number",
+    "password": "Password",
+    "sponsorCode": "Sponsor Code",
+    "preferredLeg": "Preferred Leg",
+    "name": "Full Name",
+    "email": "Email (optional)",
+    "confirmPassword": "Confirm Password",
+    "termsAccept": "I agree to the Terms & Conditions",
+    "leftLeg": "Left Leg",
+    "rightLeg": "Right Leg"
+  },
+  "buy": {
+    "verified": "Verified",
+    "pending": "Pending",
+    "selectProduct": "Select a Product",
+    "purchaseSummary": "Purchase Summary",
+    "basePrice": "Base Price",
+    "gst": "GST (18%)",
+    "total": "Total Amount",
+    "buyNow": "Buy Now",
+    "simulatePay": "Simulate Payment (Dev)",
+    "alreadyActive": "Additional purchase — does not create a second activation."
+  },
+  "payout": {
+    "tdsNote": "5% TDS deducted as per Sec 194H"
+  },
+  "wallet": {
+    "requestWithdrawal": "Request Withdrawal",
+    "minWithdrawal": "Minimum withdrawal is ₹500.",
+    "capNote": "Weekly cap: ₹1,00,000. Excess is deferred to next week.",
+    "deferred": "Deferred (carried to next week)"
+  }
+}

@@ -1,0 +1,70 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: 'Inter', system-ui, sans-serif;
+  background-color: #F4F6FB;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#root {
+  width: 100%;
+  min-height: 100vh;
+}
+
+.scrollbar-hide::-webkit-scrollbar { display: none; }
+.scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+
+.scrollbar-thin::-webkit-scrollbar { width: 4px; }
+.scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+.scrollbar-thin::-webkit-scrollbar-thumb { background: #E5E7EB; border-radius: 4px; }
+.scrollbar-thin::-webkit-scrollbar-thumb:hover { background: #D1D5DB; }
+
+@layer components {
+  .avg-card {
+    @apply bg-white rounded-xl shadow-sm border border-surface-line;
+  }
+  .avg-btn-primary {
+    @apply bg-primary hover:bg-primary-600 text-white font-semibold rounded-lg px-4 py-2.5 text-sm transition-all duration-200 cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .avg-btn-secondary {
+    @apply bg-primary-50 hover:bg-primary-50/80 text-primary font-semibold rounded-lg px-4 py-2.5 text-sm transition-all duration-200 cursor-pointer flex items-center justify-center gap-2;
+  }
+  .avg-badge-success {
+    @apply inline-flex items-center gap-1 text-xs font-semibold bg-success-50 text-success rounded-full px-2.5 py-0.5;
+  }
+  .avg-badge-warning {
+    @apply inline-flex items-center gap-1 text-xs font-semibold bg-warning-50 text-warning rounded-full px-2.5 py-0.5;
+  }
+  .avg-badge-danger {
+    @apply inline-flex items-center gap-1 text-xs font-semibold bg-red-50 text-danger rounded-full px-2.5 py-0.5;
+  }
+  .avg-badge-neutral {
+    @apply inline-flex items-center gap-1 text-xs font-semibold bg-gray-100 text-ink-muted rounded-full px-2.5 py-0.5;
+  }
+  .avg-badge-primary {
+    @apply inline-flex items-center gap-1 text-xs font-semibold bg-primary-50 text-primary rounded-full px-2.5 py-0.5;
+  }
+}
+
+/* Tree SVG connectors */
+.tree-svg-connector {
+  fill: none;
+  stroke: #E5E7EB;
+  stroke-width: 2;
+}
+
+/* Gradient text */
+.gradient-text {
+  background: linear-gradient(135deg, #2447D8 0%, #7C3AED 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}

@@ -1,0 +1,41 @@
+import { useState } from 'react'
+import { Outlet, useLocation } from 'react-router-dom'
+import Sidebar from './Sidebar'
+import Topbar from './Topbar'
+
+const breadcrumbMap: Record<string, string> = {
+  '/': 'Dashboard',
+  '/profile': 'My Profile',
+  '/network': 'My Network',
+  '/buy': 'Buy Product',
+  '/pairs': 'Pair Match',
+  '/wallet': 'Wallet',
+  '/payouts': 'Payout History',
+  '/directs': 'Direct Members',
+  '/income': 'Income Report',
+  '/genealogy': 'Genealogy Tree',
+  '/ranks': 'Rank & Rewards',
+  '/support': 'Support Ticket',
+  '/notifications': 'Notifications',
+  '/settings': 'Settings',
+}
+
+export default function AppShell() {
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const location = useLocation()
+  const breadcrumb = breadcrumbMap[location.pathname]
+
+  return (
+    <div className="flex h-screen overflow-hidden bg-surface-page">
+      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden lg:ml-0">
+        <Topbar onMenuClick={() => setSidebarOpen(true)} breadcrumb={breadcrumb} />
+        <main className="flex-1 overflow-y-auto overflow-x-hidden scrollbar-thin">
+          <div className="w-full max-w-[1400px] mx-auto px-3 py-4 sm:px-4 lg:p-6 animate-fade-in">
+            <Outlet />
+          </div>
+        </main>
+      </div>
+    </div>
+  )
+}
