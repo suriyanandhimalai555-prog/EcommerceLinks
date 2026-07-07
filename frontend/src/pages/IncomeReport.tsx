@@ -2,7 +2,9 @@ import { useState, useMemo } from 'react'
 import { Download } from 'lucide-react'
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { formatINR, formatDate } from '../lib/format'
-import { mockDashboard, mockLedger } from '../mocks/data'
+import { useQuery } from '@tanstack/react-query'
+import api from '../lib/api'
+import type { Dashboard, LedgerRes } from '../types/api'
 
 const PRESETS = [7, 30, 90] as const
 type Preset = typeof PRESETS[number]
@@ -10,8 +12,11 @@ type Preset = typeof PRESETS[number]
 export default function IncomeReport() {
   const [preset, setPreset] = useState<Preset>(30)
 
+  const { data: dash } = useQuery<Dashboard>({ queryKey: ['dashboard'], queryFn: () => api.get('/dashboard').then((r) => r.data) })
+  const { data: ledger } = useQuery<LedgerRes>({ queryKey: ['ledger-report'], queryFn: () => api.get('/wallet/ledger?limit=100').then((r) => r.data) })
+
   const chartData = useMemo(() => {
-    const series = mockDashboard.incomeSeries
+    const series = (dash?.incomeSeries ?? [])
     const cutoff = Date.now() - preset * 24 * 60 * 60 * 1000
     return series
       .filter(s => new Date(s.date).getTime() >= cutoff)
@@ -19,13 +24,13 @@ export default function IncomeReport() {
         date: new Date(s.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }),
         income: s.pairPaise / 100,
       }))
-  }, [preset])
+  }, [preset, dash])
 
   const total = chartData.reduce((a, b) => a + b.income, 0)
 
   const exportCSV = () => {
     const headers = ['Date', 'Description', 'Direction', 'Amount (₹)']
-    const rows = mockLedger.map(r => [formatDate(r.at), r.description, r.direction, formatINR(r.amountPaise)])
+    const rows = (ledger?.items ?? []).map(r => [formatDate(r.at), r.description, r.direction, formatINR(r.amountPaise)])
     const csv = [headers, ...rows].map(r => r.join(',')).join('\n')
     const blob = new Blob([csv], { type: 'text/csv' })
     const url = URL.createObjectURL(blob)
@@ -114,7 +119,7 @@ export default function IncomeReport() {
               </tr>
             </thead>
             <tbody>
-              {mockLedger.map((r, i) => (
+              {(ledger?.items ?? []).map((r, i) => (
                 <tr key={i} className="border-b border-surface-line last:border-0 hover:bg-gray-50">
                   <td className="px-4 py-3 text-xs text-ink-muted">{formatDate(r.at)}</td>
                   <td className="px-4 py-3 text-sm font-medium">{r.description}</td>
@@ -133,7 +138,7 @@ export default function IncomeReport() {
               <tr className="bg-primary-50">
                 <td colSpan={3} className="px-4 py-3 text-sm font-semibold text-ink">Total Credits</td>
                 <td className="px-4 py-3 text-sm font-bold text-success text-right">
-                  +{formatINR(mockLedger.filter(r => r.direction === 'credit').reduce((a, b) => a + b.amountPaise, 0))}
+                  +{formatINR((ledger?.items ?? []).filter(r => r.direction === 'credit').reduce((a, b) => a + b.amountPaise, 0))}
                 </td>
               </tr>
             </tfoot>

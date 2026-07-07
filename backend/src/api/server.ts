@@ -3,10 +3,7 @@ import fjwt from '@fastify/jwt'
 import cors from '@fastify/cors'
 import { CFG } from '../config.js'
 import { authRoutes } from './auth.js'
-import { orderRoutes } from './orders.js'
-import { networkRoutes } from './network.js'
-import { walletRoutes } from './wallet.js'
-import { reportRoutes } from './reports.js'
+import { frontendRoutes } from './frontend.js'
 import { adminRoutes } from './admin.js'
 
 export const app = Fastify({
@@ -27,10 +24,7 @@ app.decorate('authenticate', async (request: FastifyRequest, reply: FastifyReply
 })
 
 await app.register(authRoutes, { prefix: '/auth' })
-await app.register(orderRoutes)
-await app.register(networkRoutes)
-await app.register(walletRoutes)
-await app.register(reportRoutes)
+await app.register(frontendRoutes)
 await app.register(adminRoutes, { prefix: '/admin' })
 
 app.get('/health', async () => ({ status: 'ok' }))

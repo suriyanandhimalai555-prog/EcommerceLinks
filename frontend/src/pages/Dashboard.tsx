@@ -16,8 +16,7 @@ import { BinaryTree } from '../components/tree/BinaryTree'
 import { CopyField } from '../components/ui/CopyField'
 import { Badge } from '../components/ui/Badge'
 import { SkeletonCard } from '../components/ui/Skeleton'
-import type { Dashboard as DashboardType } from '../types/api'
-import { mockDashboard, mockTree } from '../mocks/data'
+import type { Dashboard as DashboardType, Me } from '../types/api'
 
 function txIcon(type: string, direction: string) {
   if (type === 'pair_bonus') return <GitMerge size={15} />
@@ -36,32 +35,35 @@ export default function Dashboard() {
   const { t } = useTranslation()
   const navigate = useNavigate()
 
+  const { data: meData } = useQuery<Me>({
+    queryKey: ['me'],
+    queryFn: () => api.get('/me').then((r) => r.data),
+  })
+
   const { data: dash, isLoading } = useQuery<DashboardType>({
     queryKey: ['dashboard'],
     queryFn: () => api.get('/dashboard').then((r) => r.data),
-    placeholderData: mockDashboard,
   })
 
   const { data: tree } = useQuery({
     queryKey: ['tree', 'me', 2],
     queryFn: () => api.get('/network/tree?root=me&depth=2').then((r) => r.data),
-    placeholderData: mockTree,
   })
 
-  const d = dash || mockDashboard
-  const chartData = d.incomeSeries.slice(-14).map((s) => ({
-    date: new Date(s.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }),
-    income: s.pairPaise / 100,
-  }))
-
-  if (isLoading) return (
+  if (isLoading || !dash) return (
     <div className="space-y-6">
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">{[1,2,3,4].map(i => <SkeletonCard key={i} />)}</div>
       <SkeletonCard lines={5} />
     </div>
   )
 
-  const sponsorCode = 'AGV123456'
+  const d = dash
+  const chartData = d.incomeSeries.slice(-14).map((s) => ({
+    date: new Date(s.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }),
+    income: s.pairPaise / 100,
+  }))
+
+  const sponsorCode = meData?.memberCode ?? ''
   const referralUrl = `${window.location.origin}/register?sponsor=${sponsorCode}`
 
   return (
@@ -69,7 +71,7 @@ export default function Dashboard() {
       {/* Page title */}
       <div>
         <h1 className="text-xl font-bold text-ink">{t('dashboard.totalIncome')} Overview</h1>
-        <p className="text-sm text-ink-muted">Welcome back, Karthik Kumar 👋</p>
+        <p className="text-sm text-ink-muted">Welcome back, {meData?.name ?? '—'} 👋</p>
       </div>
 
       {/* Row 1: Stat Cards */}
@@ -119,7 +121,10 @@ export default function Dashboard() {
               View all <ChevronRight size={12} />
             </Link>
           </div>
-          <BinaryTree root={tree || mockTree} depth={2} compact />
+          {tree
+            ? <BinaryTree root={tree} depth={2} compact />
+            : <div className="py-8 text-center text-sm text-ink-muted">Loading network…</div>
+          }
 
           {/* Mini stats */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-4 pt-4 border-t border-surface-line">
@@ -261,6 +266,9 @@ export default function Dashboard() {
                   </span>
                 </div>
               ))}
+              {d.recentTransactions.length === 0 && (
+                <p className="text-xs text-ink-muted text-center py-3">No transactions yet</p>
+              )}
             </div>
           </div>
 
@@ -306,7 +314,10 @@ export default function Dashboard() {
                 <span className="text-sm font-bold">{t('dashboard.referEarn')}</span>
               </div>
               <p className="text-xs text-white/70 mb-3">Share and earn ₹1,000 per pair</p>
-              <CopyField value={referralUrl} />
+              {sponsorCode
+                ? <CopyField value={referralUrl} />
+                : <p className="text-xs text-white/50">Loading referral link…</p>
+              }
             </div>
           </div>
         </div>

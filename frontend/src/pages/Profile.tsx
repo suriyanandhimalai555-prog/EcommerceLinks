@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useMutation } from '@tanstack/react-query'
+import { useMutation, useQuery } from '@tanstack/react-query'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
@@ -8,9 +8,9 @@ import { Tabs, TabList, TabTrigger, TabContent } from '../components/ui/Tabs'
 import { VerifiedRow } from '../components/ui/VerifiedRow'
 import { FormField } from '../components/ui/FormField'
 import { Badge } from '../components/ui/Badge'
-import { formatDate, formatINR } from '../lib/format'
+import { formatDate, formatINR, orDash } from '../lib/format'
 import api from '../lib/api'
-import { mockMe, mockDashboard } from '../mocks/data'
+import type { Me, Dashboard } from '../types/api'
 
 function initials(name: string) {
   return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
@@ -28,8 +28,8 @@ const bankSchema = z.object({
 })
 
 export default function Profile() {
-  const me = mockMe
-  const dash = mockDashboard
+  const { data: me } = useQuery<Me>({ queryKey: ['me'], queryFn: () => api.get('/me').then((r) => r.data) })
+  const { data: dash } = useQuery<Dashboard>({ queryKey: ['dashboard'], queryFn: () => api.get('/dashboard').then((r) => r.data) })
   const [kycSuccess, setKycSuccess] = useState(false)
   const [bankSuccess, setBankSuccess] = useState(false)
 
@@ -59,16 +59,16 @@ export default function Profile() {
           {/* Avatar card */}
           <div className="avg-card p-4 sm:p-6 flex items-center gap-4 sm:gap-5">
             <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl bg-gradient-to-br from-primary to-violet flex items-center justify-center text-white text-xl sm:text-2xl font-bold flex-shrink-0">
-              {initials(me.name)}
+              {me?.name ? initials(me.name) : '?'}
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-2 mb-1 flex-wrap">
-                <h2 className="text-lg sm:text-xl font-bold text-ink">{me.name}</h2>
-                {me.isActive && <Badge variant="success">Active</Badge>}
+                <h2 className="text-lg sm:text-xl font-bold text-ink">{me?.name ?? '—'}</h2>
+                {me?.isActive && <Badge variant="success">Active</Badge>}
               </div>
-              <p className="text-sm text-ink-muted">ID: <span className="font-mono font-semibold text-ink">{me.memberCode}</span></p>
-              <p className="text-sm text-ink-muted">Joined: {formatDate(me.joinedAt)}</p>
-              <p className="text-sm text-ink-muted">Rank: <span className="font-semibold text-primary">{me.currentRankName}</span></p>
+              <p className="text-sm text-ink-muted">ID: <span className="font-mono font-semibold text-ink">{me?.memberCode ?? '—'}</span></p>
+              <p className="text-sm text-ink-muted">Joined: {me?.joinedAt ? formatDate(me.joinedAt) : '—'}</p>
+              <p className="text-sm text-ink-muted">Rank: <span className="font-semibold text-primary">{me?.currentRankName ?? '—'}</span></p>
             </div>
           </div>
 
@@ -82,12 +82,12 @@ export default function Profile() {
             </TabList>
 
             <TabContent value="personal">
-              <div className="avg-card p-5 space-y-4">
-                <FormField label="Full Name" defaultValue={me.name} />
-                <FormField label="Email" type="email" defaultValue={me.email} />
-                <FormField label="Phone" defaultValue={me.phone} readOnly
+              <div key={me?.memberCode} className="avg-card p-5 space-y-4">
+                <FormField label="Full Name" defaultValue={me?.name} />
+                <FormField label="Email" type="email" defaultValue={me?.email} />
+                <FormField label="Phone" defaultValue={me?.phone} readOnly
                   hint="To change your phone number, please raise a support ticket." />
-                <FormField label="Sponsor Code" defaultValue={me.sponsorCode} readOnly />
+                <FormField label="Sponsor Code" defaultValue={me?.sponsorCode} readOnly />
                 <button className="avg-btn-primary">Save Changes</button>
               </div>
             </TabContent>
@@ -157,10 +157,10 @@ export default function Profile() {
           {/* Verification */}
           <div className="avg-card p-5">
             <h3 className="text-sm font-semibold text-ink mb-3">Account Verification</h3>
-            <VerifiedRow label="Email" status={me.email ? 'verified' : 'pending'} />
+            <VerifiedRow label="Email" status={me?.email ? 'verified' : 'pending'} />
             <VerifiedRow label="Mobile" status="verified" />
-            <VerifiedRow label="KYC" status={me.kycStatus as any} />
-            <VerifiedRow label="Bank" status={me.bankStatus as any} />
+            <VerifiedRow label="KYC" status={(me?.kycStatus ?? 'pending') as any} />
+            <VerifiedRow label="Bank" status={(me?.bankStatus ?? 'pending') as any} />
           </div>
 
           {/* Account summary */}
@@ -168,10 +168,10 @@ export default function Profile() {
             <h3 className="text-sm font-semibold text-ink mb-3">Account Summary</h3>
             <div className="space-y-2">
               {[
-                { label: 'Total Income', value: formatINR(dash.totalIncomePaise), color: 'text-success' },
-                { label: 'Pair Match Income', value: formatINR(dash.pairMatchIncomePaise), color: 'text-primary' },
-                { label: 'Wallet Balance', value: formatINR(dash.walletBalancePaise), color: 'text-violet' },
-                { label: 'Total Team', value: String(dash.counters.leftActive + dash.counters.rightActive), color: 'text-ink' },
+                { label: 'Total Income', value: orDash(dash?.totalIncomePaise, formatINR), color: 'text-success' },
+                { label: 'Pair Match Income', value: orDash(dash?.pairMatchIncomePaise, formatINR), color: 'text-primary' },
+                { label: 'Wallet Balance', value: orDash(dash?.walletBalancePaise, formatINR), color: 'text-violet' },
+                { label: 'Total Team', value: dash ? String(dash.counters.leftActive + dash.counters.rightActive) : '—', color: 'text-ink' },
               ].map(s => (
                 <div key={s.label} className="flex justify-between text-sm py-1.5 border-b border-surface-line last:border-0">
                   <span className="text-ink-muted">{s.label}</span>

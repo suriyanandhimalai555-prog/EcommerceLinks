@@ -1,3 +1,8 @@
+/** Render a value once resolved; show '—' while undefined/null (unwired or loading). */
+export function orDash<T>(v: T | null | undefined, fmt: (x: T) => string): string {
+  return v == null ? '—' : fmt(v)
+}
+
 export function formatINR(paise: number): string {
   const rupees = Math.floor(paise / 100)
   return new Intl.NumberFormat('en-IN', {

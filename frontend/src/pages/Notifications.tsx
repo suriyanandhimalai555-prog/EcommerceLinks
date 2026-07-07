@@ -2,7 +2,9 @@ import { useMemo } from 'react'
 import { GitMerge, Trophy, Bell } from 'lucide-react'
 import { formatDateTime } from '../lib/format'
 import { formatINR } from '../lib/format'
-import { mockDashboard, mockRanks } from '../mocks/data'
+import { useQuery } from '@tanstack/react-query'
+import api from '../lib/api'
+import type { Dashboard, RankLevel } from '../types/api'
 import { EmptyState } from '../components/ui/EmptyState'
 
 interface Notification {
@@ -15,8 +17,13 @@ interface Notification {
 }
 
 export default function Notifications() {
+  const { data: dash } = useQuery<Dashboard>({ queryKey: ['dashboard'], queryFn: () => api.get('/dashboard').then((r) => r.data) })
+  const { data: rankData } = useQuery<{ levels: RankLevel[] }>({ queryKey: ['ranks'], queryFn: () => api.get('/ranks/progress').then((r) => r.data) })
+  const txs = dash?.recentTransactions ?? []
+  const ranks = rankData?.levels ?? []
+
   const notifications: Notification[] = useMemo(() => {
-    const walletNotifs: Notification[] = mockDashboard.recentTransactions
+    const walletNotifs: Notification[] = txs
       .filter(tx => tx.direction === 'credit')
       .map((tx, i) => ({
         id: `tx-${i}`,
@@ -27,7 +34,7 @@ export default function Notifications() {
         read: i > 1,
       }))
 
-    const rankNotifs: Notification[] = mockRanks
+    const rankNotifs: Notification[] = ranks
       .filter(r => r.achieved)
       .map(r => ({
         id: `rank-${r.level}`,
@@ -40,7 +47,7 @@ export default function Notifications() {
 
     return [...walletNotifs, ...rankNotifs]
       .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
-  }, [])
+  }, [txs, ranks])
 
   const unread = notifications.filter(n => !n.read).length
 

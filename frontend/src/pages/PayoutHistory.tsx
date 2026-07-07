@@ -6,7 +6,6 @@ import { formatINR, formatDate } from '../lib/format'
 import { DataTable, type Column } from '../components/ui/DataTable'
 import { Badge } from '../components/ui/Badge'
 import type { Payout } from '../types/api'
-import { mockPayouts } from '../mocks/data'
 
 const statusVariant = (s: string) => {
   if (s === 'settled') return 'success'
@@ -20,7 +19,6 @@ export default function PayoutHistory() {
   const { data } = useQuery<{ items: Payout[] }>({
     queryKey: ['payouts'],
     queryFn: () => api.get('/payouts').then(r => r.data),
-    placeholderData: { items: mockPayouts },
   })
 
   const cols: Column<Payout>[] = [
@@ -53,9 +51,9 @@ export default function PayoutHistory() {
       {/* Summary cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         {[
-          { label: 'Total Paid Out', value: formatINR((data?.items || mockPayouts).filter(p => p.status === 'settled').reduce((a, b) => a + b.netPaise, 0)), color: 'text-success' },
-          { label: 'TDS Deducted', value: formatINR((data?.items || mockPayouts).reduce((a, b) => a + b.tdsPaise, 0)), color: 'text-danger' },
-          { label: 'Pending', value: formatINR((data?.items || mockPayouts).filter(p => p.status === 'pending').reduce((a, b) => a + b.netPaise, 0)), color: 'text-warning' },
+          { label: 'Total Paid Out', value: formatINR((data?.items ?? []).filter(p => p.status === 'settled').reduce((a, b) => a + b.netPaise, 0)), color: 'text-success' },
+          { label: 'TDS Deducted', value: formatINR((data?.items ?? []).reduce((a, b) => a + b.tdsPaise, 0)), color: 'text-danger' },
+          { label: 'Pending', value: formatINR((data?.items ?? []).filter(p => p.status === 'pending').reduce((a, b) => a + b.netPaise, 0)), color: 'text-warning' },
         ].map(s => (
           <div key={s.label} className="avg-card p-4">
             <p className="text-xs font-semibold text-ink-muted uppercase tracking-wider mb-1">{s.label}</p>
@@ -71,7 +69,7 @@ export default function PayoutHistory() {
         </div>
         <DataTable
           columns={cols}
-          data={data?.items || mockPayouts}
+          data={data?.items ?? []}
           rowKey={r => r.date + r.grossPaise}
           emptyTitle="No payouts yet"
         />

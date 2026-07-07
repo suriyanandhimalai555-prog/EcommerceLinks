@@ -1,7 +1,9 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Menu, Bell, ChevronDown, Globe } from 'lucide-react'
-import { mockMe } from '../../mocks/data'
+import { useQuery } from '@tanstack/react-query'
+import api from '../../lib/api'
+import type { Me } from '../../types/api'
 
 function initials(name: string) {
   return name.split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 2)
@@ -23,7 +25,10 @@ export default function Topbar({ onMenuClick, breadcrumb, unreadCount = 3 }: Pro
     setLangOpen(false)
   }
 
-  const me = mockMe
+  const { data: me = { name: 'Member', memberCode: '' } as Me } = useQuery<Me>({
+    queryKey: ['me'],
+    queryFn: () => api.get('/me').then((r) => r.data),
+  })
 
   return (
     <header className="h-16 bg-white border-b border-surface-line flex items-center px-4 lg:px-6 gap-3 sticky top-0 z-20">

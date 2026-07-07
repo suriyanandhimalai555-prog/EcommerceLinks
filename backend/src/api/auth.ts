@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { registerMember, findMemberByPhone } from '../services/placement.js'
 import { pool } from '../lib/db.js'
 import { CFG } from '../config.js'
+import { buildMe } from './frontend.js'
 
 const RegisterBody = z.object({
   sponsorCode:  z.string().min(1),
@@ -53,7 +54,8 @@ export async function authRoutes(app: FastifyInstance) {
     const accessToken  = app.jwt.sign(payload, { expiresIn: CFG.JWT_ACCESS_TTL })
     const refreshToken = app.jwt.sign({ sub: member.id, type: 'refresh' }, { expiresIn: CFG.JWT_REFRESH_TTL })
 
-    return { accessToken, refreshToken, memberCode: member.member_code }
+    const me = await buildMe(String(member.id))
+    return { accessToken, refreshToken, memberCode: member.member_code, member: me }
   })
 
   app.post('/refresh', async (req, reply) => {

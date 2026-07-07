@@ -5,7 +5,6 @@ import api from '../lib/api'
 import { formatDate } from '../lib/format'
 import { Badge } from '../components/ui/Badge'
 import type { RankLevel } from '../types/api'
-import { mockRanks, mockDashboard } from '../mocks/data'
 
 const RANK_REWARDS = [
   { reward: 'Kodaikanal group tour', value: '' },
@@ -42,17 +41,15 @@ export default function RankRewards() {
   const { data: rankData } = useQuery<{ levels: RankLevel[] }>({
     queryKey: ['ranks'],
     queryFn: () => api.get('/ranks/progress').then(r => r.data),
-    placeholderData: { levels: mockRanks },
   })
   const { data: dash } = useQuery({
     queryKey: ['dashboard'],
     queryFn: () => api.get('/dashboard').then(r => r.data),
-    placeholderData: mockDashboard,
   })
 
-  const levels = rankData?.levels || mockRanks
-  const currentLevel = dash?.rank?.current || 1
-  const nextLevel = dash?.rank?.next
+  const levels = rankData?.levels ?? []
+  const currentLevel = dash?.rank?.current ?? 0
+  const nextLevel = dash?.rank?.next ?? null
 
   return (
     <div className="space-y-6">
@@ -67,7 +64,7 @@ export default function RankRewards() {
             </div>
             <div>
               <p className="text-white/70 text-sm">Your Current Rank</p>
-              <h1 className="text-2xl font-bold">{t(`ranks.l${currentLevel}`)}</h1>
+              <h1 className="text-2xl font-bold">{currentLevel ? t(`ranks.l${currentLevel}`) : '—'}</h1>
             </div>
           </div>
           {nextLevel && dash?.rank?.progress && (
@@ -111,7 +108,7 @@ export default function RankRewards() {
         {levels.map((level, idx) => {
           const isAchieved = level.achieved
           const isInProgress = level.level === nextLevel
-          const isLocked = !isAchieved && !isInProgress && level.level > (nextLevel || currentLevel + 1)
+          const isLocked = !isAchieved && !isInProgress && level.level > (nextLevel ?? currentLevel + 1)
           const reward = RANK_REWARDS[idx]
           const gradient = levelGradients[idx]
 

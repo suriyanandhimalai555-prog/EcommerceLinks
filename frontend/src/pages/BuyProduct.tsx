@@ -6,7 +6,6 @@ import { ShoppingBag, Check, Loader2, Star, AlertCircle, CheckCircle2 } from 'lu
 import api from '../lib/api'
 import { formatINR } from '../lib/format'
 import type { Product } from '../types/api'
-import { mockProducts } from '../mocks/data'
 
 const IS_PROD = import.meta.env.PROD
 
@@ -21,10 +20,9 @@ export default function BuyProduct() {
   const [pollError, setPollError] = useState(false)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  const { data: products } = useQuery<Product[]>({
+  const { data: products, isPending: productsPending } = useQuery<Product[]>({
     queryKey: ['products'],
     queryFn: () => api.get('/products').then(r => r.data),
-    placeholderData: mockProducts,
   })
 
   const selected = products?.find(p => p.id === selectedId)
@@ -127,7 +125,15 @@ export default function BuyProduct() {
 
       {/* Product cards */}
       <div className="grid md:grid-cols-3 gap-4">
-        {(products || mockProducts).map((p) => {
+        {productsPending && [1,2,3].map(i => (
+          <div key={i} className="avg-card p-5 space-y-4 animate-pulse">
+            <div className="h-4 bg-gray-200 rounded w-1/2" />
+            <div className="h-6 bg-gray-200 rounded w-3/4" />
+            <div className="h-3 bg-gray-100 rounded" />
+            <div className="h-3 bg-gray-100 rounded" />
+          </div>
+        ))}
+        {(products ?? []).map((p) => {
           const isSelected = p.id === selectedId
           const isPopular = p.badges.includes('POPULAR')
           return (

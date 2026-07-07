@@ -2,21 +2,19 @@ import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Info } from 'lucide-react'
 import api from '../lib/api'
-import { formatDate } from '../lib/format'
+import { formatDate, orDash } from '../lib/format'
 import { DataTable, type Column } from '../components/ui/DataTable'
 import { Badge } from '../components/ui/Badge'
-import type { DirectMember } from '../types/api'
-import { mockDirects, mockNetworkSummary } from '../mocks/data'
+import type { DirectMember, NetworkSummary } from '../types/api'
 
 export default function DirectMembers() {
   const { t } = useTranslation()
   const { data } = useQuery<{ items: DirectMember[] }>({
     queryKey: ['directs'],
     queryFn: () => api.get('/network/directs').then(r => r.data),
-    placeholderData: { items: mockDirects },
   })
 
-  const directItems = data && 'items' in data ? (data as { items: DirectMember[] }).items : []
+  const directItems = data?.items ?? []
 
   const cols: Column<DirectMember>[] = [
     { key: 'code', header: 'Member Code', render: r => <span className="font-mono text-xs font-bold">{r.memberCode}</span> },
@@ -33,7 +31,10 @@ export default function DirectMembers() {
     { key: 'joined', header: 'Joined', render: r => <span className="text-xs text-ink-muted">{formatDate(r.joinedAt)}</span> },
   ]
 
-  const s = mockNetworkSummary
+  const { data: summary } = useQuery<NetworkSummary>({
+    queryKey: ['network-summary'],
+    queryFn: () => api.get('/network/summary').then((r) => r.data),
+  })
 
   return (
     <div className="space-y-6">
@@ -45,11 +46,11 @@ export default function DirectMembers() {
       <div className="grid grid-cols-2 gap-4">
         <div className="avg-card p-5">
           <p className="text-xs font-semibold text-ink-muted uppercase tracking-wider mb-1">Direct Left</p>
-          <p className="text-2xl sm:text-3xl font-bold text-primary">{s.directs.left}</p>
+          <p className="text-2xl sm:text-3xl font-bold text-primary">{orDash(summary?.directs.left, String)}</p>
         </div>
         <div className="avg-card p-5">
           <p className="text-xs font-semibold text-ink-muted uppercase tracking-wider mb-1">Direct Right</p>
-          <p className="text-2xl sm:text-3xl font-bold text-violet">{s.directs.right}</p>
+          <p className="text-2xl sm:text-3xl font-bold text-violet">{orDash(summary?.directs.right, String)}</p>
         </div>
       </div>
 

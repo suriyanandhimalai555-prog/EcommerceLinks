@@ -1,19 +1,18 @@
 import { useState } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Wallet as WalletIcon, ArrowUpRight, Clock, AlertCircle, Loader2 } from 'lucide-react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import api from '../lib/api'
-import { formatINR, formatDateTime } from '../lib/format'
+import { formatINR, formatDateTime, orDash } from '../lib/format'
 import { StatCard } from '../components/ui/StatCard'
 import { Modal } from '../components/ui/Modal'
 import { DataTable, type Column } from '../components/ui/DataTable'
 import { Badge } from '../components/ui/Badge'
 import { FormField } from '../components/ui/FormField'
-import type { Wallet as WalletType, LedgerEntry, Withdrawal } from '../types/api'
-import { mockWallet, mockLedger, mockWithdrawals } from '../mocks/data'
+import type { Wallet as WalletType, LedgerEntry, LedgerRes, Withdrawal } from '../types/api'
 
 const withdrawSchema = z.object({
   amount: z.number().min(500, 'Minimum withdrawal is ₹500'),
@@ -24,22 +23,30 @@ export default function Wallet() {
   const { t } = useTranslation()
   const qc = useQueryClient()
   const [showModal, setShowModal] = useState(false)
-  const [ledgerCursor, setLedgerCursor] = useState<string | null>(null)
-  const [ledgerItems, setLedgerItems] = useState<LedgerEntry[]>(mockLedger.slice(0, 5))
 
   const { data: wallet } = useQuery<WalletType>({
     queryKey: ['wallet'],
     queryFn: () => api.get('/wallet').then(r => r.data),
-    placeholderData: mockWallet,
   })
   const { data: withdrawals } = useQuery<{ items: Withdrawal[] }>({
     queryKey: ['withdrawals'],
     queryFn: () => api.get('/withdrawals').then(r => r.data),
-    placeholderData: { items: mockWithdrawals },
   })
 
-  const w = wallet || mockWallet
-  const windowPct = Math.min(100, (w.currentWindow.earnedPaise / w.currentWindow.capPaise) * 100)
+  // Infinite query for ledger — replaces the mock-seeded useState + fake cursor
+  const ledgerQ = useInfiniteQuery({
+    queryKey: ['wallet-ledger'],
+    queryFn: ({ pageParam }) =>
+      api.get(`/wallet/ledger${pageParam ? `?cursor=${pageParam}` : ''}`).then(r => r.data as LedgerRes),
+    initialPageParam: null as string | null,
+    getNextPageParam: (last) => last.nextCursor,
+  })
+  const ledgerItems = ledgerQ.data?.pages.flatMap(p => p.items) ?? []
+
+  // Guard divide-by-zero: capPaise can be 0 on a fresh account
+  const windowPct = wallet?.currentWindow && wallet.currentWindow.capPaise > 0
+    ? Math.min(100, (wallet.currentWindow.earnedPaise / wallet.currentWindow.capPaise) * 100)
+    : 0
 
   const { register, handleSubmit, formState: { errors }, setError, reset } = useForm<WithdrawForm>({
     resolver: zodResolver(withdrawSchema),
@@ -50,6 +57,7 @@ export default function Wallet() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['wallet'] })
       qc.invalidateQueries({ queryKey: ['withdrawals'] })
+      qc.invalidateQueries({ queryKey: ['wallet-ledger'] })
       setShowModal(false)
       reset()
     },
@@ -57,12 +65,6 @@ export default function Wallet() {
       setError('root', { message: err.response?.data?.error?.message || 'Withdrawal failed' })
     },
   })
-
-  const loadMoreLedger = async () => {
-    const res = await api.get(`/wallet/ledger?cursor=${ledgerCursor || 'cursor-2'}`)
-    setLedgerItems(prev => [...prev, ...res.data.items])
-    setLedgerCursor(res.data.nextCursor)
-  }
 
   const ledgerCols: Column<LedgerEntry>[] = [
     { key: 'date', header: 'Date', render: r => <span className="text-xs text-ink-muted">{formatDateTime(r.at)}</span> },
@@ -105,18 +107,18 @@ export default function Wallet() {
 
       {/* Stat cards */}
       <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
-        <StatCard label="Available Balance" value={formatINR(w.balancePaise)} icon={<WalletIcon />} tint="violet" />
-        <StatCard label="Deferred Balance" value={formatINR(w.deferredPaise)} icon={<Clock />} tint="warning"
+        <StatCard label="Available Balance" value={orDash(wallet?.balancePaise, formatINR)} icon={<WalletIcon />} tint="violet" />
+        <StatCard label="Deferred Balance" value={orDash(wallet?.deferredPaise, formatINR)} icon={<Clock />} tint="warning"
           sub={t('wallet.deferred')} />
         <div className="avg-card p-5 lg:col-span-1 col-span-2">
           <div className="flex items-center justify-between mb-3">
             <div>
               <p className="text-xs font-semibold text-ink-muted uppercase tracking-wider mb-1">Current Window</p>
-              <p className="text-lg font-bold text-ink">{formatINR(w.currentWindow.earnedPaise)}</p>
-              <p className="text-xs text-ink-muted">of {formatINR(w.currentWindow.capPaise)} cap</p>
+              <p className="text-lg font-bold text-ink">{orDash(wallet?.currentWindow?.earnedPaise, formatINR)}</p>
+              <p className="text-xs text-ink-muted">of {orDash(wallet?.currentWindow?.capPaise, formatINR)} cap</p>
             </div>
             <div className="text-right">
-              <p className="text-2xl font-bold text-primary">{windowPct.toFixed(1)}%</p>
+              <p className="text-2xl font-bold text-primary">{wallet ? windowPct.toFixed(1) + '%' : '—'}</p>
             </div>
           </div>
           <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
@@ -138,8 +140,9 @@ export default function Wallet() {
           columns={ledgerCols}
           data={ledgerItems}
           rowKey={r => r.at + r.description}
-          onLoadMore={loadMoreLedger}
-          hasMore={!!ledgerCursor}
+          onLoadMore={() => ledgerQ.fetchNextPage()}
+          hasMore={!!ledgerQ.hasNextPage}
+          emptyTitle="No transactions yet"
         />
       </div>
 
@@ -150,7 +153,7 @@ export default function Wallet() {
         </div>
         <DataTable
           columns={wdCols}
-          data={withdrawals?.items || []}
+          data={withdrawals?.items ?? []}
           rowKey={r => r.id}
           emptyTitle="No withdrawals yet"
         />
@@ -168,11 +171,11 @@ export default function Wallet() {
             label="Amount (₹)"
             type="number"
             min={500}
-            max={w.balancePaise / 100}
+            max={wallet ? wallet.balancePaise / 100 : undefined}
             placeholder="Enter amount in rupees"
             {...register('amount', { valueAsNumber: true })}
             error={errors.amount?.message}
-            hint={`Available: ${formatINR(w.balancePaise)} · ${t('wallet.minWithdrawal')}`}
+            hint={`Available: ${orDash(wallet?.balancePaise, formatINR)} · ${t('wallet.minWithdrawal')}`}
           />
           <button type="submit" disabled={withdraw.isPending} className="avg-btn-primary w-full py-3">
             {withdraw.isPending ? <Loader2 size={15} className="animate-spin" /> : <ArrowUpRight size={15} />}
