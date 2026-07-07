@@ -5,6 +5,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { Eye, EyeOff, Loader2, AlertCircle } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { useQueryClient } from '@tanstack/react-query'
 import api from '../../lib/api'
 import { tokenStore } from '../../lib/auth'
 import { FormField } from '../../components/ui/FormField'
@@ -27,6 +28,7 @@ type FormData = z.infer<typeof schema>
 export default function Register() {
   const { t } = useTranslation()
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const [searchParams] = useSearchParams()
   const [showPw, setShowPw] = useState(false)
 
@@ -54,6 +56,7 @@ export default function Register() {
       tokenStore.setAccess(loginRes.data.accessToken)
       tokenStore.setRefresh(loginRes.data.refreshToken)
       tokenStore.setMe(loginRes.data.member)
+      queryClient.clear()
       navigate('/', { replace: true })
     } catch {
       setError('root', { message: 'Registration failed. Please try again.' })

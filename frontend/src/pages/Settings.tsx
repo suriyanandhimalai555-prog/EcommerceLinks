@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Globe, Bell, LogOut, Shield } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
 import { tokenStore } from '../lib/auth'
 
 export default function Settings() {
@@ -11,8 +12,11 @@ export default function Settings() {
   const [smsNotif, setSmsNotif] = useState(false)
   const [pairNotif, setPairNotif] = useState(true)
 
+  const queryClient = useQueryClient()
+
   const handleLogoutAll = () => {
     tokenStore.clear()
+    queryClient.clear()
     navigate('/login')
   }
 

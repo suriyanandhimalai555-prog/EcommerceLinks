@@ -1,5 +1,6 @@
 import { NavLink, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
+import { useQueryClient } from '@tanstack/react-query'
 import {
   LayoutDashboard, User, Network, ShoppingBag, GitMerge, Wallet,
   Clock, Users, BarChart2, GitFork, Trophy, TicketCheck, Bell,
@@ -33,8 +34,11 @@ export default function Sidebar({ open = true, onClose }: Props) {
   const { t } = useTranslation()
   const navigate = useNavigate()
 
+  const queryClient = useQueryClient()
+
   const handleLogout = () => {
     tokenStore.clear()
+    queryClient.clear()
     navigate('/login')
   }
 
