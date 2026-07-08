@@ -117,7 +117,7 @@ export async function closeAndOpenCutoff(): Promise<void> {
 }
 
 // Cron-style scheduler — checks every minute
-async function run() {
+export async function run() {
   await ensureCutoffExists()
   console.log('[cutoff] started, open window ensured')
 
@@ -135,7 +135,10 @@ async function run() {
   }, 60_000)
 }
 
-run().catch((err) => {
-  console.error('[cutoff] fatal', err)
-  process.exit(1)
-})
+const _argv1 = process.argv[1] ?? ''
+if (_argv1.endsWith('cutoff.ts') || _argv1.endsWith('cutoff.js')) {
+  run().catch((err) => {
+    console.error('[cutoff] fatal', err)
+    process.exit(1)
+  })
+}

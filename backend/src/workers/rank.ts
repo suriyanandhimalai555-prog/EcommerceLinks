@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto'
 import { withTxn } from '../lib/db.js'
-import { createConsumer } from '../lib/kafka.js'
+import { startConsumer } from '../lib/streams.js'
 import { writeOutbox } from '../events/outbox.js'
 import { TOPICS } from '../events/topics.js'
 import { QUALIFIED_THRESHOLDS } from '../domain/ranks.js'
@@ -80,16 +80,13 @@ export async function evaluateRanks(memberId: bigint): Promise<number[]> {
   })
 }
 
-async function run() {
-  const consumer = createConsumer(GROUP)
-  await consumer.connect()
-  await consumer.subscribe({ topic: TOPICS.ranks.name, fromBeginning: false })
-  console.log('[rank] started')
-
-  await consumer.run({
-    eachMessage: async ({ message }) => {
-      if (!message.value) return
-      const e = JSON.parse(message.value.toString()) as AvgEvent
+export async function run() {
+  await startConsumer({
+    stream: TOPICS.ranks.name,
+    group:  GROUP,
+    mode:   'message',
+    onMessage: async (value) => {
+      const e = JSON.parse(value) as AvgEvent
       if (e.event_type !== 'RankEvalRequested') return
 
       const already = await withTxn(async (c) => {
@@ -113,7 +110,10 @@ async function run() {
   })
 }
 
-run().catch((err) => {
-  console.error('[rank] fatal', err)
-  process.exit(1)
-})
+const _argv1 = process.argv[1] ?? ''
+if (_argv1.endsWith('rank.ts') || _argv1.endsWith('rank.js')) {
+  run().catch((err) => {
+    console.error('[rank] fatal', err)
+    process.exit(1)
+  })
+}

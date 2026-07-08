@@ -12,7 +12,6 @@ export const CFG = {
   MIN_PAYOUT_PAISE:  parseInt(env('MIN_PAYOUT_PAISE',   '50000')),
   TZ:                env('TZ',            'Asia/Kolkata'),
   DATABASE_URL:      env('DATABASE_URL',  'postgresql://avg:avg@localhost:5432/avg'),
-  KAFKA_BROKERS:     env('KAFKA_BROKERS', 'localhost:9092').split(','),
   JWT_SECRET:        env('JWT_SECRET',    'dev-secret-change-in-prod'),
   JWT_ACCESS_TTL:    '15m',
   JWT_REFRESH_TTL:   '30d',

@@ -1,6 +1,6 @@
 import { pool } from '../src/lib/db.js'
 import { registerMember } from '../src/services/placement.js'
-import { confirmOrder } from '../src/api/orders.js'
+import { confirmOrder } from '../src/services/orderService.js'
 import 'dotenv/config'
 
 const N = parseInt(process.argv[2] ?? '10', 10)

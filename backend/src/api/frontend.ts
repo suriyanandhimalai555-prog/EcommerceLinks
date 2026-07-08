@@ -10,7 +10,7 @@ import { z } from 'zod'
 import { pool } from '../lib/db.js'
 import { redis } from '../lib/redis.js'
 import { toPaise, fromPaise, pct } from '../lib/money.js'
-import { confirmOrder } from './orders.js'
+import { confirmOrder } from '../services/orderService.js'
 import { QUALIFIED_THRESHOLDS } from '../domain/ranks.js'
 import { CFG } from '../config.js'
 

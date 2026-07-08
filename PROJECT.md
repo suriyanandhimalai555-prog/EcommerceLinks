@@ -1,7 +1,9 @@
 # PROJECT.md — Agila Vetri Groups (AVG) Platform
 
 > Read this first. It is the orientation a senior engineer would give a new hire.
-> For known problems, read `GAPS.md`. For connecting the frontend to the backend, follow `INTEGRATION.md` step by step. For day-to-day operational rules, see `CLAUDE.md`.
+> For known problems, read `GAPS.md`. For connecting the frontend to the backend, follow `INTEGRATION.md` step by step. For day-to-day operational rules, see `CLAUDE.md`. For current status, see `STATUS.md`.
+
+> **Architecture (see `PLAN.md` — it governs):** transactional outbox → **Redis Streams** → idempotent workers, consolidated into one `avg-workers` process; deployment is **Railway** (`avg-api` + `avg-workers` + Postgres/Redis plugins, Singapore) with the frontend static on Cloudflare Pages; CI is built before anything else moves. The transport spec is PLAN.md §2A; the legacy broker files still in the tree are deletion-only per its checklist.
 
 ---
 
@@ -34,7 +36,7 @@ EcommerceLinks/
 │   │   ├── api/          # Fastify routes: auth, orders, network, wallet, reports, admin
 │   │   ├── domain/       # ranks.ts — rank ladder definitions and thresholds
 │   │   ├── events/       # event types, topic map, transactional outbox writer
-│   │   ├── lib/          # db pool/txn, kafka, redis, money (bigint paise), ids
+│   │   ├── lib/          # db pool/txn, redis (cache), streams (Redis Streams transport), money (bigint paise), ids
 │   │   ├── services/     # placement (registration + tree walk), qualification
 │   │   └── workers/      # 9 standalone processes (see §4)
 │   └── test/             # unit (money) + integration (full pipeline, needs docker)
@@ -58,7 +60,7 @@ EcommerceLinks/
 | API server | **Fastify 4** + `@fastify/jwt` + `@fastify/cors` | Lightweight, fast, first-class JWT decorator pattern (`app.authenticate`). |
 | Language | **TypeScript (strict), ESM, tsx runner** | No build step in dev; `type: module` throughout. |
 | Database | **PostgreSQL 16** | The business logic is heavily relational and invariant-driven (unique placement slots, check constraints like `pairs_matched <= LEAST(left, right)`, partial unique indexes such as "exactly one root" and "exactly one open cutoff"). |
-| Events | **Kafka protocol via Redpanda** (kafkajs) | Fan-out of one activation to potentially thousands of ancestors is done asynchronously; Redpanda chosen as a single-binary dev-friendly Kafka. Topic map in `src/events/topics.ts`. |
+| Events | **Redis Streams** (`XADD` / `XREADGROUP` consumer groups — spec in PLAN.md §2A) | Fan-out of one activation to potentially thousands of ancestors is done asynchronously; Postgres `events_outbox` is the durable log, Redis is transport only. Stream map in `src/events/topics.ts`. |
 | Outbox | **Transactional outbox table + relay worker** | Guarantees events are emitted iff the DB transaction committed. `writeOutbox()` must be called inside the caller's transaction — this is a hard rule. |
 | Money | **bigint paise + big.js** (`lib/money.ts`) | All arithmetic in integer paise; NUMERIC(14,2) in Postgres; `Number` never used for arithmetic. GST uses floor division (`pct`), TDS uses half-up rounding (`pctRoundUp`). |
 | Cache | **Redis (ioredis)** | Only used for 60s caching of `/network/tree` responses. |
@@ -90,8 +92,8 @@ Each member stores denormalized ancestry: `placement_path` (array of ancestor id
 ### 4.2 Event-driven money pipeline
 
 ```
- HTTP API (Fastify)                         Postgres                    Redpanda topics
- ─────────────────                          ────────                    ───────────────
+ HTTP API (Fastify)                         Postgres                    Redis Streams
+ ─────────────────                          ────────                    ─────────────
  POST /auth/register ──┐
  POST /webhooks/payment┴─► [txn: mutate rows + INSERT events_outbox]
                                               │
@@ -186,4 +188,4 @@ Each member stores denormalized ancestry: `placement_path` (array of ancestor id
 9. **Weekly window math has a drift bug** — the code comments say windows run Sunday 18:00 → Saturday 17:59 IST, but `nextWindowStart()` actually produces a start one day earlier each successive week (GAPS G-6).
 10. **`frontend/src/components/dashboard/` and `src/data/mockData.ts` are dead** — a first-draft dashboard superseded by `pages/Dashboard.tsx`. Editing them changes nothing on screen.
 11. **Payout CSVs and reconciliation alerts are written to the backend filesystem** (`backend/out/…`), not to any storage service.
-12. **Tests need infrastructure**: `npm test` in backend runs the money unit tests fine, but the integration suite requires docker compose (Postgres+Redpanda+Redis) up, migrations applied, and root seeded — otherwise tests silently short-circuit (`if (!rootRows[0]) return`).
+12. **Tests need infrastructure**: `npm test` in backend runs the money unit tests fine, but the integration suite requires local infra (Postgres + Redis) up, migrations applied, and root seeded — otherwise tests silently short-circuit (`if (!rootRows[0]) return`).

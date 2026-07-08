@@ -1,5 +1,5 @@
 import { withTxn } from '../lib/db.js'
-import { createConsumer } from '../lib/kafka.js'
+import { startConsumer } from '../lib/streams.js'
 import { txnUuid } from '../lib/ids.js'
 import { toPaise, fromPaise } from '../lib/money.js'
 import { TOPICS } from '../events/topics.js'
@@ -212,23 +212,23 @@ export async function sweepDeferred(e: DeferredSweepRequested): Promise<void> {
   })
 }
 
-async function run() {
-  const consumer = createConsumer(GROUP)
-  await consumer.connect()
-  await consumer.subscribe({ topic: TOPICS.ledger.name, fromBeginning: false })
-  console.log('[ledger] started')
-
-  await consumer.run({
-    eachMessage: async ({ message }) => {
-      if (!message.value) return
-      const e = JSON.parse(message.value.toString()) as AvgEvent
+export async function run() {
+  await startConsumer({
+    stream: TOPICS.ledger.name,
+    group:  GROUP,
+    mode:   'message',
+    onMessage: async (value) => {
+      const e = JSON.parse(value) as AvgEvent
       if (e.event_type === 'PairMatched')            await creditPairBonus(e)
       if (e.event_type === 'DeferredSweepRequested') await sweepDeferred(e)
     },
   })
 }
 
-run().catch((err) => {
-  console.error('[ledger] fatal', err)
-  process.exit(1)
-})
+const _argv1 = process.argv[1] ?? ''
+if (_argv1.endsWith('ledger.ts') || _argv1.endsWith('ledger.js')) {
+  run().catch((err) => {
+    console.error('[ledger] fatal', err)
+    process.exit(1)
+  })
+}

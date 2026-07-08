@@ -114,7 +114,7 @@ export async function reconcile(): Promise<Alert[]> {
 }
 
 // Cron: nightly 02:00 IST
-async function run() {
+export async function run() {
   console.log('[reconciler] started')
   setInterval(async () => {
     try {
@@ -129,7 +129,10 @@ async function run() {
   }, 60_000)
 }
 
-run().catch((err) => {
-  console.error('[reconciler] fatal', err)
-  process.exit(1)
-})
+const _argv1 = process.argv[1] ?? ''
+if (_argv1.endsWith('reconciler.ts') || _argv1.endsWith('reconciler.js')) {
+  run().catch((err) => {
+    console.error('[reconciler] fatal', err)
+    process.exit(1)
+  })
+}

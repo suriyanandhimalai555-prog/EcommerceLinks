@@ -1,5 +1,5 @@
 import { pool } from '../lib/db.js'
-import { getProducer } from '../lib/kafka.js'
+import { publishToStream } from '../lib/streams.js'
 
 interface OutboxRow {
   id: string
@@ -9,8 +9,7 @@ interface OutboxRow {
   payload: unknown
 }
 
-async function relay() {
-  const producer = await getProducer()
+export async function run() {
   console.log('[outbox-relay] started')
 
   while (true) {
@@ -28,22 +27,8 @@ async function relay() {
         )
 
         if (rows.length > 0) {
-          // Group by topic for batching
-          const byTopic = new Map<string, OutboxRow[]>()
           for (const row of rows) {
-            const bucket = byTopic.get(row.topic) ?? []
-            bucket.push(row)
-            byTopic.set(row.topic, bucket)
-          }
-
-          for (const [topic, batch] of byTopic) {
-            await producer.send({
-              topic,
-              messages: batch.map((r) => ({
-                key:   r.partition_key,
-                value: JSON.stringify(r.payload),
-              })),
-            })
+            await publishToStream(row.topic, JSON.stringify(row.payload))
           }
 
           const ids = rows.map((r) => r.id)
@@ -68,7 +53,10 @@ async function relay() {
   }
 }
 
-relay().catch((err) => {
-  console.error('[outbox-relay] fatal', err)
-  process.exit(1)
-})
+const _argv1 = process.argv[1] ?? ''
+if (_argv1.endsWith('outboxRelay.ts') || _argv1.endsWith('outboxRelay.js')) {
+  run().catch((err) => {
+    console.error('[outbox-relay] fatal', err)
+    process.exit(1)
+  })
+}

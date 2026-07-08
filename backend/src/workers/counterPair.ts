@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto'
 import { withTxn } from '../lib/db.js'
-import { createConsumer } from '../lib/kafka.js'
+import { startConsumer } from '../lib/streams.js'
 import { writeOutbox } from '../events/outbox.js'
 import { TOPICS } from '../events/topics.js'
 import type { CounterIncrement } from '../events/types.js'
@@ -157,19 +157,19 @@ export async function applyIncrements(
   })
 }
 
-async function run() {
-  const consumer = createConsumer(GROUP)
-  await consumer.connect()
-  await consumer.subscribe({ topic: TOPICS.increments.name, fromBeginning: false })
-  console.log('[counter-pair] started')
-
-  await consumer.run({
-    eachBatch: async ({ batch }) => {
-      // Group by ancestorId (partition key)
+export async function run() {
+  await startConsumer({
+    stream: TOPICS.increments.name,
+    group:  GROUP,
+    mode:   'batch',
+    count:  500,
+    onBatch: async (values) => {
+      // Group by ancestorId (partition key) — preserves per-ancestor ordering.
+      // CRITICAL: run only one avg-workers process; multiple consumers in this group
+      // would interleave increments and break the per-ancestor serialisation.
       const byAncestor = new Map<bigint, CounterIncrement[]>()
-      for (const msg of batch.messages) {
-        if (!msg.value) continue
-        const inc = JSON.parse(msg.value.toString()) as CounterIncrement
+      for (const value of values) {
+        const inc = JSON.parse(value) as CounterIncrement
         const aid = BigInt(inc.ancestor_id)
         const bucket = byAncestor.get(aid) ?? []
         bucket.push(inc)
@@ -182,7 +182,10 @@ async function run() {
   })
 }
 
-run().catch((err) => {
-  console.error('[counter-pair] fatal', err)
-  process.exit(1)
-})
+const _argv1 = process.argv[1] ?? ''
+if (_argv1.endsWith('counterPair.ts') || _argv1.endsWith('counterPair.js')) {
+  run().catch((err) => {
+    console.error('[counter-pair] fatal', err)
+    process.exit(1)
+  })
+}

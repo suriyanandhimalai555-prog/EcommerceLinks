@@ -1,21 +1,18 @@
 import { pool, withTxn } from '../lib/db.js'
-import { createConsumer } from '../lib/kafka.js'
+import { startConsumer } from '../lib/streams.js'
 import { evaluateQualification } from '../services/qualification.js'
 import { TOPICS } from '../events/topics.js'
 import type { AvgEvent } from '../events/types.js'
 
 const GROUP = 'avg-qualification'
 
-async function run() {
-  const consumer = createConsumer(GROUP)
-  await consumer.connect()
-  await consumer.subscribe({ topic: TOPICS.lifecycle.name, fromBeginning: false })
-  console.log('[qualification] started')
-
-  await consumer.run({
-    eachMessage: async ({ message }) => {
-      if (!message.value) return
-      const e = JSON.parse(message.value.toString()) as AvgEvent
+export async function run() {
+  await startConsumer({
+    stream: TOPICS.lifecycle.name,
+    group:  GROUP,
+    mode:   'message',
+    onMessage: async (value) => {
+      const e = JSON.parse(value) as AvgEvent
       if (e.event_type !== 'MemberActivated') return
 
       // Idempotency check
@@ -61,7 +58,10 @@ async function run() {
   })
 }
 
-run().catch((err) => {
-  console.error('[qualification] fatal', err)
-  process.exit(1)
-})
+const _argv1 = process.argv[1] ?? ''
+if (_argv1.endsWith('qualification.ts') || _argv1.endsWith('qualification.js')) {
+  run().catch((err) => {
+    console.error('[qualification] fatal', err)
+    process.exit(1)
+  })
+}

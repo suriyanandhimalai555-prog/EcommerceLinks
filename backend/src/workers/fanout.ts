@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto'
 import { v5 as uuidv5 } from 'uuid'
 import { pool, withTxn } from '../lib/db.js'
-import { createConsumer, getProducer } from '../lib/kafka.js'
+import { startConsumer, publishToStream } from '../lib/streams.js'
 import { TOPICS } from '../events/topics.js'
 import type {
   AvgEvent, MemberActivated, MemberQualified, RankAchieved, CounterIncrement,
@@ -59,19 +59,13 @@ export function fanOut(
   return increments
 }
 
-async function run() {
-  const consumer = createConsumer(GROUP)
-  const producer  = await getProducer()
-
-  await consumer.connect()
-  await consumer.subscribe({ topic: TOPICS.lifecycle.name, fromBeginning: false })
-
-  console.log('[fanout] started')
-
-  await consumer.run({
-    eachMessage: async ({ message }) => {
-      if (!message.value) return
-      const e = JSON.parse(message.value.toString()) as AvgEvent
+export async function run() {
+  await startConsumer({
+    stream: TOPICS.lifecycle.name,
+    group:  GROUP,
+    mode:   'message',
+    onMessage: async (value) => {
+      const e = JSON.parse(value) as AvgEvent
 
       if (
         e.event_type !== 'MemberActivated' &&
@@ -107,17 +101,14 @@ async function run() {
         placementSides
       )
 
+      // Produce first, then record — at-least-once is safe; downstream dedupes via
+      // deterministic uuidv5 increment ids (sourceEventId:ancestorId).
       if (increments.length > 0) {
-        await producer.send({
-          topic: TOPICS.increments.name,
-          messages: increments.map((inc) => ({
-            key:   String(inc.ancestor_id),
-            value: JSON.stringify(inc),
-          })),
-        })
+        for (const inc of increments) {
+          await publishToStream(TOPICS.increments.name, JSON.stringify(inc))
+        }
       }
 
-      // Record processed — produce first, then record (at-least-once is safe; downstream dedupes)
       await withTxn(async (c) => {
         await c.query(
           'INSERT INTO processed_events (consumer_group, event_id) VALUES ($1,$2) ON CONFLICT DO NOTHING',
@@ -128,7 +119,10 @@ async function run() {
   })
 }
 
-run().catch((err) => {
-  console.error('[fanout] fatal', err)
-  process.exit(1)
-})
+const _argv1 = process.argv[1] ?? ''
+if (_argv1.endsWith('fanout.ts') || _argv1.endsWith('fanout.js')) {
+  run().catch((err) => {
+    console.error('[fanout] fatal', err)
+    process.exit(1)
+  })
+}
