@@ -46,9 +46,7 @@ export default function Login() {
       <div className="w-full max-w-md">
         {/* Logo */}
         <div className="text-center mb-8">
-          <div className="w-16 h-16 bg-gradient-to-br from-primary to-violet rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-glow">
-            <span className="text-white font-bold text-2xl">AV</span>
-          </div>
+          <img src="/AVGLOGO.jpeg" alt="AVG Logo" className="w-16 h-16 rounded-2xl object-cover mx-auto mb-4 shadow-glow" />
           <h1 className="text-2xl font-bold text-ink">Agila Vetri Groups</h1>
           <p className="text-ink-muted text-sm mt-1">Member Portal</p>
         </div>

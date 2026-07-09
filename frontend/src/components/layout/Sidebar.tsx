@@ -60,9 +60,7 @@ export default function Sidebar({ open = true, onClose }: Props) {
         {/* Logo */}
         <div className="px-5 py-4 border-b border-surface-line flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary to-violet flex items-center justify-center shadow-glow flex-shrink-0">
-              <span className="text-white font-bold text-sm">AV</span>
-            </div>
+            <img src="/AVGLOGO.jpeg" alt="AVG Logo" className="w-9 h-9 rounded-xl object-cover flex-shrink-0" />
             <div>
               <div className="text-sm font-bold text-ink leading-tight">AGILA VETRI</div>
               <div className="text-[10px] text-ink-muted tracking-widest font-medium">GROUPS</div>

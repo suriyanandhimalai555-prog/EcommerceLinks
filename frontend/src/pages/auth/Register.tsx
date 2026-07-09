@@ -67,9 +67,7 @@ export default function Register() {
     <div className="min-h-screen bg-gradient-to-br from-primary-50 via-white to-violet-50 flex items-center justify-center p-4">
       <div className="w-full max-w-lg">
         <div className="text-center mb-6">
-          <div className="w-14 h-14 bg-gradient-to-br from-primary to-violet rounded-2xl flex items-center justify-center mx-auto mb-3 shadow-glow">
-            <span className="text-white font-bold text-xl">AV</span>
-          </div>
+          <img src="/AVGLOGO.jpeg" alt="AVG Logo" className="w-14 h-14 rounded-2xl object-cover mx-auto mb-3 shadow-glow" />
           <h1 className="text-2xl font-bold text-ink">Agila Vetri Groups</h1>
         </div>
 
