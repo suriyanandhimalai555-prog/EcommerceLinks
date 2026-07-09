@@ -8,6 +8,7 @@ import { z } from 'zod'
 import api from '../lib/api'
 import { formatINR, formatDateTime, orDash } from '../lib/format'
 import { StatCard } from '../components/ui/StatCard'
+import { SkeletonCard } from '../components/ui/Skeleton'
 import { Modal } from '../components/ui/Modal'
 import { DataTable, type Column } from '../components/ui/DataTable'
 import { Badge } from '../components/ui/Badge'
@@ -24,7 +25,7 @@ export default function Wallet() {
   const qc = useQueryClient()
   const [showModal, setShowModal] = useState(false)
 
-  const { data: wallet } = useQuery<WalletType>({
+  const { data: wallet, isLoading: walletLoading } = useQuery<WalletType>({
     queryKey: ['wallet'],
     queryFn: () => api.get('/wallet').then(r => r.data),
   })
@@ -106,30 +107,36 @@ export default function Wallet() {
       </div>
 
       {/* Stat cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
-        <StatCard label="Available Balance" value={orDash(wallet?.balancePaise, formatINR)} icon={<WalletIcon />} tint="violet" />
-        <StatCard label="Deferred Balance" value={orDash(wallet?.deferredPaise, formatINR)} icon={<Clock />} tint="warning"
-          sub={t('wallet.deferred')} />
-        <div className="avg-card p-5 lg:col-span-1 col-span-2">
-          <div className="flex items-center justify-between mb-3">
-            <div>
-              <p className="text-xs font-semibold text-ink-muted uppercase tracking-wider mb-1">Current Window</p>
-              <p className="text-lg font-bold text-ink">{orDash(wallet?.currentWindow?.earnedPaise, formatINR)}</p>
-              <p className="text-xs text-ink-muted">of {orDash(wallet?.currentWindow?.capPaise, formatINR)} cap</p>
-            </div>
-            <div className="text-right">
-              <p className="text-2xl font-bold text-primary">{wallet ? windowPct.toFixed(1) + '%' : '—'}</p>
-            </div>
-          </div>
-          <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-            <div
-              className={`h-full rounded-full transition-all duration-500 ${windowPct >= 90 ? 'bg-danger' : windowPct >= 70 ? 'bg-warning' : 'bg-gradient-to-r from-primary to-violet'}`}
-              style={{ width: `${windowPct}%` }}
-            />
-          </div>
-          <p className="text-xs text-ink-muted mt-2">{t('wallet.capNote')}</p>
+      {walletLoading ? (
+        <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+          <SkeletonCard /><SkeletonCard /><SkeletonCard />
         </div>
-      </div>
+      ) : (
+        <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+          <StatCard label="Available Balance" value={orDash(wallet?.balancePaise, formatINR)} icon={<WalletIcon />} tint="violet" />
+          <StatCard label="Deferred Balance" value={orDash(wallet?.deferredPaise, formatINR)} icon={<Clock />} tint="warning"
+            sub={t('wallet.deferred')} />
+          <div className="avg-card p-5 lg:col-span-1 col-span-2">
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <p className="text-xs font-semibold text-ink-muted uppercase tracking-wider mb-1">Current Window</p>
+                <p className="text-lg font-bold text-ink">{orDash(wallet?.currentWindow?.earnedPaise, formatINR)}</p>
+                <p className="text-xs text-ink-muted">of {orDash(wallet?.currentWindow?.capPaise, formatINR)} cap</p>
+              </div>
+              <div className="text-right">
+                <p className="text-2xl font-bold text-primary">{wallet ? windowPct.toFixed(1) + '%' : '—'}</p>
+              </div>
+            </div>
+            <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all duration-500 ${windowPct >= 90 ? 'bg-danger' : windowPct >= 70 ? 'bg-warning' : 'bg-gradient-to-r from-primary to-violet'}`}
+                style={{ width: `${windowPct}%` }}
+              />
+            </div>
+            <p className="text-xs text-ink-muted mt-2">{t('wallet.capNote')}</p>
+          </div>
+        </div>
+      )}
 
       {/* Ledger */}
       <div className="avg-card">

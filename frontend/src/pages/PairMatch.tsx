@@ -4,13 +4,14 @@ import { GitMerge, Download, TrendingUp } from 'lucide-react'
 import api from '../lib/api'
 import { formatINR, formatDateTime, orDash } from '../lib/format'
 import { StatCard } from '../components/ui/StatCard'
+import { SkeletonCard } from '../components/ui/Skeleton'
 import { DataTable, type Column } from '../components/ui/DataTable'
 import type { Pair, PairsRes, Dashboard as DashboardType } from '../types/api'
 
 export default function PairMatch() {
   const { t } = useTranslation()
 
-  const { data: dash } = useQuery<DashboardType>({
+  const { data: dash, isLoading: dashLoading } = useQuery<DashboardType>({
     queryKey: ['dashboard'],
     queryFn: () => api.get('/dashboard').then(r => r.data),
   })
@@ -57,17 +58,23 @@ export default function PairMatch() {
       </div>
 
       {/* Summary header */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard label="Total Pairs" value={orDash(dash?.counters.pairsMatched, String)} icon={<GitMerge />} tint="primary" />
-        <StatCard label="Total Bonus" value={orDash(dash?.pairMatchIncomePaise, formatINR)} icon={<TrendingUp />} tint="success" />
-        <StatCard
-          label={`${t('counters.active')} L · R`}
-          value={dash ? `${dash.counters.leftActive} · ${dash.counters.rightActive}` : '—'}
-          icon={<GitMerge />}
-          tint="violet"
-        />
-        <StatCard label="Today's Bonus" value={orDash(dash?.todayPairBonusPaise, formatINR)} icon={<TrendingUp />} tint="warning" />
-      </div>
+      {dashLoading ? (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <SkeletonCard /><SkeletonCard /><SkeletonCard /><SkeletonCard />
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <StatCard label="Total Pairs" value={orDash(dash?.counters.pairsMatched, String)} icon={<GitMerge />} tint="primary" />
+          <StatCard label="Total Bonus" value={orDash(dash?.pairMatchIncomePaise, formatINR)} icon={<TrendingUp />} tint="success" />
+          <StatCard
+            label={`${t('counters.active')} L · R`}
+            value={dash ? `${dash.counters.leftActive} · ${dash.counters.rightActive}` : '—'}
+            icon={<GitMerge />}
+            tint="violet"
+          />
+          <StatCard label="Today's Bonus" value={orDash(dash?.todayPairBonusPaise, formatINR)} icon={<TrendingUp />} tint="warning" />
+        </div>
+      )}
 
       {/* Carry forward */}
       {dash && (

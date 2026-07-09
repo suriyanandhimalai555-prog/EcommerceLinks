@@ -5,6 +5,7 @@ import api from '../lib/api'
 import { formatDate, orDash } from '../lib/format'
 import { DataTable, type Column } from '../components/ui/DataTable'
 import { Badge } from '../components/ui/Badge'
+import { Skeleton } from '../components/ui/Skeleton'
 import type { DirectMember, NetworkSummary } from '../types/api'
 
 export default function DirectMembers() {
@@ -31,7 +32,7 @@ export default function DirectMembers() {
     { key: 'joined', header: 'Joined', render: r => <span className="text-xs text-ink-muted">{formatDate(r.joinedAt)}</span> },
   ]
 
-  const { data: summary } = useQuery<NetworkSummary>({
+  const { data: summary, isLoading: summaryLoading } = useQuery<NetworkSummary>({
     queryKey: ['network-summary'],
     queryFn: () => api.get('/network/summary').then((r) => r.data),
   })
@@ -46,11 +47,17 @@ export default function DirectMembers() {
       <div className="grid grid-cols-2 gap-4">
         <div className="avg-card p-5">
           <p className="text-xs font-semibold text-ink-muted uppercase tracking-wider mb-1">Direct Left</p>
-          <p className="text-2xl sm:text-3xl font-bold text-primary">{orDash(summary?.directs.left, String)}</p>
+          {summaryLoading
+            ? <Skeleton className="h-8 w-16 mt-1" />
+            : <p className="text-2xl sm:text-3xl font-bold text-primary">{orDash(summary?.directs.left, String)}</p>
+          }
         </div>
         <div className="avg-card p-5">
           <p className="text-xs font-semibold text-ink-muted uppercase tracking-wider mb-1">Direct Right</p>
-          <p className="text-2xl sm:text-3xl font-bold text-violet">{orDash(summary?.directs.right, String)}</p>
+          {summaryLoading
+            ? <Skeleton className="h-8 w-16 mt-1" />
+            : <p className="text-2xl sm:text-3xl font-bold text-violet">{orDash(summary?.directs.right, String)}</p>
+          }
         </div>
       </div>
 

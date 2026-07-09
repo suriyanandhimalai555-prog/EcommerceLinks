@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import {
   Wallet, GitMerge, TrendingUp, Clock, ArrowUpRight, ShoppingBag,
-  ChevronRight, Info, Trophy, UserPlus, Users,
+  ChevronRight, Info, Trophy, UserPlus, Users, AlertCircle,
 } from 'lucide-react'
 import {
   ResponsiveContainer, XAxis, YAxis, CartesianGrid,
@@ -40,7 +40,7 @@ export default function Dashboard() {
     queryFn: () => api.get('/me').then((r) => r.data),
   })
 
-  const { data: dash, isLoading } = useQuery<DashboardType>({
+  const { data: dash, isLoading, isError, refetch } = useQuery<DashboardType>({
     queryKey: ['dashboard'],
     queryFn: () => api.get('/dashboard').then((r) => r.data),
   })
@@ -49,6 +49,17 @@ export default function Dashboard() {
     queryKey: ['tree', 'me', 2],
     queryFn: () => api.get('/network/tree?root=me&depth=2').then((r) => r.data),
   })
+
+  if (isError) return (
+    <div className="avg-card p-10 flex flex-col items-center gap-4 text-center">
+      <AlertCircle size={36} className="text-danger" />
+      <div>
+        <p className="text-sm font-semibold text-ink">Failed to load dashboard</p>
+        <p className="text-xs text-ink-muted mt-1">Check your connection and try again</p>
+      </div>
+      <button onClick={() => refetch()} className="avg-btn-secondary">Retry</button>
+    </div>
+  )
 
   if (isLoading || !dash) return (
     <div className="space-y-6">
@@ -177,9 +188,12 @@ export default function Dashboard() {
               <span className="text-sm text-ink-muted flex items-center gap-2">
                 <Trophy size={14} className="text-warning" />
                 <span>{t('counters.qualified')}</span>
-                <button title={t('counters.qualifiedTooltip')} className="cursor-help">
+                <span className="relative group/tooltip cursor-help inline-flex">
                   <Info size={11} className="text-ink-muted" />
-                </button>
+                  <span className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 w-60 -translate-x-1/2 rounded-lg bg-gray-900 px-3 py-2 text-xs leading-relaxed text-white opacity-0 shadow-lg transition-opacity duration-150 group-hover/tooltip:opacity-100">
+                    {t('counters.qualifiedTooltip')}
+                  </span>
+                </span>
               </span>
               <div className="flex items-center gap-2">
                 <Badge variant="success" size="sm">L: {d.counters.leftQualified}</Badge>

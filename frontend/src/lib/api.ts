@@ -48,6 +48,7 @@ api.interceptors.response.use(
           refreshToken,
         })
         tokenStore.setAccess(data.accessToken)
+        tokenStore.setRefresh(data.refreshToken) // persist the rotated refresh token
         processQueue(null, data.accessToken)
         original.headers.Authorization = `Bearer ${data.accessToken}`
         return api(original)
