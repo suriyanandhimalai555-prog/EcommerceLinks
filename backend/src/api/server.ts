@@ -1,35 +1,78 @@
-import Fastify, { FastifyRequest, FastifyReply } from 'fastify'
-import fjwt from '@fastify/jwt'
-import cors from '@fastify/cors'
-import { CFG } from '../config.js'
-import { authRoutes } from './auth.js'
-import { frontendRoutes } from './frontend.js'
-import { adminRoutes } from './admin.js'
+import cors from "@fastify/cors";
+import fjwt from "@fastify/jwt";
+import rateLimit from "@fastify/rate-limit";
+import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
+import { CFG } from "../config.js";
+import { pool } from "../lib/db.js";
+import { adminRoutes } from "./admin.js";
+import { authRoutes } from "./auth.js";
+import { frontendRoutes } from "./frontend.js";
 
 export const app = Fastify({
-  logger: { level: CFG.NODE_ENV === 'development' ? 'info' : 'warn' },
-})
+	logger: { level: CFG.NODE_ENV === "development" ? "info" : "warn" },
+});
 
-await app.register(cors, { origin: true })
+// G-9: CORS allowlist from env (space-separated origins); allow all in dev
+const allowedOrigins = CFG.CORS_ORIGINS.split(" ")
+	.map((s) => s.trim())
+	.filter(Boolean);
+await app.register(cors, {
+	origin: (origin, cb) => {
+		if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
+		cb(new Error("Not allowed by CORS"), false);
+	},
+});
 
-await app.register(fjwt, { secret: CFG.JWT_SECRET })
+// G-9: global rate limit (generous baseline); login route tightened below
+await app.register(rateLimit, {
+	global: false, // opt-in per-route; avoids breaking unit tests that inject many requests
+});
+
+await app.register(fjwt, { secret: CFG.JWT_SECRET });
 
 // Decorator: verifies JWT and attaches payload to request.user
-app.decorate('authenticate', async (request: FastifyRequest, reply: FastifyReply) => {
-  try {
-    await request.jwtVerify()
-  } catch {
-    reply.status(401).send({ error: 'Unauthorized' })
-  }
-})
+app.decorate(
+	"authenticate",
+	async (request: FastifyRequest, reply: FastifyReply) => {
+		try {
+			await request.jwtVerify();
+		} catch {
+			reply.status(401).send({ error: "Unauthorized" });
+		}
+	},
+);
 
-await app.register(authRoutes, { prefix: '/auth' })
-await app.register(frontendRoutes)
-await app.register(adminRoutes, { prefix: '/admin' })
+// Decorator: verifies JWT and checks role='admin' in DB (DB lookup avoids stale JWT claims)
+app.decorate(
+	"requireAdmin",
+	async (request: FastifyRequest, reply: FastifyReply) => {
+		try {
+			await request.jwtVerify();
+		} catch {
+			reply.status(401).send({ error: "Unauthorized" });
+			return;
+		}
+		const user = request.user as { sub: string };
+		const { rows } = await pool().query<{ role: string }>(
+			"SELECT role FROM members WHERE id = $1",
+			[user.sub],
+		);
+		if (!rows[0] || rows[0].role !== "admin") {
+			reply.status(403).send({ error: "Forbidden" });
+		}
+	},
+);
 
-app.get('/health', async () => ({ status: 'ok' }))
+await app.register(authRoutes, { prefix: "/auth" });
+await app.register(frontendRoutes);
+await app.register(adminRoutes, { prefix: "/admin" });
 
-if (process.argv[1]?.endsWith('server.ts') || process.argv[1]?.endsWith('server.js')) {
-  await app.listen({ port: CFG.PORT, host: '0.0.0.0' })
-  console.log(`AVG API listening on port ${CFG.PORT}`)
+app.get("/health", async () => ({ status: "ok" }));
+
+if (
+	process.argv[1]?.endsWith("server.ts") ||
+	process.argv[1]?.endsWith("server.js")
+) {
+	await app.listen({ port: CFG.PORT, host: "0.0.0.0" });
+	console.log(`AVG API listening on port ${CFG.PORT}`);
 }

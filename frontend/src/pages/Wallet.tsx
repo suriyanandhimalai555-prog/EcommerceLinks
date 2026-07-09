@@ -1,40 +1,22 @@
-import { useState } from 'react'
-import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useInfiniteQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Wallet as WalletIcon, ArrowUpRight, Clock, AlertCircle, Loader2 } from 'lucide-react'
-import { useForm } from 'react-hook-form'
-import { zodResolver } from '@hookform/resolvers/zod'
-import { z } from 'zod'
+import { Wallet as WalletIcon, Clock } from 'lucide-react'
 import api from '../lib/api'
 import { formatINR, formatDateTime, orDash } from '../lib/format'
 import { StatCard } from '../components/ui/StatCard'
 import { SkeletonCard } from '../components/ui/Skeleton'
-import { Modal } from '../components/ui/Modal'
 import { DataTable, type Column } from '../components/ui/DataTable'
 import { Badge } from '../components/ui/Badge'
-import { FormField } from '../components/ui/FormField'
-import type { Wallet as WalletType, LedgerEntry, LedgerRes, Withdrawal } from '../types/api'
-
-const withdrawSchema = z.object({
-  amount: z.number().min(500, 'Minimum withdrawal is ₹500'),
-})
-type WithdrawForm = z.infer<typeof withdrawSchema>
+import type { Wallet as WalletType, LedgerEntry, LedgerRes } from '../types/api'
 
 export default function Wallet() {
   const { t } = useTranslation()
-  const qc = useQueryClient()
-  const [showModal, setShowModal] = useState(false)
 
   const { data: wallet, isLoading: walletLoading } = useQuery<WalletType>({
     queryKey: ['wallet'],
     queryFn: () => api.get('/wallet').then(r => r.data),
   })
-  const { data: withdrawals } = useQuery<{ items: Withdrawal[] }>({
-    queryKey: ['withdrawals'],
-    queryFn: () => api.get('/withdrawals').then(r => r.data),
-  })
 
-  // Infinite query for ledger — replaces the mock-seeded useState + fake cursor
   const ledgerQ = useInfiniteQuery({
     queryKey: ['wallet-ledger'],
     queryFn: ({ pageParam }) =>
@@ -44,28 +26,9 @@ export default function Wallet() {
   })
   const ledgerItems = ledgerQ.data?.pages.flatMap(p => p.items) ?? []
 
-  // Guard divide-by-zero: capPaise can be 0 on a fresh account
   const windowPct = wallet?.currentWindow && wallet.currentWindow.capPaise > 0
     ? Math.min(100, (wallet.currentWindow.earnedPaise / wallet.currentWindow.capPaise) * 100)
     : 0
-
-  const { register, handleSubmit, formState: { errors }, setError, reset } = useForm<WithdrawForm>({
-    resolver: zodResolver(withdrawSchema),
-  })
-
-  const withdraw = useMutation({
-    mutationFn: (data: WithdrawForm) => api.post('/withdrawals', { amountPaise: data.amount * 100 }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['wallet'] })
-      qc.invalidateQueries({ queryKey: ['withdrawals'] })
-      qc.invalidateQueries({ queryKey: ['wallet-ledger'] })
-      setShowModal(false)
-      reset()
-    },
-    onError: (err: any) => {
-      setError('root', { message: err.response?.data?.error?.message || 'Withdrawal failed' })
-    },
-  })
 
   const ledgerCols: Column<LedgerEntry>[] = [
     { key: 'date', header: 'Date', render: r => <span className="text-xs text-ink-muted">{formatDateTime(r.at)}</span> },
@@ -84,29 +47,13 @@ export default function Wallet() {
     },
   ]
 
-  const wdCols: Column<Withdrawal>[] = [
-    { key: 'id', header: 'ID', render: r => <span className="font-mono text-xs">{r.id}</span> },
-    { key: 'amount', header: 'Amount', render: r => <span className="font-semibold">{formatINR(r.amountPaise)}</span> },
-    {
-      key: 'status', header: 'Status',
-      render: r => <Badge variant={r.status === 'done' ? 'success' : r.status === 'failed' ? 'danger' : 'warning'}>{r.status}</Badge>
-    },
-    { key: 'date', header: 'Requested', render: r => <span className="text-xs text-ink-muted">{formatDateTime(r.requestedAt)}</span> },
-  ]
-
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-xl font-bold text-ink">Wallet</h1>
-          <p className="text-sm text-ink-muted">Manage your earnings and withdrawals</p>
-        </div>
-        <button onClick={() => setShowModal(true)} className="avg-btn-primary sm:self-auto self-start">
-          <ArrowUpRight size={15} /> {t('wallet.requestWithdrawal')}
-        </button>
+      <div>
+        <h1 className="text-xl font-bold text-ink">Wallet</h1>
+        <p className="text-sm text-ink-muted">{t('wallet.deferred')}</p>
       </div>
 
-      {/* Stat cards */}
       {walletLoading ? (
         <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
           <SkeletonCard /><SkeletonCard /><SkeletonCard />
@@ -138,7 +85,6 @@ export default function Wallet() {
         </div>
       )}
 
-      {/* Ledger */}
       <div className="avg-card">
         <div className="p-5 border-b border-surface-line">
           <h2 className="text-sm font-semibold text-ink">Transaction Ledger</h2>
@@ -152,44 +98,6 @@ export default function Wallet() {
           emptyTitle="No transactions yet"
         />
       </div>
-
-      {/* Withdrawals */}
-      <div className="avg-card">
-        <div className="p-5 border-b border-surface-line">
-          <h2 className="text-sm font-semibold text-ink">Withdrawal Requests</h2>
-        </div>
-        <DataTable
-          columns={wdCols}
-          data={withdrawals?.items ?? []}
-          rowKey={r => r.id}
-          emptyTitle="No withdrawals yet"
-        />
-      </div>
-
-      {/* Withdrawal modal */}
-      <Modal open={showModal} onClose={() => setShowModal(false)} title={t('wallet.requestWithdrawal')} size="sm">
-        <form onSubmit={handleSubmit((d) => withdraw.mutate(d))} className="space-y-4">
-          {errors.root && (
-            <div className="flex items-center gap-2 bg-red-50 text-danger text-sm p-3 rounded-lg border border-danger/20">
-              <AlertCircle size={14} /> {errors.root.message}
-            </div>
-          )}
-          <FormField
-            label="Amount (₹)"
-            type="number"
-            min={500}
-            max={wallet ? wallet.balancePaise / 100 : undefined}
-            placeholder="Enter amount in rupees"
-            {...register('amount', { valueAsNumber: true })}
-            error={errors.amount?.message}
-            hint={`Available: ${orDash(wallet?.balancePaise, formatINR)} · ${t('wallet.minWithdrawal')}`}
-          />
-          <button type="submit" disabled={withdraw.isPending} className="avg-btn-primary w-full py-3">
-            {withdraw.isPending ? <Loader2 size={15} className="animate-spin" /> : <ArrowUpRight size={15} />}
-            Submit Withdrawal
-          </button>
-        </form>
-      </Modal>
     </div>
   )
 }

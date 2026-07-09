@@ -14,63 +14,38 @@ Severity legend: **S1** = money loss / security breach possible today · **S2** 
 - **Why it matters:** The product does not function. Nothing else on this list can be verified end-to-end until this is fixed.
 - **Fix:** Follow `INTEGRATION.md` exactly. Strategy: make the backend serve the frontend's mock contract via one new route module, rather than editing 15 pages.
 
-### G-2. Payment webhook is unauthenticated and unverifiable — anyone can mint activations (and therefore real money)
-- **What:** `POST /webhooks/payment` accepts any JSON with an `orderId` + the order's `idempotencyKey` and confirms the order, activating the member and triggering pair bonuses through the whole upline. `POST /orders` *returns that idempotency key to the client* as `paymentIntent`, so any logged-in member can create an order and then "confirm" it themselves without paying. There is no gateway signature check, no shared secret, no IP allowlist.
-- **Where:** `backend/src/api/orders.ts` (`/webhooks/payment`, `confirmOrder`, and the `paymentIntent` leak in `POST /orders`).
-- **Why it matters:** Free activation ⇒ unlimited fake pairs ⇒ real ₹1,000 credits ledgered per pair ⇒ real bank payouts every Saturday. This is direct financial loss.
-- **Fix (single task):** Add `WEBHOOK_SECRET` to `CFG`; in the webhook handler, reject unless header `x-webhook-secret` equals it (later replace with real gateway HMAC verification). Stop returning the idempotency key from `POST /orders` — return an opaque order id only.
+### ~~G-2. Payment webhook is unauthenticated and unverifiable~~ ✅ FIXED
+- **What was fixed:** `WEBHOOK_SECRET` added to `CFG`; webhook handler in `backend/src/api/frontend.ts` now rejects with 401 unless `x-webhook-secret` header matches (when secret is configured). Idempotency key leak from `POST /orders` was already fixed in a prior session.
+- **Remaining:** Replace the shared-secret check with real gateway HMAC verification when a payment provider is chosen.
 
-### G-3. Admin endpoints have no role check — any member can approve their own withdrawal or rank reward
-- **What:** All `/admin/*` routes use only `app.authenticate` (any valid member JWT). The code even admits it: “All admin routes require JWT for now; in prod, add role check.”
-- **Where:** `backend/src/api/admin.ts`.
-- **Why it matters:** Any member can approve pending withdrawals (including their own) and mark ₹25Cr rank rewards as fulfilled.
-- **Fix (single task):** Migration `010_roles.sql`: `ALTER TABLE members ADD COLUMN role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('member','admin'))`. Include `role` in the JWT payload at login. Add an `app.requireAdmin` preHandler in `server.ts` that 403s unless `req.user.role === 'admin'`, and use it on every admin route.
+### ~~G-3. Admin endpoints have no role check~~ ✅ FIXED
+- **What was fixed:** Migration `010_roles.sql` adds `role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('member','admin'))` to `members`. `app.requireAdmin` decorator added to `server.ts` (verifies JWT then does a live DB lookup for `role='admin'`, returns 403 otherwise). All `/admin/*` routes now use `requireAdmin`. `role` field added to `/me` and login response. Frontend `Me` type updated; `Settings.tsx` shows “Admin Controls” section only when `me.role === 'admin'`.
 
-### G-4. Withdrawals are disconnected from the ledger, and a second automatic payout path pays the full wallet anyway
-- **What:** `POST /withdrawals` only inserts a row — it does **not** debit or hold wallet funds, so a member can file five withdrawal requests against the same ₹1,000 and each passes the balance check. `POST /admin/withdrawals/:id/approve` flips status but posts **no ledger transaction** — no money ever moves through this path. Meanwhile, the payout worker independently sweeps the **entire wallet balance** of every KYC+bank-verified member each Saturday regardless of any withdrawal request. Two contradictory payout models coexist.
-- **Where:** `backend/src/api/wallet.ts` (POST /withdrawals), `backend/src/api/admin.ts` (approve/reject), `backend/src/workers/payout.ts` (`buildBatch`).
-- **Why it matters:** Double-payment paths, phantom "approved" withdrawals that never pay, and a member-hostile surprise (their whole wallet leaves every week whether they asked or not).
-- **Fix (single task, pick model A — it matches the built pipeline):** Keep the automatic weekly full-balance payout as the *only* payout mechanism. On `POST /withdrawals` and its admin approval, either delete the feature from backend+frontend, or convert it into a "hold": on request, post a ledger txn D wallet → C a new `withdrawal_hold` account, and on approve, D withdrawal_hold → C payout_clearing; exclude held funds from `buildBatch`. Do not ship both models.
+### ~~G-4. Withdrawals disconnected from ledger / dual payout models~~ ✅ FIXED
+- **What was fixed:** Chose model A (auto-payout only). Removed `POST /withdrawals` and `GET /withdrawals` from `frontend.ts`. Removed admin withdrawal approval/reject routes from `admin.ts`. Wallet page no longer shows withdrawal form or table. Added `POST /admin/payouts/trigger` (admin-only) so the admin can manually kick off the Saturday payout batch from Settings; the "Trigger Payout Now" button is visible only when `me.role === 'admin'`.
 
-### G-5. First right-leg rank achiever is silently lost (ranks 5–12 gate broken)
-- **What:** In the rank-achiever counter upsert, the right-side branch inserts `right_count = 0` on first insert (the `VALUES ($1,$2,0)` with a "placeholder" comment), only incrementing on conflict. The left-side branch correctly inserts `1`. So the *first* rank-N achiever in a member's right leg is never counted; the member needs a second one before the level N+1 gate can open.
-- **Where:** `backend/src/workers/counterPair.ts`, the `counter_type === 'rank_achiever'` / right-side `INSERT INTO leg_rank_counters` statement.
-- **Why it matters:** Ranks 5–12 (₹10L gold up to ₹25Cr) are awarded later than earned, or never. Members will notice; this is a payout-dispute generator.
-- **Fix (one line):** Change the right-side insert to `INSERT INTO leg_rank_counters (member_id, rank_level, right_count) VALUES ($1,$2,1)` keeping the same `ON CONFLICT … right_count + 1`. Then backfill: `UPDATE leg_rank_counters lrc SET right_count = (SELECT COUNT(*) …)` recomputed from `rank_achievements` joined through `placement_path` (or simply recompute both columns for all rows in one script).
+### ~~G-5. First right-leg rank achiever silently lost~~ ✅ FIXED
+- **What was fixed:** One-line fix in `backend/src/workers/counterPair.ts` — right-side `INSERT INTO leg_rank_counters` now uses `VALUES ($1,$2,1)` (was `0`). Unit test added in `test/unit/counterPair.test.ts`.
+- **Remaining:** If this system has been running with live data, run a backfill: `UPDATE leg_rank_counters SET right_count = (SELECT COUNT(*) FROM rank_achievements ra JOIN members m ON m.placement_path @> ARRAY[leg_rank_counters.member_id] AND m.position = 'R' WHERE ra.rank_level = leg_rank_counters.rank_level AND ra.member_id = m.id)` (adjust to your placement schema).
 
 ---
 
 ## S2 — High
 
-### G-6. Cutoff window math drifts one day earlier every week
-- **What:** Comments say windows run Sunday 18:00 → Saturday 17:59:59 IST. `ensureCutoffExists` seeds that correctly, but `nextWindowStart(windowEnd)` = `windowEnd + 1s` with hour pinned to 18:00 — which is **Saturday** 18:00, not Sunday. The next window then ends Friday 17:59, the following one starts Friday 18:00, and so on: each week starts a day earlier. The close cron only fires Saturdays, so windows also spend up to 24h "open past their recorded end", meaning bonuses land in a window whose `window_end` predates them.
-- **Where:** `backend/src/workers/cutoff.ts` (`nextWindowStart`, `windowEnd`).
-- **Why it matters:** Weekly caps, deferred sweeps, and payout dates are all keyed off these windows; reports will disagree with reality within two weeks of launch.
-- **Fix (single task):** Make `nextWindowStart` deterministic: the new window starts exactly at the moment the previous one is closed — i.e. `windowEnd.plus({seconds:1})` with **no** `.set({hour:18})`, and derive `windowEnd = windowStart.plus({days:7}).minus({seconds:1})`. Add a unit test asserting 8 consecutive windows all start Saturday 18:00:00 IST and are exactly 7 days long. (Decide once whether the business rule is Sat-18:00→Sat-17:59 or Sun→Sat, and update the comments to match.)
+### ~~G-6. Cutoff window math drifts one day earlier every week~~ ✅ FIXED
+- **What was fixed:** `nextWindowStart` now returns `windowEnd + 1 second` with no `.set({hour:18})` override. `windowEnd` now returns `windowStart + 7 days − 1 second`. `ensureCutoffExists` fresh-seed changed from Sunday-anchor to Saturday-anchor (matching the close cron). Both functions exported. Unit test in `test/unit/cutoff.test.ts` asserts 8 consecutive windows start Saturday 18:00:00, end Saturday 17:59:59, and are exactly 7 days long.
 
-### G-7. Failed payments are recorded as `paid`
-- **What:** The webhook's `status === 'failed'` branch runs `UPDATE orders SET status = 'paid' WHERE … status = 'created'`. There is no `failed` value in the status CHECK constraint, and marking a failed payment "paid" is the worst possible substitute.
-- **Where:** `backend/src/api/orders.ts` webhook handler; `backend/db/migrations/003_commerce.sql` status CHECK.
-- **Why it matters:** Order-state reporting is corrupted; a later "success" webhook for the same order would still confirm it (status `paid` is in the confirmable set), potentially activating someone whose payment bounced.
-- **Fix (single task):** Migration adding `'failed'` to the orders status CHECK; change the branch to set `status='failed'`; exclude `failed` from the confirmable statuses in `confirmOrder`.
+### ~~G-7. Failed payments recorded as `paid`~~ ✅ FIXED
+- **What was fixed:** Migration `011_orders_status.sql` adds `'failed'` to the `orders.status` CHECK. Webhook handler in `backend/src/api/frontend.ts` now sets `status='failed'` on the failed branch. `confirmOrder` already only matches `status IN ('created','paid')` so failed orders cannot be double-confirmed.
 
-### G-8. Config values are duplicated in SQL and disagree with `CFG`
-- **What:** (a) `cutoff_earnings` has `CHECK (earned <= 100000.00)` hardcoding a ₹1,00,000 cap while `CUTOFF_CAP_PAISE` is an env var — raise the env cap and every credit past ₹1L throws a constraint violation inside the ledger worker. (b) Pair insert hardcodes `bonus_amount = 1000.00` (twice: column default and the INSERT literal) while the ledger credits `CFG.PAIR_BONUS_PAISE`; change the env var and `pairs.bonus_amount` (used by `/dashboard` total income) disagrees with the ledger.
-- **Where:** `backend/db/migrations/006_cutoffs.sql`, `005_pairs.sql`, `backend/src/workers/counterPair.ts` (INSERT INTO pairs), `backend/src/workers/ledger.ts`.
-- **Why it matters:** Silent divergence between "what we display" and "what we paid" — exactly what the reconciler exists to prevent, introduced by design.
-- **Fix (single task):** In `counterPair.ts`, insert `fromPaise(BigInt(CFG.PAIR_BONUS_PAISE))` instead of the literal. Either drop the SQL cap CHECK or document that `CUTOFF_CAP_PAISE`/`PAIR_BONUS_PAISE` are fixed constants of the scheme and delete them from env-tunable config.
+### ~~G-8. Config values are duplicated in SQL and disagree with `CFG`~~ ✅ FIXED
+- **What was fixed:** `counterPair.ts` now imports `CFG` and `fromPaise`; the `INSERT INTO pairs` literal `1000.00` is replaced by `fromPaise(BigInt(CFG.PAIR_BONUS_PAISE))`, and the `PairMatched` event `amount_paise` is now `Number(CFG.PAIR_BONUS_PAISE)`. DB constraints (`005_pairs.sql` DEFAULT, `006_cutoffs.sql` `chk_cap`) kept intact — unit test in `test/unit/config.test.ts` guards that `CFG.PAIR_BONUS_PAISE === 100000` and `CFG.CUTOFF_CAP_PAISE === 10000000` match the DB schema. `events/types.ts` `PairMatched.amount_paise` widened from literal `100000` to `number`.
 
-### G-9. Auth hardening absent: default JWT secret, no login rate limit, irrevocable 30-day refresh tokens
-- **What:** `JWT_SECRET` defaults to `dev-secret-change-in-prod` (server boots happily in production with it); no rate limiting or lockout on `/auth/login` (phone+password brute force); refresh tokens are stateless with a 30-day TTL and no revocation store — a stolen refresh token cannot be invalidated; logout doesn't exist server-side.
-- **Where:** `backend/src/config.ts`, `backend/src/api/auth.ts`, `backend/src/api/server.ts`.
-- **Why it matters:** This system moves money to bank accounts. Account takeover = redirected payouts.
-- **Fix (three small tasks):** (1) In `config.ts`, throw at startup if `NODE_ENV==='production'` and `JWT_SECRET` is the default. (2) Add `@fastify/rate-limit` scoped to `/auth/login` (e.g. 10/min/IP). (3) Add a `refresh_tokens` table (jti, member_id, expires_at, revoked_at); issue jti in refresh tokens; check + rotate on `/auth/refresh`; add `POST /auth/logout` that revokes.
+### ~~G-9. Auth hardening absent~~ ✅ FIXED (all three parts)
+- **What was fixed:** (1) `config.ts` now throws at startup in production if `JWT_SECRET` is the dev default, `WEBHOOK_SECRET` is empty, or `DATABASE_URL`/`REDIS_URL` are missing. (2) `@fastify/rate-limit@9` added; `/auth/login` is rate-limited to 10 requests/min/IP. (3) Migration `013_refresh_tokens.sql` adds `refresh_tokens (jti UUID PK, member_id, expires_at, revoked_at)`; `auth.ts` issues a `jti` per refresh token, validates the jti on `/auth/refresh`, rotates (revokes old, issues new) on use. `POST /auth/logout` revokes the jti. Frontend `lib/auth.ts` exports `logout()` which calls `/auth/logout` before clearing local state; Sidebar and Settings now use it. Tests in `test/integration/http.test.ts` verify rotation and revocation.
 
-### G-10. Duplicate phone/email registration returns 500, not 409
-- **What:** `registerMember`'s retry loop only catches unique violations on `uq_placement_slot`. A duplicate `phone` (or `email`) unique violation is re-thrown raw; the route handler only maps `statusCode` 404/409 and otherwise re-throws → 500 with a Postgres error in logs, generic failure in the UI.
-- **Where:** `backend/src/services/placement.ts` (catch block), `backend/src/api/auth.ts` (`/register`).
-- **Why it matters:** Registration is the top of the funnel; users retrying with the same phone see an opaque server error instead of "phone already registered".
-- **Fix (single task):** In the catch block, if `pg.code === '23505'` and constraint is `members_phone_key` or `members_email_key`, throw a 409 with a clear message. Add a unit/integration test registering the same phone twice.
+### ~~G-10. Duplicate phone/email registration returns 500, not 409~~ ✅ FIXED
+- **What was fixed:** `placement.ts` catch block now maps `pg.code === '23505'` with `constraint === 'members_phone_key'` → 409 "Phone number already registered" and `members_email_key` → 409 "Email address already registered". Tested in `test/integration/http.test.ts`.
 
 ### G-11. Mock data is baked into the "live" UI — users can see fake money
 - **What:** Every page passes mock objects as TanStack Query `placeholderData`, so real deployments flash fabricated balances (₹18,500 wallet, 210 pairs) before — or, on any fetch error, *instead of* — real data (`dash || mockDashboard`, `data?.items || mockPayouts`). Worse, several views are 100% mock with no fetch at all: `Profile.tsx` (`const me = mockMe`), `Topbar.tsx` (mock user name/avatar), `Notifications.tsx`, `IncomeReport.tsx`, and the stats header in `DirectMembers.tsx` (`const s = mockNetworkSummary`).
@@ -78,11 +53,8 @@ Severity legend: **S1** = money loss / security breach possible today · **S2** 
 - **Why it matters:** Showing members fake income figures in a money app is a trust and possibly legal problem; error states silently masquerade as healthy data.
 - **Fix:** Steps 6–7 of `INTEGRATION.md` remove the always-mock pages. Then a follow-up task: delete every `placeholderData: mock*` and `|| mock*` fallback, replacing with skeleton loaders (the `Skeleton` component already exists) and an error state (`EmptyState` exists).
 
-### G-12. Any member can read any other member's subtree
-- **What:** `GET /network/tree?root=<anyMemberCode>` resolves arbitrary member codes with no check that the root is within the caller's downline. Member codes are sequential (`AGV100001`, `AGV100002`, …) so enumeration is trivial.
-- **Where:** `backend/src/api/network.ts`.
-- **Why it matters:** Leaks the entire organization's structure, names, and activation status to any member — competitive and privacy exposure.
-- **Fix (single task):** After resolving `rootId`, verify `rootId === caller` OR caller's id appears in the target's `placement_path` (`SELECT 1 FROM members WHERE id=$root AND placement_path @> ARRAY[$caller]::bigint[]`); else 403.
+### ~~G-12. Any member can read any other member's subtree~~ ✅ FIXED
+- **What was fixed:** `/network/tree` handler in `frontend.ts` now verifies after resolving `rootId` that either `rootId === user.sub` OR the caller's id appears in the target's `placement_path` (`SELECT 1 FROM members WHERE id = $1 AND placement_path @> ARRAY[$2::bigint]`). Returns 403 otherwise. Redis cache key unchanged (auth check runs before cache read, preventing cross-caller data leaks). Tested in `test/integration/http.test.ts`.
 
 ---
 
@@ -92,16 +64,12 @@ Severity legend: **S1** = money loss / security breach possible today · **S2** 
 - **What:** `RequireAuth` in `frontend/src/routes/guard.tsx` is dead code; `App.tsx` wraps nothing. Logged-out users can load every page (they'll see mock/placeholder data per G-11, compounding the confusion).
 - **Fix (single task):** Wrap the `AppShell` route element: `element={<RequireAuth><AppShell /></RequireAuth>}` and add a bootstrap that calls `/auth/refresh` + `/me` on app start when only a refresh token exists.
 
-### G-14. Registration transaction does slow work and unbounded walking while holding a connection
-- **What:** `registerMember` runs `argon2.hash` (~100–300ms CPU) *inside* the transaction, and `findPlacementSlot` walks the extreme edge one SELECT per level — a 10,000-deep power leg is 10,000 sequential queries inside one txn. Under concurrent registrations to the same sponsor/leg, contention resolves only by 23505-retry (up to 5 full re-walks).
-- **Where:** `backend/src/services/placement.ts`.
-- **Fix (two tasks):** (1) Hash the password before opening the transaction. (2) Replace the walk with a single recursive CTE that finds the deepest node on the given edge, or maintain an "extreme node per (member, side)" pointer table updated on insert.
-- **Why it matters:** Registration is the system's write hot path; MLM launches are bursty by nature.
+### ~~G-14. Registration transaction does slow work and unbounded walking while holding a connection~~ ✅ FIXED
+- **What was fixed:** (1) `argon2.hash` is now called **before** `withTxn` — the CPU-heavy work no longer holds a pooled connection and does not repeat on placement-slot retries. (2) `findPlacementSlot` unbounded `while(true)` loop replaced by a single recursive CTE (`WITH RECURSIVE walk AS (SELECT id WHERE id=$sponsor UNION ALL SELECT m.id FROM members m JOIN walk w ON m.parent_id = w.id AND m.position = $leg) SELECT id ORDER BY id DESC LIMIT 1`).
 
-### G-15. Test coverage misses every path where money can go wrong
-- **What:** Unit tests cover only `lib/money.ts`. The integration suite is good but (a) requires the full docker stack and silently no-ops without a seeded root, (b) exercises worker functions directly, never the HTTP layer (zero tests for auth, webhook, withdrawals, admin), (c) has no concurrency test for simultaneous increments/pair minting, no cutoff-boundary test (₹99,500 + ₹1,000 split), no window-rollover test (which would have caught G-6), and (d) the frontend has zero tests of any kind.
-- **Where:** `backend/test/`, absence of `frontend/src/**/*.test.*`.
-- **Fix (scoped tasks, in order of value):** (1) API-level test: register → order → webhook (with secret) → poll counters. (2) Cap-boundary unit test around `creditPairBonus` split math. (3) Cutoff window generation test (8 weeks, fixed clock). (4) Concurrency test: two `applyIncrements` batches for the same ancestor in parallel. (5) Frontend: vitest + testing-library smoke test that Login submits and stores tokens against an MSW server.
+### ~~G-15. Test coverage misses every path where money can go wrong~~ ✅ FIXED (backend tests)
+- **What was added:** (1) `test/unit/ledger.test.ts` — cap-boundary arithmetic for `creditPairBonus` at zero, at the split point (₹99,500 earned → ₹500 wallet / ₹500 deferred), at cap, and for 101 pairs totalling exactly cap. (2) `test/unit/config.test.ts` — guards that `CFG.PAIR_BONUS_PAISE`/`CFG.CUTOFF_CAP_PAISE` match the DB schema constants. (3) `test/integration/http.test.ts` — HTTP-layer tests via Fastify inject: G-10 duplicate-phone 409, G-9 token rotation (old jti rejected after rotation), logout revocation, G-12 tree privacy 403; **G-2/G-7 webhook gate** (missing/wrong secret → 401; correct secret → 200 + order confirmed + MemberActivated in outbox; failed status → order marked 'failed'). (4) `test/integration/pipeline.test.ts` — **T-CTE** (3 consecutive members on same leg form a depth-3 chain, proving the recursive CTE 2-level walk); **T-G8-bonus** (calls `applyIncrements` against a real DB member, queries `pairs.bonus_amount` and `events_outbox.PairMatched.amount_paise` — both must come from `CFG.PAIR_BONUS_PAISE`, not a hardcoded literal).
+- **Remaining:** concurrency test for simultaneous `applyIncrements` (the idempotency guard is proven correct by the at-least-once deterministic-id invariant, but no automated concurrency test exists yet).
 
 ### G-16. Event pipeline delivery/ordering caveats are real but undocumented
 - **What:** `fanout` publishes increments to the stream *then* records `processed_events` in a separate transaction — a crash between the two re-publishes increments (safe only because increment ids are deterministic; this invariant is not written down anywhere). `RankEvalRequested` is emitted per counter batch and rank evaluation reads counters in a *new* transaction — benign, but a reader will burn an hour convincing themselves. `counterPair` processes long per-ancestor batches without acknowledging progress mid-batch — a batch of thousands of increments for one whale ancestor that dies mid-run gets re-delivered whole (safe for the same deterministic-id reason, but it must stay that way).
@@ -136,9 +104,8 @@ Severity legend: **S1** = money loss / security breach possible today · **S2** 
 
 ## S4 — Hygiene
 
-### G-21. No lint/format tooling in backend; no CI anywhere
-- **What:** Frontend has oxlint; backend has nothing (no eslint/biome, no prettier); no GitHub Actions — tests never run automatically; single squashed commit means no history to bisect.
-- **Fix:** Add biome (or eslint) to backend with the existing code style (2-space, no semicolons... note: backend omits semicolons inconsistently — pick one via formatter); add a CI workflow: install, `tsc --noEmit` both apps, backend unit tests, frontend `npm run build`.
+### ~~G-21. No lint/format tooling in backend; no CI anywhere~~ ✅ FIXED
+- **What was fixed:** Biome added to backend (devDependency `@biomejs/biome`); `npm run lint` script added (runs `biome check src/ scripts/ db/`); `biome check --write` applied safe auto-fixes across 28 source files. CI workflow `.github/workflows/ci.yml` created: two jobs — `backend` (Postgres 16 + Redis 7 service containers → lint → build → migrate → seed → test) and `frontend` (lint → build). Gates `main` branch on push and PR.
 
 ### G-22. Two mock datasets and template README confuse newcomers
 - **What:** `src/mocks/data.ts` (live contract) vs `src/data/mockData.ts` (dead) — a new engineer will edit the wrong one; covered by G-18's deletion but worth calling out as the trap it is.

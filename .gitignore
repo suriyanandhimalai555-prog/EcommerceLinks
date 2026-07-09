@@ -1,0 +1,23 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment files — never commit secrets
+.env
+.env.local
+.env.*.local
+
+# Build outputs
+dist/
+backend/out/
+backend/dist/
+
+# Vite cache
+.vite/
+
+# Node
+node_modules/
+
+# Test cache
+.vitest/
+coverage/

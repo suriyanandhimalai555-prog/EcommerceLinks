@@ -8,10 +8,12 @@
     "start:api": "node dist/src/api/server.js",
     "start:workers": "node dist/src/workers/all.js",
     "migrate": "tsx db/migrate.ts",
+    "lint": "biome check src/",
     "build": "tsc",
     "test": "vitest run",
     "test:watch": "vitest",
     "seed": "tsx scripts/seedRoot.ts",
+    "reset": "tsx scripts/reset.ts",
     "simulate": "tsx scripts/simulate.ts",
     "worker:outbox": "tsx src/workers/outboxRelay.ts",
     "worker:fanout": "tsx src/workers/fanout.ts",
@@ -26,6 +28,7 @@
   "dependencies": {
     "@fastify/cors": "^9.0.0",
     "@fastify/jwt": "^8.0.1",
+    "@fastify/rate-limit": "^9.1.0",
     "argon2": "^0.40.3",
     "big.js": "^6.2.1",
     "dotenv": "^16.4.5",
@@ -37,6 +40,7 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.5.3",
     "@types/big.js": "^6.2.2",
     "@types/luxon": "^3.4.2",
     "@types/node": "^22.0.0",

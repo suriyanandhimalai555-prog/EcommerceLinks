@@ -22,6 +22,19 @@ export const tokenStore = {
 }
 
 /**
+ * G-9: revoke the current refresh token on the server before clearing local state.
+ * Best-effort — always clears local state even if the server call fails.
+ */
+export async function logout(): Promise<void> {
+  const refreshToken = tokenStore.getRefresh()
+  if (refreshToken) {
+    const base = import.meta.env.VITE_API_URL || 'http://localhost:3000'
+    await axios.post(`${base}/auth/logout`, { refreshToken }).catch(() => null)
+  }
+  tokenStore.clear()
+}
+
+/**
  * Called once on app boot (inside RequireAuth). If an access token is already
  * in memory (e.g. just logged in, no refresh needed) returns true immediately.
  * If a refresh token exists in localStorage, exchanges it for a fresh access

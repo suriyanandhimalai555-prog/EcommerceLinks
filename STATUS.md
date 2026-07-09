@@ -30,12 +30,43 @@
 | `npm run start:api` / `npm run start:workers` scripts added | ✅ Done |
 | `npm run build` clean, all 14 tests passing | ✅ Done |
 
+### Phase 3 — Gap fixes (PLAN.md Phase 7 step ③) — complete
+
+| Gap | Fix | Files |
+|---|---|---|
+| G-2 Webhook unauth | `WEBHOOK_SECRET` + `x-webhook-secret` header check | `config.ts`, `frontend.ts`, `011_orders_status.sql` |
+| G-3 Admin no role | `010_roles.sql` + `requireAdmin` decorator (DB lookup) + `role` in `/me` | `server.ts`, `admin.ts`, `frontend.ts`, `auth.ts`, `fastify.d.ts` |
+| G-4 Dual payout models | Removed withdrawal request feature; auto-payout is sole model; `POST /admin/payouts/trigger` added | `admin.ts`, `frontend.ts`, `Wallet.tsx`, `Settings.tsx` |
+| G-5 Right-leg rank count=0 | `VALUES ($1,$2,1)` one-liner | `counterPair.ts` |
+| G-6 Window drift | `nextWindowStart` drops hour override; `windowEnd = start+7d−1s`; Saturday-anchor seed | `cutoff.ts` |
+| G-7 Failed → paid | `status='failed'` on failed webhook branch | `frontend.ts`, `011_orders_status.sql` |
+
+**Migrations to apply:** `npm run migrate` (applies `010_roles.sql` and `011_orders_status.sql`)
+
+### Phase 4 — Remaining gap fixes + hardening (PLAN.md Phase 7 step ③ cont.)
+
+| Gap | Fix | Files |
+|---|---|---|
+| Admin never promoted | `012_root_admin.sql` promotes root to admin; seed script now inserts `role='admin'` | `012_root_admin.sql`, `scripts/seedRoot.ts` |
+| G-8 Config duplication | `counterPair.ts` now uses `CFG.PAIR_BONUS_PAISE` / `fromPaise()`; types widened; config constants test added | `counterPair.ts`, `events/types.ts`, `test/unit/config.test.ts` |
+| G-9 Auth hardening | (1) startup throws in prod on insecure defaults; (2) login rate-limited 10/min/IP; (3) `refresh_tokens` table + jti rotation + `POST /auth/logout`; frontend `logout()` calls server | `config.ts`, `auth.ts`, `server.ts`, `013_refresh_tokens.sql`, `frontend/src/lib/auth.ts`, `Sidebar.tsx`, `Settings.tsx` |
+| G-10 Dup registration 500 | catch block maps `members_phone_key`/`members_email_key` → 409 | `services/placement.ts` |
+| G-12 Tree privacy | `/network/tree` auth guard: `placement_path @> ARRAY[$caller]` else 403 | `api/frontend.ts` |
+| G-14 Registration perf | `argon2.hash` hoisted before `withTxn`; `findPlacementSlot` replaced with recursive CTE | `services/placement.ts` |
+| G-15 Tests | Cap-boundary math, config guard, HTTP-layer (dup-phone 409, token rotation, logout, tree 403, **G-2/G-7 webhook gate + failed status**), pipeline (**T-CTE** 2-level walk, **T-G8-bonus** `applyIncrements` DB round-trip → `pairs.bonus_amount` + outbox `amount_paise` both from CFG) | `test/unit/ledger.test.ts`, `test/unit/config.test.ts`, `test/integration/http.test.ts`, `test/integration/pipeline.test.ts` |
+| G-21 CI + lint | Biome added to backend (`npm run lint`); `.github/workflows/ci.yml` gates `main` | `biome.json`, `package.json`, `.github/workflows/ci.yml` |
+| G-18 Dead code | `App.css`, `react.svg`, `vite.svg`, `hero.png` deleted; root `.gitignore` added; tracked `.vite/` + `.DS_Store` removed from index | `.gitignore`, `frontend/src/` |
+
+**Migrations to apply:** `npm run migrate` (applies `012_root_admin.sql` and `013_refresh_tokens.sql`)
+
+**Test count:** 40 backend tests (7 files) — all pass
+
 ### Open gaps (see GAPS.md)
 
-- **G-2** — Webhook payment callback has no HMAC signature verification (security)
-- **G-3** — Admin role check not enforced on admin routes
-- **G-4** — Withdrawal request not connected to ledger worker
-- **G-7** — Failed payments get marked `paid` in the orders table
+- **G-11** — Cosmetic hardcodes (Topbar unreadCount, Profile "mobile verified", no-op save buttons) — not real-money bugs; cleanup deferred
+- **G-13** — Client-side route protection exists (RequireAuth is wired ✅); verify no pages bypass it
+- **G-5 backfill** — If production data exists, right-leg rank counts need a one-time backfill script
+- **Concurrency test** — No automated test for simultaneous `applyIncrements` to the same ancestor (correctness is proven by the deterministic-id invariant, but no test exists)
 
 ---
 

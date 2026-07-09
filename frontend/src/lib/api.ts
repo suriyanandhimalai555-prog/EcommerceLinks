@@ -2,7 +2,7 @@ import axios from 'axios'
 import { tokenStore } from './auth'
 
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:4000',
+  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:3000',
 })
 
 api.interceptors.request.use((config) => {
@@ -22,11 +22,16 @@ function processQueue(err: unknown, token: string | null) {
   failQueue = []
 }
 
+// Auth endpoints return 401 legitimately (wrong password, expired token check).
+// Never run the refresh-token interceptor on these — it causes a redirect loop.
+const AUTH_ROUTES = ['/auth/login', '/auth/refresh', '/auth/logout', '/auth/register']
+
 api.interceptors.response.use(
   (res) => res,
   async (error) => {
     const original = error.config
-    if (error.response?.status === 401 && !original._retry) {
+    const isAuthRoute = AUTH_ROUTES.some(r => original?.url?.endsWith(r))
+    if (error.response?.status === 401 && !original._retry && !isAuthRoute) {
       if (isRefreshing) {
         return new Promise((resolve, reject) => {
           failQueue.push({ resolve, reject })
@@ -44,7 +49,7 @@ api.interceptors.response.use(
         return Promise.reject(error)
       }
       try {
-        const { data } = await axios.post(`${import.meta.env.VITE_API_URL || 'http://localhost:4000'}/auth/refresh`, {
+        const { data } = await axios.post(`${import.meta.env.VITE_API_URL || 'http://localhost:3000'}/auth/refresh`, {
           refreshToken,
         })
         tokenStore.setAccess(data.accessToken)

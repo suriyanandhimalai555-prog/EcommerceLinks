@@ -1,6 +1,6 @@
 /**
  * Integration test for the full AVG pipeline.
- * Requires: docker compose up (postgres, redpanda, redis)
+ * Requires: Postgres 16 + Redis 7 running, migrations applied, root seeded.
  * Run: vitest run test/integration/pipeline.test.ts
  *
  * Covers acceptance criteria T4–T13 from the spec.
@@ -15,6 +15,7 @@ import { creditPairBonus, sweepDeferred } from '../../src/workers/ledger.js'
 import { evaluateRanks } from '../../src/workers/rank.js'
 import { ensureCutoffExists } from '../../src/workers/cutoff.js'
 import { toPaise, fromPaise, pct, pctRoundUp } from '../../src/lib/money.js'
+import { CFG } from '../../src/config.js'
 import { nextMemberCode } from '../../src/lib/ids.js'
 import type { CounterIncrement } from '../../src/events/types.js'
 import { randomUUID } from 'crypto'
@@ -223,6 +224,123 @@ describe('T13 – Payout TDS', () => {
     const net   = gross - tds
     expect(tds).toBe(50_000n)
     expect(net).toBe(950_000n)
+  })
+})
+
+// T-CTE: recursive CTE walks 2+ placement levels
+describe('T-CTE – findPlacementSlot walks 2+ levels via recursive CTE (G-14 regression guard)', () => {
+  it('3rd member on same sponsor+leg lands under the 2nd (C.parent=B, B.parent=A, A.parent=SPONSOR)', async () => {
+    const { rows: rootRows } = await pool().query<{ member_code: string }>(
+      'SELECT member_code FROM members WHERE parent_id IS NULL LIMIT 1'
+    )
+    if (!rootRows[0]) return
+
+    const ts = Date.now().toString().slice(-7)
+
+    // Create a fresh sponsor so we start from a clean L-leg
+    const { memberId: sponsorId, memberCode: sponsorCode } = await registerMember({
+      sponsorCode: rootRows[0].member_code, preferredLeg: 'R',
+      name: `CTESp${ts}`, phone: `7020${ts}`, password: 'Test@1234',
+    })
+
+    // A: SPONSOR.L is free → A.parent = sponsorId
+    const { memberId: aId } = await registerMember({
+      sponsorCode, preferredLeg: 'L',
+      name: `CTEA${ts}`, phone: `7021${ts}`, password: 'Test@1234',
+    })
+    // B: CTE walks SPONSOR → A (SPONSOR.L taken); A.L is free → B.parent = aId  (1-level walk)
+    const { memberId: bId } = await registerMember({
+      sponsorCode, preferredLeg: 'L',
+      name: `CTEB${ts}`, phone: `7022${ts}`, password: 'Test@1234',
+    })
+    // C: CTE walks SPONSOR → A → B; B.L is free → C.parent = bId  (2-level walk)
+    const { memberId: cId } = await registerMember({
+      sponsorCode, preferredLeg: 'L',
+      name: `CTEC${ts}`, phone: `7023${ts}`, password: 'Test@1234',
+    })
+
+    const { rows } = await pool().query<{ id: string; parent_id: string; position: string }>(
+      'SELECT id, parent_id, position FROM members WHERE id = ANY($1)',
+      [[String(aId), String(bId), String(cId)]]
+    )
+    const byId = Object.fromEntries(rows.map(r => [r.id, r]))
+
+    expect(byId[String(aId)].parent_id).toBe(String(sponsorId))  // A directly under SPONSOR
+    expect(byId[String(aId)].position).toBe('L')
+    expect(byId[String(bId)].parent_id).toBe(String(aId))        // B under A (1-level CTE walk)
+    expect(byId[String(bId)].position).toBe('L')
+    expect(byId[String(cId)].parent_id).toBe(String(bId))        // C under B (2-level CTE walk)
+    expect(byId[String(cId)].position).toBe('L')
+  })
+})
+
+// T-G8-bonus: applyIncrements writes pairs.bonus_amount from CFG, not a hardcoded literal
+describe('T-G8-bonus – applyIncrements.pairs.bonus_amount comes from CFG.PAIR_BONUS_PAISE (G-8 regression guard)', () => {
+  it('pairs.bonus_amount = "1000.00" and PairMatched.amount_paise = CFG.PAIR_BONUS_PAISE', async () => {
+    const { rows: rootRows } = await pool().query<{ member_code: string }>(
+      'SELECT member_code FROM members WHERE parent_id IS NULL LIMIT 1'
+    )
+    if (!rootRows[0]) return
+
+    const ts = Date.now().toString().slice(-7)
+
+    // Register an ancestor (gets a fresh member_counters row with 0/0/0)
+    const { memberId: ancestorId, memberCode: ancestorCode } = await registerMember({
+      sponsorCode: rootRows[0].member_code, preferredLeg: 'L',
+      name: `BonAnc${ts}`, phone: `7030${ts}`, password: 'Test@1234',
+    })
+    // Register L and R members — their IDs are needed as source_member_id in CounterIncrement
+    // (and as FK targets in leg_activations)
+    const { memberId: lMemberId } = await registerMember({
+      sponsorCode: ancestorCode, preferredLeg: 'L',
+      name: `BonL${ts}`, phone: `7031${ts}`, password: 'Test@1234',
+    })
+    const { memberId: rMemberId } = await registerMember({
+      sponsorCode: ancestorCode, preferredLeg: 'R',
+      name: `BonR${ts}`, phone: `7032${ts}`, password: 'Test@1234',
+    })
+
+    // Build a matching L+R batch — one pair should be minted
+    const leftInc: CounterIncrement = {
+      event_id: randomUUID(),
+      event_type: 'CounterIncrement',
+      occurred_at: new Date().toISOString(),
+      schema_version: 1,
+      source_member_id: Number(lMemberId),
+      ancestor_id: Number(ancestorId),
+      counter_type: 'active',
+      side: 'L',
+    }
+    const rightInc: CounterIncrement = {
+      event_id: randomUUID(),
+      event_type: 'CounterIncrement',
+      occurred_at: new Date().toISOString(),
+      schema_version: 1,
+      source_member_id: Number(rMemberId),
+      ancestor_id: Number(ancestorId),
+      counter_type: 'active',
+      side: 'R',
+    }
+
+    await applyIncrements(ancestorId, [leftInc, rightInc])
+
+    // Verify the pair was minted with the correct bonus_amount from CFG (not a hardcoded literal)
+    const { rows: pRows } = await pool().query<{ bonus_amount: string }>(
+      'SELECT bonus_amount FROM pairs WHERE member_id=$1 ORDER BY sequence_no',
+      [ancestorId]
+    )
+    expect(pRows.length).toBe(1)
+    expect(pRows[0].bonus_amount).toBe(fromPaise(BigInt(CFG.PAIR_BONUS_PAISE)))  // '1000.00'
+
+    // Verify the PairMatched outbox event carries amount_paise from CFG
+    const { rows: obRows } = await pool().query<{ payload: Record<string, unknown> }>(
+      `SELECT payload FROM events_outbox WHERE event_type='PairMatched' AND aggregate_id=$1`,
+      [ancestorId]
+    )
+    expect(obRows.length).toBeGreaterThanOrEqual(1)
+    // pg auto-parses JSONB columns — payload is already an object
+    const evt = obRows[0].payload
+    expect(evt.amount_paise).toBe(Number(CFG.PAIR_BONUS_PAISE))  // 100000
   })
 })
 

@@ -6,7 +6,7 @@ import {
   Clock, Users, BarChart2, GitFork, Trophy, TicketCheck, Bell,
   Settings, LogOut, X,
 } from 'lucide-react'
-import { tokenStore } from '../../lib/auth'
+import { logout } from '../../lib/auth'
 
 const navItems = [
   { key: 'dashboard', icon: LayoutDashboard, path: '/' },
@@ -36,8 +36,8 @@ export default function Sidebar({ open = true, onClose }: Props) {
 
   const queryClient = useQueryClient()
 
-  const handleLogout = () => {
-    tokenStore.clear()
+  const handleLogout = async () => {
+    await logout()
     queryClient.clear()
     navigate('/login')
   }

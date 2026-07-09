@@ -11,6 +11,7 @@ export interface Me {
   bankStatus: 'pending' | 'verified'
   currentRankLevel: number
   currentRankName: string
+  role: 'member' | 'admin'
 }
 
 export interface RegisterReq {

@@ -1,11 +1,10 @@
-import { randomUUID } from 'crypto'
 import argon2 from 'argon2'
 import { pool, withTxn } from '../src/lib/db.js'
 import { nextMemberCode } from '../src/lib/ids.js'
 import { ensureCutoffExists } from '../src/workers/cutoff.js'
 import 'dotenv/config'
 
-async function seedRoot() {
+export async function seedRoot(): Promise<void> {
   await withTxn(async (c) => {
     // Check if root already exists
     const { rows: existing } = await c.query(
@@ -18,15 +17,15 @@ async function seedRoot() {
 
     const passwordHash = await argon2.hash('Root@1234')
 
-    // Insert root — no parent_id, no position, empty path arrays
+    // Insert root — no parent_id, no position, empty path arrays; role='admin'
     const { rows } = await c.query<{ id: string }>(
       `INSERT INTO members
          (member_code, name, phone, email, password_hash,
           sponsor_id, parent_id, position,
           placement_path, placement_sides,
-          is_active, activated_at)
+          is_active, activated_at, role)
        VALUES ('TMP-ROOT','Root Admin','9999999999','root@avg.com',$1,
-               NULL,NULL,NULL,'{}','{}',TRUE,now())
+               NULL,NULL,NULL,'{}','{}',TRUE,now(),'admin')
        RETURNING id`,
       [passwordHash]
     )
@@ -54,10 +53,14 @@ async function seedRoot() {
 
   await ensureCutoffExists()
   console.log('Cutoff window ensured.')
-  await pool().end()
 }
 
-seedRoot().catch((err) => {
-  console.error('seedRoot failed:', err)
-  process.exit(1)
-})
+const _argv1 = process.argv[1] ?? ''
+if (_argv1.endsWith('seedRoot.ts') || _argv1.endsWith('seedRoot.js')) {
+  seedRoot()
+    .then(() => pool().end())
+    .catch((err) => {
+      console.error('seedRoot failed:', err)
+      process.exit(1)
+    })
+}
