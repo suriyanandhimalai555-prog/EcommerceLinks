@@ -40,11 +40,26 @@ export async function logout(): Promise<void> {
  * If a refresh token exists in localStorage, exchanges it for a fresh access
  * token + rotated refresh token and stores both. Returns false if no session
  * exists or the exchange fails (caller should redirect to /login).
+ *
+ * Module-level in-flight dedup: React StrictMode double-invokes effects, so
+ * two concurrent bootstrapAuth() calls can race. Without dedup both would POST
+ * /auth/refresh with the same token — the backend rotates on the first and
+ * the second gets 401 "Token revoked", triggering tokenStore.clear() → logout.
+ * Sharing one in-flight Promise collapses the two calls into a single request.
+ * The promise is cleared in .finally() so a genuine failure still allows retry.
  */
-export async function bootstrapAuth(): Promise<boolean> {
-  // Already have a valid in-memory access token — nothing to do.
-  if (tokenStore.getAccess()) return true
+let _bootstrapPromise: Promise<boolean> | null = null
 
+export function bootstrapAuth(): Promise<boolean> {
+  // Already have a valid in-memory access token — nothing to do.
+  if (tokenStore.getAccess()) return Promise.resolve(true)
+  // Reuse the in-flight request if one is already running.
+  if (_bootstrapPromise) return _bootstrapPromise
+  _bootstrapPromise = doBootstrap().finally(() => { _bootstrapPromise = null })
+  return _bootstrapPromise
+}
+
+async function doBootstrap(): Promise<boolean> {
   const refreshToken = tokenStore.getRefresh()
   if (!refreshToken) return false
 

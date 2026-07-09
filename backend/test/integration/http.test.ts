@@ -260,6 +260,25 @@ describe('G-2/G-7 – Webhook secret gate and payment status', () => {
     expect(Number(ob[0].count)).toBe(1)
   })
 
+  it('G-2: idempotent webhook replay (same gatewayEventId) does not re-confirm', async () => {
+    // The order from the previous test is already 'confirmed'. Replaying the same
+    // gatewayEventId must not error (should be idempotent — either 200 no-op or 409).
+    const { rows } = await pool().query<{ idempotency_key: string }>(
+      'SELECT idempotency_key FROM orders WHERE id=$1', [orderId]
+    )
+    const idemKey = rows[0].idempotency_key
+    const headers: Record<string, string> = {}
+    if (CFG.WEBHOOK_SECRET) headers['x-webhook-secret'] = CFG.WEBHOOK_SECRET
+
+    const res = await app.inject({
+      method: 'POST', url: '/webhooks/payment',
+      headers,
+      payload: { gatewayEventId: idemKey, orderId: Number(orderId), paymentRef: 'ref-replay', status: 'success' },
+    })
+    // idempotent replay should not crash — 200 or 409 both acceptable
+    expect([200, 409]).toContain(res.statusCode)
+  })
+
   it('webhook with status=failed marks order as failed (G-7)', async () => {
     // Use a second member so the 'first activation' guard doesn't block
     const phone2 = uniquePhone(11)
@@ -294,5 +313,37 @@ describe('G-2/G-7 – Webhook secret gate and payment status', () => {
       'SELECT status FROM orders WHERE id=$1', [failOrderId]
     )
     expect(rows[0].status).toBe('failed')
+  })
+})
+
+// ─── G-9: Concurrent refresh token race (atomic rotation) ────────────────────
+
+describe('G-9 – Concurrent refresh calls with same token: exactly one succeeds', () => {
+  let sharedRefreshToken: string
+
+  beforeAll(async () => {
+    const phone = uniquePhone(20)
+    await app.inject({
+      method: 'POST', url: '/auth/register',
+      payload: { sponsorCode: rootCode, preferredLeg: 'L', name: 'RaceTest', phone, password: 'Test@12345' },
+    })
+    const loginRes = await app.inject({
+      method: 'POST', url: '/auth/login',
+      payload: { phone, password: 'Test@12345' },
+    })
+    sharedRefreshToken = JSON.parse(loginRes.body).refreshToken
+  })
+
+  it('two concurrent refreshes with the same token produce exactly one 200 and one 401', async () => {
+    // Fire both requests simultaneously — the atomic UPDATE … WHERE revoked_at IS NULL
+    // RETURNING jti ensures only one can win the race. Without it the non-atomic
+    // SELECT-then-UPDATE path allows both SELECTs to pass before either UPDATE commits.
+    const [resA, resB] = await Promise.all([
+      app.inject({ method: 'POST', url: '/auth/refresh', payload: { refreshToken: sharedRefreshToken } }),
+      app.inject({ method: 'POST', url: '/auth/refresh', payload: { refreshToken: sharedRefreshToken } }),
+    ])
+    const statuses = [resA.statusCode, resB.statusCode].sort()
+    // Exactly one 200, one 401 — never [200,200] (double rotation) or [401,401]
+    expect(statuses).toEqual([200, 401])
   })
 })

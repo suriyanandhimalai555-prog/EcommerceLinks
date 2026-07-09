@@ -137,16 +137,22 @@ export async function authRoutes(app: FastifyInstance) {
 		if (payload.type !== "refresh")
 			return reply.status(401).send({ error: "Not a refresh token" });
 
-		// G-9: validate jti in DB — must exist, not revoked, not expired
+		// G-9: validate jti and atomically revoke it in one UPDATE … RETURNING.
+		// A separate SELECT-then-UPDATE is non-atomic: two concurrent requests with the
+		// same token could both pass the SELECT before either UPDATE commits, letting
+		// both produce valid new tokens from one rotation. The single UPDATE gate
+		// prevents that — only one request finds a revokable row; the other gets 0 rows
+		// and returns 401.
 		const jti = payload.jti;
 		if (!jti) return reply.status(401).send({ error: "Missing token id" });
 
-		const { rows: tokenRows } = await pool().query<{ jti: string }>(
-			`SELECT jti FROM refresh_tokens
-       WHERE jti = $1 AND member_id = $2 AND revoked_at IS NULL AND expires_at > now()`,
+		const { rows: revokeRows } = await pool().query<{ jti: string }>(
+			`UPDATE refresh_tokens SET revoked_at = now()
+       WHERE jti = $1 AND member_id = $2 AND revoked_at IS NULL AND expires_at > now()
+       RETURNING jti`,
 			[jti, payload.sub],
 		);
-		if (!tokenRows[0])
+		if (!revokeRows[0])
 			return reply.status(401).send({ error: "Token revoked or expired" });
 
 		const { rows } = await pool().query<{ member_code: string; name: string }>(
@@ -155,12 +161,7 @@ export async function authRoutes(app: FastifyInstance) {
 		);
 		if (!rows[0]) return reply.status(401).send({ error: "Member not found" });
 
-		// Rotate: revoke old jti, issue new one
-		await pool().query(
-			`UPDATE refresh_tokens SET revoked_at = now() WHERE jti = $1`,
-			[jti],
-		);
-
+		// Old jti is now revoked; issue a new refresh token.
 		const newPayload = {
 			sub: payload.sub,
 			code: rows[0].member_code,
