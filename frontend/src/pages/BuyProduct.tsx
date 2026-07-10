@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
@@ -6,8 +6,6 @@ import { ShoppingBag, Check, Loader2, Star, AlertCircle, CheckCircle2 } from 'lu
 import api from '../lib/api'
 import { formatINR } from '../lib/format'
 import type { Product } from '../types/api'
-
-const IS_PROD = import.meta.env.PROD
 
 export default function BuyProduct() {
   const { t } = useTranslation()
@@ -17,8 +15,6 @@ export default function BuyProduct() {
   const [terms, setTerms] = useState(false)
   const [orderId, setOrderId] = useState<string | null>(null)
   const [orderStatus, setOrderStatus] = useState<string | null>(null)
-  const [pollError, setPollError] = useState(false)
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const { data: products, isPending: productsPending } = useQuery<Product[]>({
     queryKey: ['products'],
@@ -32,7 +28,6 @@ export default function BuyProduct() {
     onSuccess: (res) => {
       setOrderId(res.data.orderId)
       setOrderStatus('created')
-      if (IS_PROD) startPolling(res.data.orderId)
     },
   })
 
@@ -41,24 +36,7 @@ export default function BuyProduct() {
     onSuccess: () => setOrderStatus('confirmed'),
   })
 
-  const startPolling = (id: string) => {
-    let count = 0
-    pollRef.current = setInterval(async () => {
-      count++
-      if (count > 100) { clearInterval(pollRef.current!); setPollError(true); return }
-      try {
-        const res = await api.get(`/orders/${id}`)
-        if (res.data.status === 'confirmed') {
-          setOrderStatus('confirmed')
-          clearInterval(pollRef.current!)
-        }
-      } catch { /* ignore */ }
-    }, 3000)
-  }
-
-  useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current) }, [])
-
-  if (orderStatus === 'confirmed') {
+if (orderStatus === 'confirmed') {
     return (
       <div className="max-w-lg mx-auto py-16 text-center animate-fade-in">
         <div className="w-20 h-20 bg-success-50 rounded-full flex items-center justify-center mx-auto mb-6">
@@ -84,27 +62,14 @@ export default function BuyProduct() {
           <p className="text-sm text-ink-muted mb-2">Order ID: <span className="font-mono font-semibold">{orderId}</span></p>
           <p className="text-sm text-ink-muted mb-6">Amount: <strong>{selected && formatINR(selected.totalPaise)}</strong></p>
 
-          {pollError && (
-            <div className="flex items-center gap-2 bg-red-50 text-danger text-sm p-3 rounded-lg mb-4">
-              <AlertCircle size={15} /> Payment confirmation timed out. Please contact support.
-            </div>
-          )}
-
-          {IS_PROD ? (
-            <div className="flex items-center justify-center gap-2 text-ink-muted">
-              <Loader2 size={16} className="animate-spin" />
-              <span className="text-sm">Waiting for payment confirmation...</span>
-            </div>
-          ) : (
-            <button
-              onClick={() => simulatePay.mutate()}
-              disabled={simulatePay.isPending}
-              className="avg-btn-primary w-full py-3"
-            >
-              {simulatePay.isPending ? <Loader2 size={16} className="animate-spin" /> : null}
-              {t('buy.simulatePay')}
-            </button>
-          )}
+          <button
+            onClick={() => simulatePay.mutate()}
+            disabled={simulatePay.isPending}
+            className="avg-btn-primary w-full py-3"
+          >
+            {simulatePay.isPending ? <Loader2 size={16} className="animate-spin inline mr-2" /> : null}
+            {t('buy.simulatePay')}
+          </button>
         </div>
       </div>
     )
