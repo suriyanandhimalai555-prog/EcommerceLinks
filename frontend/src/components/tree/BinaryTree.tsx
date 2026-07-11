@@ -51,33 +51,33 @@ function NodeCard({ ln, onClick }: NodeCardProps) {
         <rect
           width={NODE_W} height={NODE_H}
           rx={8} ry={8}
-          fill="white"
-          stroke={copied ? '#16A34A' : '#E5E7EB'}
+          fill="#1B2236"
+          stroke={copied ? '#34D399' : '#272E44'}
           strokeWidth={1.5}
           strokeDasharray="6 3"
         />
         <g transform={`translate(${NODE_W / 2}, ${NODE_H / 2})`}>
-          <circle r={14} fill={copied ? '#F0FDF4' : '#EEF2FF'} />
+          <circle r={14} fill={copied ? '#0E3532' : '#19224A'} />
           {copied
-            ? <Check x={-7} y={-7} width={14} height={14} color="#16A34A" />
-            : <UserPlus x={-7} y={-7} width={14} height={14} color="#2447D8" />}
+            ? <Check x={-7} y={-7} width={14} height={14} color="#34D399" />
+            : <UserPlus x={-7} y={-7} width={14} height={14} color="#4169E1" />}
         </g>
-        <text x={NODE_W / 2} y={NODE_H - 12} textAnchor="middle" fontSize={10} fill={copied ? '#16A34A' : '#9CA3AF'}>
+        <text x={NODE_W / 2} y={NODE_H - 12} textAnchor="middle" fontSize={10} fill={copied ? '#34D399' : '#77809A'}>
           {copied ? t('tree.copied') : t('tree.tapToRefer')}
         </text>
       </g>
     )
   }
 
-  const avatarColor = node.position === 'L' ? '#2447D8' : '#7C3AED'
-  const avatarBg = node.position === 'L' ? '#EEF2FF' : '#F3EEFF'
+  const avatarColor = node.position === 'L' ? '#4169E1' : '#38BDF8'
+  const avatarBg = node.position === 'L' ? '#19224A' : '#0C2C42'
 
   return (
     <g transform={`translate(${x}, ${y})`} onClick={() => onClick(node.memberCode)} className="cursor-pointer">
       <rect
         width={NODE_W} height={NODE_H} rx={8} ry={8}
-        fill="white"
-        stroke={node.isActive ? (node.position === 'L' ? '#2447D8' : '#7C3AED') : '#E5E7EB'}
+        fill="#1B2236"
+        stroke={node.isActive ? (node.position === 'L' ? '#4169E1' : '#38BDF8') : '#272E44'}
         strokeWidth={node.isActive ? 1.5 : 1}
         filter="url(#nodeShadow)"
       />
@@ -88,25 +88,25 @@ function NodeCard({ ln, onClick }: NodeCardProps) {
       </text>
       {/* Active dot */}
       {node.isActive && (
-        <circle cx={44} cy={14} r={5} fill="#16A34A" stroke="white" strokeWidth={1.5} />
+        <circle cx={44} cy={14} r={5} fill="#34D399" stroke="#141927" strokeWidth={1.5} />
       )}
       {/* Qualified ring */}
       {node.isQualified && (
-        <circle cx={8 + 40 / 2} cy={12 + 40 / 2} r={22} fill="none" stroke="#F59E0B" strokeWidth={1.5} strokeDasharray="3 2" />
+        <circle cx={8 + 40 / 2} cy={12 + 40 / 2} r={22} fill="none" stroke="#FBBF24" strokeWidth={1.5} strokeDasharray="3 2" />
       )}
       {/* Name */}
-      <text x={55} y={28} fontSize={11} fontWeight="600" fill="#111827" className="font-sans">
+      <text x={55} y={28} fontSize={11} fontWeight="600" fill="#F2F4FA" className="font-sans">
         {node.name.length > 12 ? node.name.slice(0, 12) + '…' : node.name}
       </text>
-      <text x={55} y={43} fontSize={9} fill="#6B7280">
+      <text x={55} y={43} fontSize={9} fill="#98A2B8">
         {node.memberCode}
       </text>
       {/* Position badge */}
       {node.position && (
-        <rect x={NODE_W - 26} y={6} width={20} height={14} rx={4} fill={node.position === 'L' ? '#EEF2FF' : '#F3EEFF'} />
+        <rect x={NODE_W - 26} y={6} width={20} height={14} rx={4} fill={node.position === 'L' ? '#19224A' : '#0C2C42'} />
       )}
       {node.position && (
-        <text x={NODE_W - 16} y={17} textAnchor="middle" fontSize={9} fontWeight="700" fill={node.position === 'L' ? '#2447D8' : '#7C3AED'}>
+        <text x={NODE_W - 16} y={17} textAnchor="middle" fontSize={9} fontWeight="700" fill={node.position === 'L' ? '#4169E1' : '#38BDF8'}>
           {node.position}
         </text>
       )}
@@ -117,10 +117,10 @@ function NodeCard({ ln, onClick }: NodeCardProps) {
         className="cursor-pointer"
       >
         <title>{copied ? t('tree.copied') : t('tree.copyLink')}</title>
-        <rect width={18} height={18} rx={5} fill={copied ? '#F0FDF4' : '#F9FAFB'} stroke={copied ? '#16A34A' : '#E5E7EB'} strokeWidth={1} />
+        <rect width={18} height={18} rx={5} fill={copied ? '#0E3532' : '#232A40'} stroke={copied ? '#34D399' : '#272E44'} strokeWidth={1} />
         {copied
-          ? <Check x={4} y={4} width={10} height={10} color="#16A34A" />
-          : <Link2 x={4} y={4} width={10} height={10} color="#6B7280" />}
+          ? <Check x={4} y={4} width={10} height={10} color="#34D399" />
+          : <Link2 x={4} y={4} width={10} height={10} color="#98A2B8" />}
       </g>
     </g>
   )
@@ -189,11 +189,11 @@ export function BinaryTree({
           </button>
         )}
         <div className="flex-1" />
-        <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-0.5">
+        <div className="flex items-center gap-1 bg-white/5 rounded-lg p-0.5">
           <button
             onClick={() => setZoom(ZOOM_LEVELS[Math.max(0, zoomIdx - 1)])}
             disabled={zoomIdx === 0}
-            className="p-1.5 rounded-md hover:bg-white disabled:opacity-40 transition-colors cursor-pointer"
+            className="p-1.5 rounded-md hover:bg-white/10 disabled:opacity-40 transition-colors cursor-pointer"
             aria-label="Zoom out"
           >
             <ZoomOut size={13} />
@@ -202,14 +202,14 @@ export function BinaryTree({
           <button
             onClick={() => setZoom(ZOOM_LEVELS[Math.min(ZOOM_LEVELS.length - 1, zoomIdx + 1)])}
             disabled={zoomIdx === ZOOM_LEVELS.length - 1}
-            className="p-1.5 rounded-md hover:bg-white disabled:opacity-40 transition-colors cursor-pointer"
+            className="p-1.5 rounded-md hover:bg-white/10 disabled:opacity-40 transition-colors cursor-pointer"
             aria-label="Zoom in"
           >
             <ZoomIn size={13} />
           </button>
           <button
             onClick={() => setZoom(1.0)}
-            className="p-1.5 rounded-md hover:bg-white transition-colors cursor-pointer"
+            className="p-1.5 rounded-md hover:bg-white/10 transition-colors cursor-pointer"
             aria-label="Reset zoom"
           >
             <Maximize2 size={13} />
@@ -226,7 +226,7 @@ export function BinaryTree({
       {/* Tree (with fetching overlay) */}
       <div className="relative overflow-x-auto rounded-xl bg-surface-page p-4 max-w-full">
         {isFetching && (
-          <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/60 rounded-xl">
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-surface-page/60 rounded-xl">
             <Loader2 size={22} className="animate-spin text-primary" />
           </div>
         )}
@@ -246,7 +246,7 @@ export function BinaryTree({
           >
             <defs>
               <filter id="nodeShadow" x="-20%" y="-20%" width="140%" height="140%">
-                <feDropShadow dx="0" dy="1" stdDeviation="2" floodOpacity="0.08" />
+                <feDropShadow dx="0" dy="2" stdDeviation="3" floodOpacity="0.4" />
               </filter>
             </defs>
 

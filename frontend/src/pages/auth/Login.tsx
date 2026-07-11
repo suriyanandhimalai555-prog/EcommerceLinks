@@ -51,7 +51,7 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-primary-50 via-white to-violet-50 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-gradient-to-br from-[#0E1526] via-surface-page to-[#131B33] flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         {/* Logo */}
         <div className="text-center mb-8">
@@ -71,7 +71,7 @@ export default function Login() {
           )}
 
           {errors.root && (
-            <div className="flex items-center gap-2 bg-red-50 text-danger text-sm p-3 rounded-lg mb-4 border border-danger/20">
+            <div className="flex items-center gap-2 bg-danger/10 text-danger text-sm p-3 rounded-lg mb-4 border border-danger/20">
               <AlertCircle size={15} />
               {errors.root.message}
             </div>

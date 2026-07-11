@@ -38,8 +38,8 @@ export default function Network() {
     : '—'
 
   const pieData = summary ? [
-    { name: 'Left Team', value: summary.leftTeam, color: '#2447D8' },
-    { name: 'Right Team', value: summary.rightTeam, color: '#7C3AED' },
+    { name: 'Left Team', value: summary.leftTeam, color: '#4169E1' },
+    { name: 'Right Team', value: summary.rightTeam, color: '#38BDF8' },
   ] : []
 
   const columns: Column<DirectMember>[] = [
@@ -77,12 +77,12 @@ export default function Network() {
       <div className="avg-card p-5 min-w-0">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-sm font-semibold text-ink">Binary Network Tree</h2>
-          <div className="flex bg-gray-100 rounded-lg p-0.5 gap-0.5">
+          <div className="flex bg-white/5 rounded-lg p-0.5 gap-0.5">
             {[{ id: 'binary', icon: GitFork, label: 'Tree' }, { id: 'list', icon: List, label: 'List' }].map((v) => (
               <button
                 key={v.id}
                 onClick={() => setView(v.id as 'binary' | 'list')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all cursor-pointer ${view === v.id ? 'bg-white text-ink shadow-sm' : 'text-ink-muted hover:text-ink'}`}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all cursor-pointer ${view === v.id ? 'bg-white/10 text-ink shadow-sm' : 'text-ink-muted hover:text-ink'}`}
               >
                 <v.icon size={14} /> {v.label}
               </button>
@@ -121,11 +121,11 @@ export default function Network() {
           {summary ? (
             <ResponsiveContainer width="100%" height={220}>
               <BarChart data={summary.levelDistribution} margin={{ left: -20 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#F3F4F6" vertical={false} />
-                <XAxis dataKey="level" tick={{ fontSize: 11, fill: '#9CA3AF' }} axisLine={false} tickLine={false} tickFormatter={(v) => `L${v}`} />
-                <YAxis tick={{ fontSize: 11, fill: '#9CA3AF' }} axisLine={false} tickLine={false} />
-                <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #E5E7EB' }} />
-                <Bar dataKey="members" fill="#2447D8" radius={[4, 4, 0, 0]} name="Members" />
+                <CartesianGrid strokeDasharray="3 3" stroke="#232A40" vertical={false} />
+                <XAxis dataKey="level" tick={{ fontSize: 11, fill: '#77809A' }} axisLine={false} tickLine={false} tickFormatter={(v) => `L${v}`} />
+                <YAxis tick={{ fontSize: 11, fill: '#77809A' }} axisLine={false} tickLine={false} />
+                <Tooltip cursor={{ fill: 'rgba(255, 255, 255, 0.06)' }} contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #272E44', backgroundColor: '#1B2236', color: '#F2F4FA' }} />
+                <Bar dataKey="members" fill="#4169E1" radius={[4, 4, 0, 0]} name="Members" />
               </BarChart>
             </ResponsiveContainer>
           ) : <SkeletonCard lines={4} />}
@@ -141,7 +141,7 @@ export default function Network() {
                   <Pie data={pieData} cx="50%" cy="50%" innerRadius={60} outerRadius={90} paddingAngle={3} dataKey="value">
                     {pieData.map((entry, i) => <Cell key={i} fill={entry.color} />)}
                   </Pie>
-                  <Tooltip formatter={(v) => [`${v} members`, '']} contentStyle={{ fontSize: 12, borderRadius: 8 }} />
+                  <Tooltip formatter={(v) => [`${v} members`, '']} contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #272E44', backgroundColor: '#1B2236', color: '#F2F4FA' }} />
                   <Legend formatter={(v) => <span className="text-xs font-medium">{v}</span>} />
                 </PieChart>
               </ResponsiveContainer>

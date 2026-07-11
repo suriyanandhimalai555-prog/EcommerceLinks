@@ -71,7 +71,7 @@ export default function Settings() {
         <div className="flex items-center gap-2 mb-4">
           <Bell size={16} className="text-primary" />
           <h2 className="text-sm font-semibold text-ink">Notifications</h2>
-          <span className="text-[10px] text-ink-muted bg-gray-100 px-2 py-0.5 rounded">Local preferences</span>
+          <span className="text-[10px] text-ink-muted bg-white/5 px-2 py-0.5 rounded">Local preferences</span>
         </div>
         <div className="space-y-4">
           {[
@@ -83,7 +83,7 @@ export default function Settings() {
               <span className="text-sm text-ink">{item.label}</span>
               <button
                 onClick={() => item.set(!item.value)}
-                className={`relative w-11 h-6 rounded-full transition-colors duration-200 cursor-pointer ${item.value ? 'bg-primary' : 'bg-gray-200'}`}
+                className={`relative w-11 h-6 rounded-full transition-colors duration-200 cursor-pointer ${item.value ? 'bg-primary' : 'bg-white/10'}`}
                 role="switch"
                 aria-checked={item.value}
               >
@@ -104,7 +104,7 @@ export default function Settings() {
           <p className="text-sm text-ink-muted">Signing out from all devices will invalidate all active sessions.</p>
           <button
             onClick={handleLogoutAll}
-            className="flex items-center gap-2 border border-danger/30 bg-red-50 text-danger rounded-lg px-4 py-2.5 text-sm font-semibold hover:bg-red-100 transition-colors cursor-pointer"
+            className="flex items-center gap-2 border border-danger/30 bg-danger/10 text-danger rounded-lg px-4 py-2.5 text-sm font-semibold hover:bg-danger/20 transition-colors cursor-pointer"
           >
             <LogOut size={15} /> Logout from all devices
           </button>
@@ -132,7 +132,7 @@ export default function Settings() {
             <button
               onClick={() => { setPayoutMsg(null); triggerPayout.mutate() }}
               disabled={triggerPayout.isPending}
-              className="flex items-center gap-2 bg-warning text-white rounded-lg px-4 py-2.5 text-sm font-semibold hover:bg-warning/90 transition-colors cursor-pointer disabled:opacity-60"
+              className="flex items-center gap-2 bg-warning text-[#0B0E16] rounded-lg px-4 py-2.5 text-sm font-semibold hover:bg-warning/90 transition-colors cursor-pointer disabled:opacity-60"
             >
               {triggerPayout.isPending ? <Loader2 size={15} className="animate-spin" /> : <Zap size={15} />}
               Trigger Payout Now

@@ -64,7 +64,7 @@ export default function Register() {
   // Registration is referral-only: without a sponsor link there is no form.
   if (!sponsorParam) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-primary-50 via-white to-violet-50 flex items-center justify-center p-4">
+      <div className="min-h-screen bg-gradient-to-br from-[#0E1526] via-surface-page to-[#131B33] flex items-center justify-center p-4">
         <div className="w-full max-w-lg">
           <div className="text-center mb-6">
             <img src="/AVGLOGO.jpeg" alt="AVG Logo" className="w-14 h-14 rounded-2xl object-cover mx-auto mb-3 shadow-glow" />
@@ -87,7 +87,7 @@ export default function Register() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-primary-50 via-white to-violet-50 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-gradient-to-br from-[#0E1526] via-surface-page to-[#131B33] flex items-center justify-center p-4">
       <div className="w-full max-w-lg">
         <div className="text-center mb-6">
           <img src="/AVGLOGO.jpeg" alt="AVG Logo" className="w-14 h-14 rounded-2xl object-cover mx-auto mb-3 shadow-glow" />
@@ -98,7 +98,7 @@ export default function Register() {
           <h2 className="text-xl font-bold text-ink mb-6">{t('auth.register')}</h2>
 
           {errors.root && (
-            <div className="flex items-center gap-2 bg-red-50 text-danger text-sm p-3 rounded-lg mb-4 border border-danger/20">
+            <div className="flex items-center gap-2 bg-danger/10 text-danger text-sm p-3 rounded-lg mb-4 border border-danger/20">
               <AlertCircle size={15} /> {errors.root.message}
             </div>
           )}

@@ -60,8 +60,8 @@ export function DataTable<T>({
             {data.map((row, idx) => (
               <tr
                 key={rowKey(row)}
-                className={`border-b border-surface-line last:border-0 hover:bg-gray-50 transition-colors duration-100 ${
-                  idx % 2 === 0 ? '' : 'bg-gray-50/30'
+                className={`border-b border-surface-line last:border-0 hover:bg-white/5 transition-colors duration-100 ${
+                  idx % 2 === 0 ? '' : 'bg-white/[0.03]'
                 }`}
               >
                 {columns.map((col) => (

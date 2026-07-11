@@ -21,3 +21,4 @@ node_modules/
 # Test cache
 .vitest/
 coverage/
+.gstack/

@@ -51,7 +51,7 @@ export default function Sidebar({ open = true, onClose }: Props) {
 
       <aside
         className={`
-          fixed top-0 left-0 h-screen w-60 bg-white border-r border-surface-line z-40 flex flex-col
+          fixed top-0 left-0 h-screen w-60 bg-surface-card border-r border-surface-line z-40 flex flex-col
           transition-transform duration-250 ease-out
           ${open ? 'translate-x-0' : '-translate-x-full'}
           lg:translate-x-0 lg:static lg:z-auto
@@ -67,7 +67,7 @@ export default function Sidebar({ open = true, onClose }: Props) {
             </div>
           </div>
           {onClose && (
-            <button onClick={onClose} className="p-1 rounded-lg hover:bg-gray-100 text-ink-muted lg:hidden cursor-pointer" aria-label="Close sidebar">
+            <button onClick={onClose} className="p-1 rounded-lg hover:bg-white/10 text-ink-muted lg:hidden cursor-pointer" aria-label="Close sidebar">
               <X size={16} />
             </button>
           )}
@@ -102,7 +102,7 @@ export default function Sidebar({ open = true, onClose }: Props) {
         <div className="p-3 border-t border-surface-line">
           <button
             onClick={handleLogout}
-            className="w-full flex items-center gap-3 mx-0 px-3 py-2.5 rounded-xl text-sm font-medium text-ink-muted hover:bg-red-50 hover:text-danger transition-all duration-150 cursor-pointer"
+            className="w-full flex items-center gap-3 mx-0 px-3 py-2.5 rounded-xl text-sm font-medium text-ink-muted hover:bg-danger/10 hover:text-danger transition-all duration-150 cursor-pointer"
           >
             <LogOut size={17} />
             <span>{t('nav.logout')}</span>

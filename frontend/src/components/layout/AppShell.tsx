@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { Suspense, useState } from 'react'
 import { Outlet, useLocation } from 'react-router-dom'
+import { SkeletonCard } from '../ui/Skeleton'
 import Sidebar from './Sidebar'
 import Topbar from './Topbar'
 
@@ -32,7 +33,10 @@ export default function AppShell() {
         <Topbar onMenuClick={() => setSidebarOpen(true)} breadcrumb={breadcrumb} />
         <main className="flex-1 overflow-y-auto overflow-x-hidden scrollbar-thin">
           <div className="w-full max-w-[1400px] mx-auto px-3 py-4 sm:px-4 lg:p-6 animate-fade-in">
-            <Outlet />
+            {/* Keeps the shell visible while a lazily-loaded page chunk downloads */}
+            <Suspense fallback={<SkeletonCard lines={4} />}>
+              <Outlet />
+            </Suspense>
           </div>
         </main>
       </div>

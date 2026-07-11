@@ -65,7 +65,7 @@ export default function Support() {
               <div key={i} className="avg-card overflow-hidden">
                 <button
                   onClick={() => setOpenFaq(openFaq === i ? null : i)}
-                  className="w-full flex items-center justify-between p-4 text-left hover:bg-gray-50 transition-colors cursor-pointer"
+                  className="w-full flex items-center justify-between p-4 text-left hover:bg-white/5 transition-colors cursor-pointer"
                 >
                   <span className="text-sm font-medium text-ink pr-4">{item.q}</span>
                   {openFaq === i ? <ChevronDown size={15} className="text-ink-muted flex-shrink-0" /> : <ChevronRight size={15} className="text-ink-muted flex-shrink-0" />}

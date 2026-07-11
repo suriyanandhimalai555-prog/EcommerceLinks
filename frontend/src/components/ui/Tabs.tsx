@@ -15,7 +15,7 @@ export function Tabs({ defaultValue, children, className = '' }: TabsProps) {
 
 export function TabList({ children, className = '' }: TabListProps) {
   return (
-    <div className={`flex gap-1 bg-gray-100 p-1 rounded-lg overflow-x-auto scrollbar-hide ${className}`}>
+    <div className={`flex gap-1 bg-white/5 p-1 rounded-lg overflow-x-auto scrollbar-hide ${className}`}>
       {children}
     </div>
   )
@@ -28,7 +28,7 @@ export function TabTrigger({ value, children }: TabTriggerProps) {
     <button
       onClick={() => setActive(value)}
       className={`flex-1 min-w-fit px-3 sm:px-4 py-2 text-sm font-medium rounded-md transition-all duration-200 cursor-pointer whitespace-nowrap ${
-        isActive ? 'bg-white text-ink shadow-sm' : 'text-ink-muted hover:text-ink'
+        isActive ? 'bg-white/10 text-ink shadow-sm' : 'text-ink-muted hover:text-ink'
       }`}
     >
       {children}

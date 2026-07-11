@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useQuery, useMutation } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { ShoppingBag, Check, Loader2, Star, AlertCircle, CheckCircle2 } from 'lucide-react'
@@ -10,6 +10,7 @@ import type { Product } from '../types/api'
 export default function BuyProduct() {
   const { t } = useTranslation()
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [paymentMethod, setPaymentMethod] = useState('upi')
   const [terms, setTerms] = useState(false)
@@ -33,7 +34,11 @@ export default function BuyProduct() {
 
   const simulatePay = useMutation({
     mutationFn: () => api.post('/dev/simulate-payment', { orderId }),
-    onSuccess: () => setOrderStatus('confirmed'),
+    onSuccess: () => {
+      setOrderStatus('confirmed')
+      // Activation changes me/dashboard/tree/network/wallet — refetch everything on next mount.
+      queryClient.invalidateQueries()
+    },
   })
 
 if (orderStatus === 'confirmed') {
@@ -44,7 +49,7 @@ if (orderStatus === 'confirmed') {
         </div>
         <h1 className="text-2xl font-bold text-ink mb-2">You are now an Active Member!</h1>
         <p className="text-ink-muted mb-6">Your product purchase has been confirmed. You can now start building your network.</p>
-        <button onClick={() => navigate('/')} className="avg-btn-primary px-8 py-3">
+        <button onClick={() => navigate('/')} className="avg-btn-primary px-8 py-3 mx-auto">
           Go to Dashboard
         </button>
       </div>
@@ -92,10 +97,10 @@ if (orderStatus === 'confirmed') {
       <div className="grid md:grid-cols-3 gap-4">
         {productsPending && [1,2,3].map(i => (
           <div key={i} className="avg-card p-5 space-y-4 animate-pulse">
-            <div className="h-4 bg-gray-200 rounded w-1/2" />
-            <div className="h-6 bg-gray-200 rounded w-3/4" />
-            <div className="h-3 bg-gray-100 rounded" />
-            <div className="h-3 bg-gray-100 rounded" />
+            <div className="h-4 bg-white/10 rounded w-1/2" />
+            <div className="h-6 bg-white/10 rounded w-3/4" />
+            <div className="h-3 bg-white/5 rounded" />
+            <div className="h-3 bg-white/5 rounded" />
           </div>
         ))}
         {(products ?? []).map((p) => {
@@ -130,14 +135,14 @@ if (orderStatus === 'confirmed') {
               <div className="space-y-2 border-t border-surface-line pt-4">
                 <div className="flex justify-between text-sm">
                   <span className="text-ink-muted">Base Price</span>
-                  <span className="font-medium">{formatINR(p.basePricePaise)}</span>
+                  <span className="font-medium text-ink">{formatINR(p.basePricePaise)}</span>
                 </div>
                 <div className="flex justify-between text-sm">
                   <span className="text-ink-muted">GST (18%)</span>
-                  <span className="font-medium">{formatINR(p.gstPaise)}</span>
+                  <span className="font-medium text-ink">{formatINR(p.gstPaise)}</span>
                 </div>
                 <div className="flex justify-between text-base font-bold pt-1 border-t border-surface-line">
-                  <span>Total</span>
+                  <span className="text-ink">Total</span>
                   <span className="text-primary">{formatINR(p.totalPaise)}</span>
                 </div>
               </div>
@@ -162,7 +167,7 @@ if (orderStatus === 'confirmed') {
                 key={m.id}
                 onClick={() => setPaymentMethod(m.id)}
                 className={`border rounded-lg px-3 py-2.5 text-sm font-medium transition-all cursor-pointer ${
-                  paymentMethod === m.id ? 'border-primary bg-primary-50 text-primary' : 'border-surface-line hover:border-gray-300'
+                  paymentMethod === m.id ? 'border-primary bg-primary-50 text-primary' : 'border-surface-line hover:border-[#39415E]'
                 }`}
               >
                 {m.label}
@@ -179,14 +184,14 @@ if (orderStatus === 'confirmed') {
           <div className="space-y-2 mb-4">
             <div className="flex justify-between text-sm">
               <span className="text-ink-muted">{t('buy.basePrice')}</span>
-              <span>{formatINR(selected.basePricePaise)}</span>
+              <span className="text-ink">{formatINR(selected.basePricePaise)}</span>
             </div>
             <div className="flex justify-between text-sm">
               <span className="text-ink-muted">{t('buy.gst')}</span>
-              <span>{formatINR(selected.gstPaise)}</span>
+              <span className="text-ink">{formatINR(selected.gstPaise)}</span>
             </div>
             <div className="flex justify-between text-base font-bold border-t border-surface-line pt-2">
-              <span>{t('buy.total')}</span>
+              <span className="text-ink">{t('buy.total')}</span>
               <span className="text-primary">{formatINR(selected.totalPaise)}</span>
             </div>
           </div>

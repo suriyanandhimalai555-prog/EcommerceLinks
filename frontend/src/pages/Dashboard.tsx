@@ -27,8 +27,8 @@ function txIcon(type: string, direction: string) {
 
 function txColor(type: string, direction: string) {
   if (direction === 'credit') return 'bg-success-50 text-success'
-  if (type === 'purchase') return 'bg-red-50 text-danger'
-  return 'bg-gray-100 text-ink-muted'
+  if (type === 'purchase') return 'bg-danger/10 text-danger'
+  return 'bg-white/5 text-ink-muted'
 }
 
 export default function Dashboard() {
@@ -190,7 +190,7 @@ export default function Dashboard() {
                 <span>{t('counters.qualified')}</span>
                 <span className="relative group/tooltip cursor-help inline-flex">
                   <Info size={11} className="text-ink-muted" />
-                  <span className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 w-60 -translate-x-1/2 rounded-lg bg-gray-900 px-3 py-2 text-xs leading-relaxed text-white opacity-0 shadow-lg transition-opacity duration-150 group-hover/tooltip:opacity-100">
+                  <span className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 w-60 -translate-x-1/2 rounded-lg bg-[#10141F] border border-surface-line px-3 py-2 text-xs leading-relaxed text-ink opacity-0 shadow-lg transition-opacity duration-150 group-hover/tooltip:opacity-100">
                     {t('counters.qualifiedTooltip')}
                   </span>
                 </span>
@@ -241,18 +241,18 @@ export default function Dashboard() {
             <AreaChart data={chartData} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
               <defs>
                 <linearGradient id="incomeGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#2447D8" stopOpacity={0.15} />
-                  <stop offset="95%" stopColor="#2447D8" stopOpacity={0} />
+                  <stop offset="5%" stopColor="#4169E1" stopOpacity={0.25} />
+                  <stop offset="95%" stopColor="#4169E1" stopOpacity={0} />
                 </linearGradient>
               </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="#F3F4F6" vertical={false} />
-              <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#9CA3AF' }} axisLine={false} tickLine={false} interval={2} />
-              <YAxis tick={{ fontSize: 10, fill: '#9CA3AF' }} axisLine={false} tickLine={false} tickFormatter={(v) => `₹${(v / 1000).toFixed(0)}K`} />
+              <CartesianGrid strokeDasharray="3 3" stroke="#232A40" vertical={false} />
+              <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#77809A' }} axisLine={false} tickLine={false} interval={2} />
+              <YAxis tick={{ fontSize: 10, fill: '#77809A' }} axisLine={false} tickLine={false} tickFormatter={(v) => `₹${(v / 1000).toFixed(0)}K`} />
               <Tooltip
                 formatter={(v) => [formatINR(Number(v) * 100), 'Pair Income']}
-                contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #E5E7EB', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.08)' }}
+                contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #272E44', backgroundColor: '#1B2236', color: '#F2F4FA', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.35)' }}
               />
-              <Area type="monotone" dataKey="income" stroke="#2447D8" strokeWidth={2.5} fill="url(#incomeGrad)" dot={false} activeDot={{ r: 4, fill: '#2447D8' }} />
+              <Area type="monotone" dataKey="income" stroke="#4169E1" strokeWidth={2.5} fill="url(#incomeGrad)" dot={false} activeDot={{ r: 4, fill: '#4169E1' }} />
             </AreaChart>
           </ResponsiveContainer>
         </div>
@@ -304,7 +304,7 @@ export default function Dashboard() {
                     <span>Next: Level {d.rank.next}</span>
                     <span>{Math.min(d.rank.progress.leftQualified, d.rank.progress.rightQualified)}/{d.rank.progress.requiredEachSide}</span>
                   </div>
-                  <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                  <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
                     <div
                       className="h-full bg-gradient-to-r from-primary to-violet rounded-full transition-all duration-500"
                       style={{ width: `${Math.min(100, (Math.min(d.rank.progress.leftQualified, d.rank.progress.rightQualified) / d.rank.progress.requiredEachSide) * 100)}%` }}

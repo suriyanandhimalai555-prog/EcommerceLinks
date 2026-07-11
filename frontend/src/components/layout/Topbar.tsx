@@ -31,10 +31,10 @@ export default function Topbar({ onMenuClick, breadcrumb, unreadCount = 3 }: Pro
   })
 
   return (
-    <header className="h-16 bg-white border-b border-surface-line flex items-center px-4 lg:px-6 gap-3 sticky top-0 z-20">
+    <header className="h-16 bg-surface-card border-b border-surface-line flex items-center px-4 lg:px-6 gap-3 sticky top-0 z-20">
       <button
         onClick={onMenuClick}
-        className="p-2 rounded-lg text-ink-muted hover:bg-gray-100 lg:hidden cursor-pointer"
+        className="p-2 rounded-lg text-ink-muted hover:bg-white/10 lg:hidden cursor-pointer"
         aria-label="Open menu"
       >
         <Menu size={20} />
@@ -56,20 +56,20 @@ export default function Topbar({ onMenuClick, breadcrumb, unreadCount = 3 }: Pro
       <div className="relative">
         <button
           onClick={() => setLangOpen(!langOpen)}
-          className="flex items-center gap-1.5 text-sm text-ink-muted border border-surface-line rounded-lg px-3 py-1.5 hover:bg-gray-50 transition-colors cursor-pointer"
+          className="flex items-center gap-1.5 text-sm text-ink-muted border border-surface-line rounded-lg px-3 py-1.5 hover:bg-white/5 transition-colors cursor-pointer"
         >
           <Globe size={14} />
           <span className="hidden sm:inline font-medium">{i18n.language === 'ta' ? 'தமிழ்' : 'English'}</span>
           <ChevronDown size={12} />
         </button>
         {langOpen && (
-          <div className="absolute right-0 top-full mt-1 bg-white rounded-xl shadow-lg border border-surface-line overflow-hidden z-50 min-w-[120px] animate-fade-in">
+          <div className="absolute right-0 top-full mt-1 bg-surface-card rounded-xl shadow-lg border border-surface-line overflow-hidden z-50 min-w-[120px] animate-fade-in">
             {[{ code: 'en', label: 'English' }, { code: 'ta', label: 'தமிழ்' }].map((l) => (
               <button
                 key={l.code}
                 onClick={() => switchLang(l.code)}
                 className={`w-full text-left px-4 py-2.5 text-sm transition-colors cursor-pointer ${
-                  i18n.language === l.code ? 'bg-primary-50 text-primary font-semibold' : 'hover:bg-gray-50 text-ink'
+                  i18n.language === l.code ? 'bg-primary-50 text-primary font-semibold' : 'hover:bg-white/5 text-ink'
                 }`}
               >
                 {l.label}
@@ -80,7 +80,7 @@ export default function Topbar({ onMenuClick, breadcrumb, unreadCount = 3 }: Pro
       </div>
 
       {/* Notifications bell */}
-      <button className="relative p-2 rounded-lg text-ink-muted hover:bg-gray-100 transition-colors cursor-pointer" aria-label="Notifications">
+      <button className="relative p-2 rounded-lg text-ink-muted hover:bg-white/10 transition-colors cursor-pointer" aria-label="Notifications">
         <Bell size={18} />
         {unreadCount > 0 && (
           <span className="absolute top-1 right-1 bg-danger text-white text-[9px] font-bold rounded-full w-4 h-4 flex items-center justify-center">

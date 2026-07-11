@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useQuery, keepPreviousData } from '@tanstack/react-query'
+import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import api from '../../lib/api'
 import type { TreeNode } from '../../types/api'
 
@@ -15,6 +15,7 @@ import type { TreeNode } from '../../types/api'
  * reuses the initial ['tree','me',depth] cache entry.
  */
 export function useTreeDrilldown(depth: number) {
+  const queryClient = useQueryClient()
   const [rootCode, setRootCode] = useState('me')
   const [stack, setStack] = useState<string[]>([])
 
@@ -34,12 +35,17 @@ export function useTreeDrilldown(depth: number) {
   const back = () => {
     setStack((s) => {
       const prev = s.at(-1) ?? 'me'
+      // The cached tree for `prev` may predate recent activations (global
+      // staleTime keeps it "fresh" for 60s) — mark it stale so navigating
+      // back triggers a background refetch while the cache renders instantly.
+      queryClient.invalidateQueries({ queryKey: ['tree', prev, depth] })
       setRootCode(prev)
       return s.slice(0, -1)
     })
   }
 
   const backToMe = () => {
+    queryClient.invalidateQueries({ queryKey: ['tree', 'me', depth] })
     setStack([])
     setRootCode('me')
   }

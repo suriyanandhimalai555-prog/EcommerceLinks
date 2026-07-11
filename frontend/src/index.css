@@ -9,7 +9,8 @@
 body {
   margin: 0;
   font-family: 'Inter', system-ui, sans-serif;
-  background-color: #F4F6FB;
+  background-color: #0B0E16;
+  color: #F2F4FA;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -24,12 +25,12 @@ body {
 
 .scrollbar-thin::-webkit-scrollbar { width: 4px; }
 .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
-.scrollbar-thin::-webkit-scrollbar-thumb { background: #E5E7EB; border-radius: 4px; }
-.scrollbar-thin::-webkit-scrollbar-thumb:hover { background: #D1D5DB; }
+.scrollbar-thin::-webkit-scrollbar-thumb { background: #272E44; border-radius: 4px; }
+.scrollbar-thin::-webkit-scrollbar-thumb:hover { background: #39415E; }
 
 @layer components {
   .avg-card {
-    @apply bg-white rounded-xl shadow-sm border border-surface-line;
+    @apply bg-surface-card rounded-xl shadow-lg shadow-black/20 border border-surface-line;
   }
   .avg-btn-primary {
     @apply bg-primary hover:bg-primary-600 text-white font-semibold rounded-lg px-4 py-2.5 text-sm transition-all duration-200 cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed;
@@ -44,10 +45,10 @@ body {
     @apply inline-flex items-center gap-1 text-xs font-semibold bg-warning-50 text-warning rounded-full px-2.5 py-0.5;
   }
   .avg-badge-danger {
-    @apply inline-flex items-center gap-1 text-xs font-semibold bg-red-50 text-danger rounded-full px-2.5 py-0.5;
+    @apply inline-flex items-center gap-1 text-xs font-semibold bg-danger/10 text-danger rounded-full px-2.5 py-0.5;
   }
   .avg-badge-neutral {
-    @apply inline-flex items-center gap-1 text-xs font-semibold bg-gray-100 text-ink-muted rounded-full px-2.5 py-0.5;
+    @apply inline-flex items-center gap-1 text-xs font-semibold bg-white/5 text-ink-muted rounded-full px-2.5 py-0.5;
   }
   .avg-badge-primary {
     @apply inline-flex items-center gap-1 text-xs font-semibold bg-primary-50 text-primary rounded-full px-2.5 py-0.5;
@@ -57,13 +58,14 @@ body {
 /* Tree SVG connectors */
 .tree-svg-connector {
   fill: none;
-  stroke: #E5E7EB;
-  stroke-width: 2;
+  stroke: #3D56B2;
+  stroke-width: 2.5;
+  stroke-linecap: round;
 }
 
 /* Gradient text */
 .gradient-text {
-  background: linear-gradient(135deg, #2447D8 0%, #7C3AED 100%);
+  background: linear-gradient(135deg, #4169E1 0%, #38BDF8 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;

@@ -58,7 +58,7 @@ export default function IncomeReport() {
             key={p}
             onClick={() => setPreset(p)}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-all cursor-pointer ${
-              preset === p ? 'bg-primary text-white shadow-sm' : 'bg-white border border-surface-line hover:border-primary text-ink-muted hover:text-primary'
+              preset === p ? 'bg-primary text-white shadow-sm' : 'bg-surface-card border border-surface-line hover:border-primary text-ink-muted hover:text-primary'
             }`}
           >
             Last {p} days
@@ -93,15 +93,15 @@ export default function IncomeReport() {
           <AreaChart data={chartData} margin={{ top: 5, right: 5, left: -10, bottom: 0 }}>
             <defs>
               <linearGradient id="incomeGrad2" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#2447D8" stopOpacity={0.2} />
-                <stop offset="95%" stopColor="#2447D8" stopOpacity={0} />
+                <stop offset="5%" stopColor="#4169E1" stopOpacity={0.25} />
+                <stop offset="95%" stopColor="#4169E1" stopOpacity={0} />
               </linearGradient>
             </defs>
-            <CartesianGrid strokeDasharray="3 3" stroke="#F3F4F6" vertical={false} />
-            <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#9CA3AF' }} axisLine={false} tickLine={false} interval={Math.floor(chartData.length / 8)} />
-            <YAxis tick={{ fontSize: 10, fill: '#9CA3AF' }} axisLine={false} tickLine={false} tickFormatter={v => `₹${(v/1000).toFixed(0)}K`} />
-            <Tooltip formatter={(v) => [formatINR(Number(v) * 100), 'Income']} contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #E5E7EB' }} />
-            <Area type="monotone" dataKey="income" stroke="#2447D8" strokeWidth={2.5} fill="url(#incomeGrad2)" dot={false} activeDot={{ r: 4, fill: '#2447D8' }} />
+            <CartesianGrid strokeDasharray="3 3" stroke="#232A40" vertical={false} />
+            <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#77809A' }} axisLine={false} tickLine={false} interval={Math.floor(chartData.length / 8)} />
+            <YAxis tick={{ fontSize: 10, fill: '#77809A' }} axisLine={false} tickLine={false} tickFormatter={v => `₹${(v/1000).toFixed(0)}K`} />
+            <Tooltip formatter={(v) => [formatINR(Number(v) * 100), 'Income']} contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #272E44', backgroundColor: '#1B2236', color: '#F2F4FA' }} />
+            <Area type="monotone" dataKey="income" stroke="#4169E1" strokeWidth={2.5} fill="url(#incomeGrad2)" dot={false} activeDot={{ r: 4, fill: '#4169E1' }} />
           </AreaChart>
         </ResponsiveContainer>
       </div>
@@ -120,7 +120,7 @@ export default function IncomeReport() {
             </thead>
             <tbody>
               {(ledger?.items ?? []).map((r, i) => (
-                <tr key={i} className="border-b border-surface-line last:border-0 hover:bg-gray-50">
+                <tr key={i} className="border-b border-surface-line last:border-0 hover:bg-white/5">
                   <td className="px-4 py-3 text-xs text-ink-muted">{formatDate(r.at)}</td>
                   <td className="px-4 py-3 text-sm font-medium">{r.description}</td>
                   <td className="px-4 py-3">

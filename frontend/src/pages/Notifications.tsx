@@ -64,7 +64,7 @@ export default function Notifications() {
         {notifications.length === 0 ? (
           <EmptyState icon={Bell} title="No notifications" description="You're all caught up!" />
         ) : notifications.map(n => (
-          <div key={n.id} className={`flex items-start gap-3 p-4 transition-colors hover:bg-gray-50 ${!n.read ? 'bg-primary-50/40' : ''}`}>
+          <div key={n.id} className={`flex items-start gap-3 p-4 transition-colors hover:bg-white/5 ${!n.read ? 'bg-primary-50/40' : ''}`}>
             <div className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 ${n.type === 'wallet' ? 'bg-success-50 text-success' : 'bg-warning-50 text-warning'}`}>
               {n.type === 'wallet' ? <GitMerge size={15} /> : <Trophy size={15} />}
             </div>

@@ -8,40 +8,40 @@ export default {
       },
       colors: {
         primary: {
-          DEFAULT: '#2447D8',
-          600: '#1E3FBF',
-          50: '#EEF2FF',
+          DEFAULT: '#4169E1',
+          600: '#3355C9',
+          50: '#19224A',
         },
         success: {
-          DEFAULT: '#16A34A',
-          50: '#ECFDF3',
+          DEFAULT: '#34D399',
+          50: '#0E3532',
         },
         warning: {
-          DEFAULT: '#F59E0B',
-          50: '#FFF7E6',
+          DEFAULT: '#FBBF24',
+          50: '#3A2E12',
         },
         violet: {
-          DEFAULT: '#7C3AED',
-          50: '#F3EEFF',
+          DEFAULT: '#38BDF8',
+          50: '#0C2C42',
         },
         ink: {
-          DEFAULT: '#111827',
-          muted: '#6B7280',
+          DEFAULT: '#F2F4FA',
+          muted: '#98A2B8',
         },
         surface: {
-          page: '#F4F6FB',
-          card: '#FFFFFF',
-          line: '#E5E7EB',
+          page: '#0B0E16',
+          card: '#141927',
+          line: '#272E44',
         },
-        danger: '#DC2626',
+        danger: '#F87171',
       },
       borderRadius: {
         xl: '12px',
         '2xl': '16px',
       },
       boxShadow: {
-        sm: '0 1px 3px 0 rgb(0 0 0 / 0.08), 0 1px 2px -1px rgb(0 0 0 / 0.06)',
-        glow: '0 0 20px rgba(36, 71, 216, 0.25)',
+        sm: '0 1px 3px 0 rgb(0 0 0 / 0.35), 0 1px 2px -1px rgb(0 0 0 / 0.25)',
+        glow: '0 0 20px rgba(65, 105, 225, 0.25)',
       },
       keyframes: {
         'fade-in': {

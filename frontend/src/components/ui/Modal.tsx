@@ -22,13 +22,13 @@ export function Modal({ open, onClose, title, children, size = 'md' }: Props) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
-      <div className={`relative bg-white rounded-2xl shadow-2xl w-full ${sizeMap[size]} animate-fade-in`}>
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+      <div className={`relative bg-surface-card border border-surface-line rounded-2xl shadow-2xl w-full ${sizeMap[size]} animate-fade-in`}>
         <div className="flex items-center justify-between p-6 border-b border-surface-line">
           <h2 className="text-base font-semibold text-ink">{title}</h2>
           <button
             onClick={onClose}
-            className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-100 text-ink-muted transition-colors cursor-pointer"
+            className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 text-ink-muted transition-colors cursor-pointer"
             aria-label="Close modal"
           >
             <X size={16} />

@@ -5,7 +5,7 @@ interface Props {
 
 export function Skeleton({ className = '' }: { className?: string }) {
   return (
-    <div className={`bg-gradient-to-r from-gray-100 via-gray-200 to-gray-100 animate-shimmer bg-[length:200%_100%] rounded-lg ${className}`} />
+    <div className={`bg-gradient-to-r from-[#1B2236] via-[#232A40] to-[#1B2236] animate-shimmer bg-[length:200%_100%] rounded-lg ${className}`} />
   )
 }
 

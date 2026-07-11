@@ -380,23 +380,24 @@ export async function frontendRoutes(app: FastifyInstance) {
 		const rootParam =
 			query.root === "me" || !query.root ? user.sub : query.root;
 
+		// G-12: authorize tree access — caller must be the root themselves OR appear in
+		// the target's placement_path (i.e. the target is in the caller's downline).
+		// Return 404 (not 403) to avoid leaking whether a member code exists.
+		// Lookup and authorization are one round trip.
 		let rootId = rootParam;
 		if (!rootParam.match(/^\d+$/)) {
 			const { rows } = await pool().query<{ id: string }>(
-				"SELECT id FROM members WHERE member_code = $1",
-				[rootParam],
+				`SELECT id FROM members
+         WHERE member_code = $1
+           AND (id = $2::bigint OR placement_path @> ARRAY[$2::bigint])`,
+				[rootParam, user.sub],
 			);
 			if (!rows[0])
 				return reply
 					.status(404)
 					.send({ error: { code: "NOT_FOUND", message: "Root not found" } });
 			rootId = rows[0].id;
-		}
-
-		// G-12: authorize tree access — caller must be the root themselves OR appear in
-		// the target's placement_path (i.e. the target is in the caller's downline).
-		// Return 404 (not 403) to avoid leaking whether a member code exists.
-		if (rootId !== user.sub) {
+		} else if (rootId !== user.sub) {
 			const { rows: authRows } = await pool().query<{ ok: number }>(
 				`SELECT 1 AS ok FROM members WHERE id = $1 AND placement_path @> ARRAY[$2::bigint]`,
 				[rootId, user.sub],
@@ -409,36 +410,37 @@ export async function frontendRoutes(app: FastifyInstance) {
 		}
 
 		const cacheKey = `tree:${rootId}:${depth}`;
-		const cached = await redis()
-			.get(cacheKey)
-			.catch(() => null);
+		// Bound the cache read: a stalled Redis connection must degrade to a
+		// cache miss, not hang the request indefinitely.
+		const cached = await Promise.race([
+			redis()
+				.get(cacheKey)
+				.catch(() => null),
+			new Promise<null>((resolve) => setTimeout(() => resolve(null), 1_000)),
+		]);
 		if (cached) return JSON.parse(cached);
 
-		let currentIds = [rootId];
-		const allRows: TreeRow[] = [];
-		for (let d = 0; d <= depth && currentIds.length > 0; d++) {
-			const { rows } = await pool().query<TreeRow>(
-				`SELECT id, member_code, name, position, is_active, is_qualified, parent_id
-         FROM members WHERE id = ANY($1::bigint[])`,
-				[currentIds],
-			);
-			allRows.push(...rows);
-			if (d < depth) {
-				const { rows: children } = await pool().query<{ id: string }>(
-					`SELECT id FROM members WHERE parent_id = ANY($1::bigint[])`,
-					[currentIds],
-				);
-				currentIds = children.map((r) => r.id);
-			} else {
-				currentIds = [];
-			}
-		}
+		// Whole subtree (levels 0..depth) in one round trip instead of a
+		// level-by-level walk (2 queries per level).
+		const { rows: allRows } = await pool().query<TreeRow>(
+			`WITH RECURSIVE walk AS (
+         SELECT id, member_code, name, position, is_active, is_qualified, parent_id, 0 AS lvl
+         FROM members WHERE id = $1::bigint
+         UNION ALL
+         SELECT m.id, m.member_code, m.name, m.position, m.is_active, m.is_qualified, m.parent_id, w.lvl + 1
+         FROM members m JOIN walk w ON m.parent_id = w.id
+         WHERE w.lvl < $2::int
+       )
+       SELECT id, member_code, name, position, is_active, is_qualified, parent_id FROM walk`,
+			[rootId, depth],
+		);
 		const tree = buildTree(allRows, rootId, depth);
 		if (!tree)
 			return reply
 				.status(404)
 				.send({ error: { code: "NOT_FOUND", message: "Root not found" } });
-		await redis()
+		// Fire-and-forget: don't spend a Redis round trip before responding.
+		redis()
 			.setex(cacheKey, 60, JSON.stringify(tree))
 			.catch(() => null);
 		return tree;
@@ -447,50 +449,51 @@ export async function frontendRoutes(app: FastifyInstance) {
 	app.get("/network/summary", auth, async (req) => {
 		const memberId = (req.user as Auth).sub;
 
-		const { rows: meRows } = await pool().query<{ depth: string }>(
-			"SELECT cardinality(placement_path) AS depth FROM members WHERE id = $1",
-			[memberId],
-		);
-		const myDepth = parseInt(meRows[0]?.depth ?? "0");
-
-		const { rows: agg } = await pool().query<{
-			total: string;
-			left_team: string;
-			right_team: string;
-			active: string;
-			qualified: string;
-		}>(
-			`SELECT COUNT(*) AS total,
+		// Independent aggregates — one parallel round trip instead of four
+		// sequential ones (the caller's own depth is a scalar subquery).
+		const [aggRes, dRes, lvlRes] = await Promise.all([
+			pool().query<{
+				total: string;
+				left_team: string;
+				right_team: string;
+				active: string;
+				qualified: string;
+			}>(
+				`SELECT COUNT(*) AS total,
               COUNT(*) FILTER (WHERE placement_sides[array_position(placement_path, $1::bigint)] = 'L') AS left_team,
               COUNT(*) FILTER (WHERE placement_sides[array_position(placement_path, $1::bigint)] = 'R') AS right_team,
               COUNT(*) FILTER (WHERE is_active) AS active,
               COUNT(*) FILTER (WHERE is_qualified) AS qualified
        FROM members WHERE placement_path @> ARRAY[$1::bigint]`,
-			[memberId],
-		);
+				[memberId],
+			),
+			pool().query<{
+				position: string;
+				cnt: string;
+			}>(
+				`SELECT position, COUNT(*) AS cnt FROM members WHERE parent_id = $1 GROUP BY position`,
+				[memberId],
+			),
+			pool().query<{
+				level: string;
+				members: string;
+			}>(
+				`SELECT (cardinality(placement_path)
+                 - (SELECT cardinality(placement_path) FROM members WHERE id = $1)) AS level,
+                COUNT(*) AS members
+       FROM members WHERE placement_path @> ARRAY[$1::bigint]
+       GROUP BY 1 ORDER BY 1 LIMIT 12`,
+				[memberId],
+			),
+		]);
 
-		const { rows: dRows } = await pool().query<{
-			position: string;
-			cnt: string;
-		}>(
-			`SELECT position, COUNT(*) AS cnt FROM members WHERE parent_id = $1 GROUP BY position`,
-			[memberId],
-		);
+		const agg = aggRes.rows;
+		const lvlRows = lvlRes.rows;
 		const directs = { left: 0, right: 0 };
-		for (const r of dRows) {
+		for (const r of dRes.rows) {
 			if (r.position === "L") directs.left = parseInt(r.cnt);
 			if (r.position === "R") directs.right = parseInt(r.cnt);
 		}
-
-		const { rows: lvlRows } = await pool().query<{
-			level: string;
-			members: string;
-		}>(
-			`SELECT (cardinality(placement_path) - $2) AS level, COUNT(*) AS members
-       FROM members WHERE placement_path @> ARRAY[$1::bigint]
-       GROUP BY 1 ORDER BY 1 LIMIT 12`,
-			[memberId, myDepth],
-		);
 
 		const a = agg[0];
 		return {
@@ -547,6 +550,7 @@ export async function frontendRoutes(app: FastifyInstance) {
 			todayRes,
 			seriesRes,
 			rankRes,
+			recentLedger,
 		] = await Promise.all([
 			pool().query<{
 				left_active: string;
@@ -590,6 +594,7 @@ export async function frontendRoutes(app: FastifyInstance) {
 				"SELECT MAX(rank_level) AS max FROM rank_achievements WHERE member_id = $1",
 				[memberId],
 			),
+			ledgerItems(memberId, null, 10),
 		]);
 
 		const c = counterRes.rows[0] ?? {
@@ -618,7 +623,7 @@ export async function frontendRoutes(app: FastifyInstance) {
 					}
 				: null;
 
-		const { items: recent } = await ledgerItems(memberId, null, 10);
+		const { items: recent } = recentLedger;
 
 		return {
 			totalIncomePaise: Number(toPaise(totalRes.rows[0]?.total ?? "0")),
@@ -716,29 +721,36 @@ export async function frontendRoutes(app: FastifyInstance) {
 			return toPaise(rows[0]?.balance ?? "0");
 		};
 
-		const { rows: win } = await pool().query<{
-			id: string;
-			window_start: string;
-			window_end: string;
-		}>(
-			`SELECT id, window_start, window_end FROM cutoffs WHERE status = 'open' LIMIT 1`,
-		);
+		// Balances + open window (with the caller's earnings joined in) — one
+		// parallel round trip instead of four sequential ones.
+		const [walletBal, deferredBal, winRes] = await Promise.all([
+			bal("wallet"),
+			bal("deferred_bonus"),
+			pool().query<{
+				window_start: string;
+				window_end: string;
+				earned: string | null;
+			}>(
+				`SELECT c.window_start, c.window_end, ce.earned
+         FROM cutoffs c
+         LEFT JOIN cutoff_earnings ce ON ce.cutoff_id = c.id AND ce.member_id = $1
+         WHERE c.status = 'open' LIMIT 1`,
+				[memberId],
+			),
+		]);
+		const win = winRes.rows;
 		let earnedPaise = 0n;
 		let start = new Date().toISOString();
 		let end = new Date().toISOString();
 		if (win[0]) {
 			start = new Date(win[0].window_start).toISOString();
 			end = new Date(win[0].window_end).toISOString();
-			const { rows: ce } = await pool().query<{ earned: string }>(
-				"SELECT earned FROM cutoff_earnings WHERE member_id = $1 AND cutoff_id = $2",
-				[memberId, win[0].id],
-			);
-			earnedPaise = toPaise(ce[0]?.earned ?? "0");
+			earnedPaise = toPaise(win[0].earned ?? "0");
 		}
 
 		return {
-			balancePaise: Number(await bal("wallet")),
-			deferredPaise: Number(await bal("deferred_bonus")),
+			balancePaise: Number(walletBal),
+			deferredPaise: Number(deferredBal),
 			currentWindow: {
 				start,
 				end,

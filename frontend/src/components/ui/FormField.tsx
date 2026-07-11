@@ -19,8 +19,8 @@ export const FormField = forwardRef<HTMLInputElement, Props>(
           <input
             ref={ref}
             id={props.id || props.name}
-            className={`w-full rounded-lg border px-3 py-2.5 text-sm text-ink placeholder:text-gray-400 outline-none transition-all duration-150 focus:ring-2 focus:ring-primary/30 focus:border-primary ${
-              error ? 'border-danger bg-red-50 focus:ring-danger/20 focus:border-danger' : 'border-surface-line bg-white hover:border-gray-300'
+            className={`w-full rounded-lg border px-3 py-2.5 text-sm text-ink placeholder:text-ink-muted/60 outline-none transition-all duration-150 focus:ring-2 focus:ring-primary/30 focus:border-primary ${
+              error ? 'border-danger bg-danger/10 focus:ring-danger/20 focus:border-danger' : 'border-surface-line bg-[#10141F] hover:border-[#39415E]'
             } ${rightElement ? 'pr-10' : ''} ${className}`}
             {...props}
           />

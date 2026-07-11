@@ -4,6 +4,7 @@ import { Trophy, CheckCircle2, Lock, Clock, Star, Info } from 'lucide-react'
 import api from '../lib/api'
 import { formatDate } from '../lib/format'
 import { Badge } from '../components/ui/Badge'
+import { SkeletonCard } from '../components/ui/Skeleton'
 import type { RankLevel } from '../types/api'
 
 const RANK_REWARDS = [
@@ -22,27 +23,27 @@ const RANK_REWARDS = [
 ]
 
 const levelGradients = [
-  'from-blue-400 to-primary',
-  'from-emerald-400 to-green-500',
-  'from-orange-400 to-amber-500',
-  'from-red-400 to-rose-500',
-  'from-yellow-400 to-amber-400',
-  'from-amber-500 to-yellow-500',
-  'from-purple-400 to-violet',
-  'from-pink-400 to-rose-400',
-  'from-indigo-400 to-primary',
-  'from-teal-400 to-emerald-400',
-  'from-cyan-400 to-sky-400',
-  'from-rose-500 to-primary',
+  'from-primary to-[#7C93F0]',
+  'from-primary to-[#7C93F0]',
+  'from-primary to-[#7C93F0]',
+  'from-primary to-[#7C93F0]',
+  'from-[#3355C9] to-primary',
+  'from-[#3355C9] to-primary',
+  'from-[#3355C9] to-primary',
+  'from-[#3355C9] to-primary',
+  'from-amber-400 to-amber-500',
+  'from-amber-400 to-amber-500',
+  'from-amber-400 to-amber-500',
+  'from-amber-400 to-amber-500',
 ]
 
 export default function RankRewards() {
   const { t } = useTranslation()
-  const { data: rankData } = useQuery<{ levels: RankLevel[] }>({
+  const { data: rankData, isPending: ranksPending } = useQuery<{ levels: RankLevel[] }>({
     queryKey: ['ranks'],
     queryFn: () => api.get('/ranks/progress').then(r => r.data),
   })
-  const { data: dash } = useQuery({
+  const { data: dash, isPending: dashPending } = useQuery({
     queryKey: ['dashboard'],
     queryFn: () => api.get('/dashboard').then(r => r.data),
   })
@@ -50,6 +51,17 @@ export default function RankRewards() {
   const levels = rankData?.levels ?? []
   const currentLevel = dash?.rank?.current ?? 0
   const nextLevel = dash?.rank?.next ?? null
+
+  if (ranksPending || dashPending) {
+    return (
+      <div className="space-y-6">
+        <SkeletonCard lines={4} />
+        <div className="space-y-3">
+          {[1, 2, 3, 4].map((i) => <SkeletonCard key={i} lines={2} />)}
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">
@@ -152,7 +164,7 @@ export default function RankRewards() {
                           <span>Left {t('counters.qualified')}</span>
                           <span className="font-semibold">{level.requirement.leftQualified}/{level.requirement.requiredEachSide}</span>
                         </div>
-                        <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                        <div className="h-2 bg-white/10 rounded-full overflow-hidden">
                           <div
                             className="h-full bg-gradient-to-r from-primary to-violet rounded-full"
                             style={{ width: `${Math.min(100, (level.requirement.leftQualified / level.requirement.requiredEachSide) * 100)}%` }}
@@ -164,7 +176,7 @@ export default function RankRewards() {
                           <span>Right {t('counters.qualified')}</span>
                           <span className="font-semibold">{level.requirement.rightQualified}/{level.requirement.requiredEachSide}</span>
                         </div>
-                        <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                        <div className="h-2 bg-white/10 rounded-full overflow-hidden">
                           <div
                             className="h-full bg-gradient-to-r from-violet to-primary rounded-full"
                             style={{ width: `${Math.min(100, (level.requirement.rightQualified / level.requirement.requiredEachSide) * 100)}%` }}
@@ -181,7 +193,7 @@ export default function RankRewards() {
                           <span>Left L{level.requirement.requiredRank} Achiever</span>
                           <span className="font-semibold">{level.requirement.leftAchievers}/1</span>
                         </div>
-                        <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                        <div className="h-2 bg-white/10 rounded-full overflow-hidden">
                           <div className="h-full bg-primary rounded-full" style={{ width: `${level.requirement.leftAchievers * 100}%` }} />
                         </div>
                       </div>
@@ -190,7 +202,7 @@ export default function RankRewards() {
                           <span>Right L{level.requirement.requiredRank} Achiever</span>
                           <span className="font-semibold">{level.requirement.rightAchievers}/1</span>
                         </div>
-                        <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                        <div className="h-2 bg-white/10 rounded-full overflow-hidden">
                           <div className="h-full bg-violet rounded-full" style={{ width: `${level.requirement.rightAchievers * 100}%` }} />
                         </div>
                       </div>
