@@ -33,7 +33,7 @@ export interface CounterIncrement extends Envelope {
 	event_type: "CounterIncrement";
 	ancestor_id: number;
 	side: "L" | "R";
-	counter_type: "active" | "qualified" | "rank_achiever";
+	counter_type: "active" | "qualified" | "rank_achiever" | "mint_check";
 	rank_level?: number;
 	source_member_id: number;
 	source_event_id: string;

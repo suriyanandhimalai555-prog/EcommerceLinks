@@ -21,7 +21,13 @@ export async function applyIncrements(
 			[GROUP, eventIds],
 		);
 		const done = new Set(doneRows.map((r) => r.event_id));
-		const fresh = batch.filter((b) => !done.has(b.event_id));
+		// Phase 0.1: dedupe within-batch duplicates before hitting the DB lock
+		const seenIds = new Set<string>();
+		const fresh = batch.filter((b) => {
+			if (done.has(b.event_id) || seenIds.has(b.event_id)) return false;
+			seenIds.add(b.event_id);
+			return true;
+		});
 		if (fresh.length === 0) return;
 
 		// Lock counters row
@@ -36,6 +42,13 @@ export async function applyIncrements(
 			[ancestorId],
 		);
 		if (!cRows[0]) throw new Error(`No counters row for ${ancestorId}`);
+
+		// Phase 1.2: read qualification inside the txn (after the FOR UPDATE lock)
+		const { rows: qRows } = await c.query<{ is_qualified: boolean }>(
+			"SELECT is_qualified FROM members WHERE id=$1",
+			[ancestorId],
+		);
+		const isQualified = qRows[0]?.is_qualified ?? false;
 
 		let leftActive = BigInt(cRows[0].left_active);
 		let rightActive = BigInt(cRows[0].right_active);
@@ -96,10 +109,15 @@ export async function applyIncrements(
 			}
 		}
 
-		// Mint new pairs (BR-3)
-		const newPairs = BigInt(
-			Math.min(Number(leftActive), Number(rightActive)) - Number(pairsMatched),
-		);
+		// Mint new pairs (BR-3); gate on qualification (BR-4/BR-6).
+		// mint_check increments (D-3) pass through the loop above without changing counters
+		// and arrive here with isQualified=TRUE to flush any accumulated backlog.
+		const newPairs = isQualified
+			? BigInt(
+					Math.min(Number(leftActive), Number(rightActive)) -
+						Number(pairsMatched),
+				)
+			: 0n;
 
 		for (let k = 1n; k <= newPairs; k++) {
 			const seq = pairsMatched + k;

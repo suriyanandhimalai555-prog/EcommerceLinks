@@ -13,26 +13,27 @@ const DATABASE_URL = env(
 );
 const REDIS_URL = env("REDIS_URL", "redis://localhost:6379");
 
-// G-9: fail fast in production when insecure defaults are present
-if (NODE_ENV === "production") {
+// Fail fast when insecure defaults are present in staging/production.
+// development + test: local dev and vitest are exempt.
+if (NODE_ENV !== "development" && NODE_ENV !== "test") {
 	if (JWT_SECRET === "dev-secret-change-in-prod") {
 		throw new Error(
-			"[config] JWT_SECRET must be overridden in production — refusing to start",
+			"[config] JWT_SECRET must be overridden in non-development environments — refusing to start",
 		);
 	}
 	if (!WEBHOOK_SECRET) {
 		throw new Error(
-			"[config] WEBHOOK_SECRET must be set in production — refusing to start",
+			"[config] WEBHOOK_SECRET must be set in non-development environments — refusing to start",
 		);
 	}
 	if (!process.env.DATABASE_URL) {
 		throw new Error(
-			"[config] DATABASE_URL must be set in production — refusing to start",
+			"[config] DATABASE_URL must be set in non-development environments — refusing to start",
 		);
 	}
 	if (!process.env.REDIS_URL) {
 		throw new Error(
-			"[config] REDIS_URL must be set in production — refusing to start",
+			"[config] REDIS_URL must be set in non-development environments — refusing to start",
 		);
 	}
 }

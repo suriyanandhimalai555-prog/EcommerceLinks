@@ -16,15 +16,14 @@ export interface Me {
 
 export interface RegisterReq {
   sponsorCode: string
-  preferredLeg: 'L' | 'R'
   name: string
   phone: string
-  email?: string
+  email: string
   password: string
 }
 
 export interface LoginReq {
-  phone: string
+  email: string
   password: string
 }
 

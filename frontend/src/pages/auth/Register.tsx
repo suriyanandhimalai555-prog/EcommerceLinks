@@ -3,19 +3,20 @@ import { useNavigate, Link, useSearchParams } from 'react-router-dom'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { Eye, EyeOff, Loader2, AlertCircle } from 'lucide-react'
+import { Eye, EyeOff, Loader2, AlertCircle, Link2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useQueryClient } from '@tanstack/react-query'
 import api from '../../lib/api'
+import { apiErrorMessage } from '../../lib/apiError'
 import { tokenStore } from '../../lib/auth'
 import { FormField } from '../../components/ui/FormField'
+import { EmptyState } from '../../components/ui/EmptyState'
 
 const schema = z.object({
   sponsorCode: z.string().min(3, 'Sponsor code required'),
-  preferredLeg: z.enum(['L', 'R'] as const).refine((v) => v === 'L' || v === 'R', 'Select a leg'),
   name: z.string().min(2, 'Full name required'),
   phone: z.string().regex(/^[6-9]\d{9}$/, 'Enter a valid 10-digit mobile number'),
-  email: z.string().email().optional().or(z.literal('')),
+  email: z.string().email('Enter a valid email address'),
   password: z.string().min(8, 'Password must be at least 8 characters'),
   confirmPassword: z.string(),
   terms: z.literal(true, { error: 'You must accept the terms' }),
@@ -31,36 +32,58 @@ export default function Register() {
   const queryClient = useQueryClient()
   const [searchParams] = useSearchParams()
   const [showPw, setShowPw] = useState(false)
+  const sponsorParam = searchParams.get('sponsor') || ''
 
-  const { register, handleSubmit, formState: { errors, isSubmitting }, setError, watch } = useForm<FormData>({
+  const { register, handleSubmit, formState: { errors, isSubmitting }, setError } = useForm<FormData>({
     resolver: zodResolver(schema),
     defaultValues: {
-      sponsorCode: searchParams.get('sponsor') || '',
-      preferredLeg: searchParams.get('leg') === 'R' ? 'R' : 'L',
+      sponsorCode: sponsorParam,
     },
   })
-
-  const leg = watch('preferredLeg')
 
   const onSubmit = async (data: FormData) => {
     try {
       await api.post('/auth/register', {
         sponsorCode: data.sponsorCode,
-        preferredLeg: data.preferredLeg,
         name: data.name,
         phone: data.phone,
-        email: data.email || undefined,
+        email: data.email,
         password: data.password,
       })
-      const loginRes = await api.post('/auth/login', { phone: data.phone, password: data.password })
+      const loginRes = await api.post('/auth/login', { email: data.email, password: data.password })
       tokenStore.setAccess(loginRes.data.accessToken)
       tokenStore.setRefresh(loginRes.data.refreshToken)
       tokenStore.setMe(loginRes.data.member)
       queryClient.clear()
       navigate('/', { replace: true })
-    } catch {
-      setError('root', { message: 'Registration failed. Please try again.' })
+    } catch (err) {
+      setError('root', { message: apiErrorMessage(err, t, t('auth.registrationFailed')) })
     }
+  }
+
+  // Registration is referral-only: without a sponsor link there is no form.
+  if (!sponsorParam) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-primary-50 via-white to-violet-50 flex items-center justify-center p-4">
+        <div className="w-full max-w-lg">
+          <div className="text-center mb-6">
+            <img src="/AVGLOGO.jpeg" alt="AVG Logo" className="w-14 h-14 rounded-2xl object-cover mx-auto mb-3 shadow-glow" />
+            <h1 className="text-2xl font-bold text-ink">Agila Vetri Groups</h1>
+          </div>
+          <div className="avg-card p-8">
+            <EmptyState
+              icon={Link2}
+              title={t('auth.referralRequired')}
+              description={t('auth.referralRequiredDesc')}
+            />
+            <p className="text-center text-sm text-ink-muted mt-6">
+              Already a member?{' '}
+              <Link to="/login" className="text-primary font-semibold hover:underline">{t('auth.login')}</Link>
+            </p>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -81,22 +104,14 @@ export default function Register() {
           )}
 
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <FormField label={t('auth.sponsorCode')} placeholder="AGV100001" {...register('sponsorCode')} error={errors.sponsorCode?.message} />
-              <div className="space-y-1.5">
-                <p className="text-sm font-medium text-ink">{t('auth.preferredLeg')}<span className="text-danger ml-0.5">*</span></p>
-                <div className="flex gap-3">
-                  {(['L', 'R'] as const).map((l) => (
-                    <label key={l} className={`flex-1 flex items-center justify-center gap-2 border rounded-lg px-3 py-2.5 cursor-pointer transition-all ${leg === l ? 'border-primary bg-primary-50 text-primary' : 'border-surface-line hover:border-gray-300'}`}>
-                      <input type="radio" value={l} {...register('preferredLeg')} className="sr-only" />
-                      <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${l === 'L' ? 'bg-primary-50 text-primary' : 'bg-violet-50 text-violet'}`}>{l}</div>
-                      <span className="text-sm font-medium">{l === 'L' ? t('auth.leftLeg') : t('auth.rightLeg')}</span>
-                    </label>
-                  ))}
-                </div>
-                {errors.preferredLeg && <p className="text-xs text-danger">{errors.preferredLeg.message}</p>}
-              </div>
-            </div>
+            <FormField
+              label={t('auth.sponsorCode')}
+              readOnly
+              className="bg-surface-page text-ink-muted cursor-not-allowed"
+              hint={t('auth.sponsorLocked')}
+              {...register('sponsorCode')}
+              error={errors.sponsorCode?.message}
+            />
 
             <div className="grid grid-cols-2 gap-4">
               <FormField label={t('auth.name')} placeholder="Full Name" {...register('name')} error={errors.name?.message} />

@@ -31,7 +31,7 @@ Backend (run from `backend/`). Local infra: Postgres 16 + Redis 7 (native instal
 ```bash
 npm install
 npm run migrate               # apply db/migrations/*.sql in filename order
-npm run seed                  # create root member (phone 9999999999 / Root@1234) + open cutoff window
+npm run seed                  # create root member (login root@avg.com / Root@1234) + open cutoff window
 npm run dev                   # API server (tsx watch). Default PORT=3000
 npm run dev:workers           # ALL nine worker loops in one process (tsx, hot-reload)
 npm run start:api             # compiled API (node dist/src/api/server.js)
@@ -73,7 +73,7 @@ There is no CI or deploy pipeline **yet**. Building CI (GitHub Actions gating `m
 
 ## Gotchas
 
-- **Two trees.** `sponsor_id` (who referred you — used ONLY for the 3-generation qualification gate) vs `parent_id`+`position` (binary placement — used for all counters/pairs/ranks). Picking the wrong tree gives wrong numbers, not errors.
+- **Two trees.** `sponsor_id` (who referred you — used ONLY for the 3-generation qualification gate) vs `parent_id`+`position` (binary placement — used for all counters/pairs/ranks). Picking the wrong tree gives wrong numbers, not errors. **Since the 2-referral cap** (July 2026): registration places the new member directly under their sponsor (first referral → L, second → R, third → 409), so `parent_id = sponsor_id` for all new rows and the trees coincide going forward — but both columns remain, and pre-cap data may still have `sponsor_id ≠ parent_id`.
 - **The API server alone appears "broken".** Counters/pairs/wallet only move when the outbox relay + workers are running. If a dashboard stays at zero after activity, start the workers.
 - **No open cutoff window ⇒ ledger worker throws.** Run `npm run seed` (calls `ensureCutoffExists`) before generating pairs.
 - **Ports disagree by default:** backend listens on 3000; frontend `.env.example` points to 4000. INTEGRATION.md standardizes on 3000.

@@ -14,17 +14,20 @@ import { applyIncrements } from '../../src/workers/counterPair.js'
 import { creditPairBonus, sweepDeferred } from '../../src/workers/ledger.js'
 import { evaluateRanks } from '../../src/workers/rank.js'
 import { ensureCutoffExists } from '../../src/workers/cutoff.js'
+import { buildBatch } from '../../src/workers/payout.js'
 import { toPaise, fromPaise, pct, pctRoundUp } from '../../src/lib/money.js'
 import { CFG } from '../../src/config.js'
 import { nextMemberCode } from '../../src/lib/ids.js'
 import type { CounterIncrement } from '../../src/events/types.js'
 import { randomUUID } from 'crypto'
+import { DateTime } from 'luxon'
+import { registerAnchor, uniqueEmail } from './helpers.js'
 
 // Helper: register + activate a member and return memberId
-async function registerAndActivate(sponsorCode: string, leg: 'L' | 'R', idx: number) {
+async function registerAndActivate(sponsorCode: string, idx: number) {
   const { memberId, memberCode } = await registerMember({
-    sponsorCode, preferredLeg: leg,
-    name: `Test${idx}`, phone: `700000${String(idx).padStart(4,'0')}`, password: 'Test@1234',
+    sponsorCode,
+    name: `Test${idx}`, phone: `700000${String(idx).padStart(4,'0')}`, email: uniqueEmail(), password: 'Test@1234',
   })
 
   const { rows: oRows } = await pool().query<{ id: string }>(
@@ -40,21 +43,16 @@ async function registerAndActivate(sponsorCode: string, leg: 'L' | 'R', idx: num
 describe('T4 – Registration and placement', () => {
   it('new member placement_path = parent.placement_path + parent.id', async () => {
     await ensureCutoffExists()
-    // Create a chain: root -> A (L) -> B (L)
-    const { rows: rootRows } = await pool().query<{ id: string; member_code: string }>(
-      'SELECT id, member_code FROM members WHERE parent_id IS NULL LIMIT 1'
-    )
-    if (!rootRows[0]) return // seeds not present
-
-    const rootCode = rootRows[0].member_code
+    // Create a chain: anchor -> A -> B (each is its sponsor's first referral → L)
+    const { memberCode: anchorCode } = await registerAnchor('T4Anchor')
 
     const { memberId: aId, memberCode: aCode } = await registerMember({
-      sponsorCode: rootCode, preferredLeg: 'L',
-      name: 'A', phone: `7001${Date.now().toString().slice(-7)}`, password: 'Test@1234',
+      sponsorCode: anchorCode,
+      name: 'A', phone: `7001${Date.now().toString().slice(-7)}`, email: uniqueEmail(), password: 'Test@1234',
     })
     const { memberId: bId } = await registerMember({
-      sponsorCode: aCode, preferredLeg: 'L',
-      name: 'B', phone: `7002${Date.now().toString().slice(-7)}`, password: 'Test@1234',
+      sponsorCode: aCode,
+      name: 'B', phone: `7002${Date.now().toString().slice(-7)}`, email: uniqueEmail(), password: 'Test@1234',
     })
 
     const { rows: bRows } = await pool().query<{ placement_path: string[]; placement_sides: string[] }>(
@@ -69,14 +67,11 @@ describe('T4 – Registration and placement', () => {
 // T5: webhook idempotency
 describe('T5 – Order webhook idempotency', () => {
   it('replaying same gatewayEventId is a no-op', async () => {
-    const { rows: rootRows } = await pool().query<{ member_code: string }>(
-      'SELECT member_code FROM members WHERE parent_id IS NULL LIMIT 1'
-    )
-    if (!rootRows[0]) return
+    const { memberCode: anchorCode } = await registerAnchor('T5Anchor')
 
     const { memberId, memberCode } = await registerMember({
-      sponsorCode: rootRows[0].member_code, preferredLeg: 'L',
-      name: 'Idem', phone: `7003${Date.now().toString().slice(-7)}`, password: 'Test@1234',
+      sponsorCode: anchorCode,
+      name: 'Idem', phone: `7003${Date.now().toString().slice(-7)}`, email: uniqueEmail(), password: 'Test@1234',
     })
 
     const gwId = `gw-idem-${Date.now()}`
@@ -128,24 +123,21 @@ describe('T8 – Counter + pair mint', () => {
 // T9: qualification chain
 describe('T9 – Qualification BR-5', () => {
   it('A→B→C: C activating qualifies A', async () => {
-    const { rows: rootRows } = await pool().query<{ member_code: string }>(
-      'SELECT member_code FROM members WHERE parent_id IS NULL LIMIT 1'
-    )
-    if (!rootRows[0]) return
+    const { memberCode: anchorCode } = await registerAnchor('T9Anchor')
 
     const ts = Date.now().toString().slice(-6)
     // A sponsors B, B sponsors C
     const { memberId: aId, memberCode: aCode } = await registerMember({
-      sponsorCode: rootRows[0].member_code, preferredLeg: 'R',
-      name: `QA${ts}`, phone: `7010${ts}`, password: 'Test@1234',
+      sponsorCode: anchorCode,
+      name: `QA${ts}`, phone: `7010${ts}`, email: uniqueEmail(), password: 'Test@1234',
     })
     const { memberId: bId, memberCode: bCode } = await registerMember({
-      sponsorCode: aCode, preferredLeg: 'L',
-      name: `QB${ts}`, phone: `7011${ts}`, password: 'Test@1234',
+      sponsorCode: aCode,
+      name: `QB${ts}`, phone: `7011${ts}`, email: uniqueEmail(), password: 'Test@1234',
     })
     const { memberId: cId, memberCode: cCode } = await registerMember({
-      sponsorCode: bCode, preferredLeg: 'L',
-      name: `QC${ts}`, phone: `7012${ts}`, password: 'Test@1234',
+      sponsorCode: bCode,
+      name: `QC${ts}`, phone: `7012${ts}`, email: uniqueEmail(), password: 'Test@1234',
     })
 
     // Activate A and B first
@@ -227,77 +219,62 @@ describe('T13 – Payout TDS', () => {
   })
 })
 
-// T-CTE: recursive CTE walks 2+ placement levels
-describe('T-CTE – findPlacementSlot walks 2+ levels via recursive CTE (G-14 regression guard)', () => {
-  it('3rd member on same sponsor+leg lands under the 2nd (C.parent=B, B.parent=A, A.parent=SPONSOR)', async () => {
-    const { rows: rootRows } = await pool().query<{ member_code: string }>(
-      'SELECT member_code FROM members WHERE parent_id IS NULL LIMIT 1'
-    )
-    if (!rootRows[0]) return
-
+// T-CAP: direct placement under the sponsor + 2-referral hard cap
+// CLAUDE.md rule: money-critical placement.ts changes require an integration test.
+describe('T-CAP – referrals place directly under sponsor (L then R), 3rd is rejected', () => {
+  it('A→L, B→R, C→409 referral limit', async () => {
     const ts = Date.now().toString().slice(-7)
+    const { memberId: sponsorId, memberCode: sponsorCode } = await registerAnchor(`CapSp${ts}`)
 
-    // Create a fresh sponsor so we start from a clean L-leg
-    const { memberId: sponsorId, memberCode: sponsorCode } = await registerMember({
-      sponsorCode: rootRows[0].member_code, preferredLeg: 'R',
-      name: `CTESp${ts}`, phone: `7020${ts}`, password: 'Test@1234',
-    })
-
-    // A: SPONSOR.L is free → A.parent = sponsorId
+    // A: first referral → SPONSOR.L
     const { memberId: aId } = await registerMember({
-      sponsorCode, preferredLeg: 'L',
-      name: `CTEA${ts}`, phone: `7021${ts}`, password: 'Test@1234',
+      sponsorCode,
+      name: `CapA${ts}`, phone: `7021${ts}`, email: uniqueEmail(), password: 'Test@1234',
     })
-    // B: CTE walks SPONSOR → A (SPONSOR.L taken); A.L is free → B.parent = aId  (1-level walk)
+    // B: second referral → SPONSOR.R
     const { memberId: bId } = await registerMember({
-      sponsorCode, preferredLeg: 'L',
-      name: `CTEB${ts}`, phone: `7022${ts}`, password: 'Test@1234',
+      sponsorCode,
+      name: `CapB${ts}`, phone: `7022${ts}`, email: uniqueEmail(), password: 'Test@1234',
     })
-    // C: CTE walks SPONSOR → A → B; B.L is free → C.parent = bId  (2-level walk)
-    const { memberId: cId } = await registerMember({
-      sponsorCode, preferredLeg: 'L',
-      name: `CTEC${ts}`, phone: `7023${ts}`, password: 'Test@1234',
-    })
+    // C: third referral → rejected, sponsor's slots are full
+    await expect(
+      registerMember({
+        sponsorCode,
+        name: `CapC${ts}`, phone: `7023${ts}`, email: uniqueEmail(), password: 'Test@1234',
+      })
+    ).rejects.toMatchObject({ statusCode: 409, message: expect.stringMatching(/referral limit/i) })
 
-    const { rows } = await pool().query<{ id: string; parent_id: string; position: string }>(
-      'SELECT id, parent_id, position FROM members WHERE id = ANY($1)',
-      [[String(aId), String(bId), String(cId)]]
+    const { rows } = await pool().query<{ id: string; sponsor_id: string; parent_id: string; position: string }>(
+      'SELECT id, sponsor_id, parent_id, position FROM members WHERE id = ANY($1)',
+      [[String(aId), String(bId)]]
     )
     const byId = Object.fromEntries(rows.map(r => [r.id, r]))
 
-    expect(byId[String(aId)].parent_id).toBe(String(sponsorId))  // A directly under SPONSOR
+    expect(byId[String(aId)].parent_id).toBe(String(sponsorId))   // A directly under SPONSOR
+    expect(byId[String(aId)].sponsor_id).toBe(String(sponsorId))  // sponsor tree ≡ binary tree
     expect(byId[String(aId)].position).toBe('L')
-    expect(byId[String(bId)].parent_id).toBe(String(aId))        // B under A (1-level CTE walk)
-    expect(byId[String(bId)].position).toBe('L')
-    expect(byId[String(cId)].parent_id).toBe(String(bId))        // C under B (2-level CTE walk)
-    expect(byId[String(cId)].position).toBe('L')
+    expect(byId[String(bId)].parent_id).toBe(String(sponsorId))   // B directly under SPONSOR
+    expect(byId[String(bId)].sponsor_id).toBe(String(sponsorId))
+    expect(byId[String(bId)].position).toBe('R')
   })
 })
 
 // T-G8-bonus: applyIncrements writes pairs.bonus_amount from CFG, not a hardcoded literal
 describe('T-G8-bonus – applyIncrements.pairs.bonus_amount comes from CFG.PAIR_BONUS_PAISE (G-8 regression guard)', () => {
   it('pairs.bonus_amount = "1000.00" and PairMatched.amount_paise = CFG.PAIR_BONUS_PAISE', async () => {
-    const { rows: rootRows } = await pool().query<{ member_code: string }>(
-      'SELECT member_code FROM members WHERE parent_id IS NULL LIMIT 1'
-    )
-    if (!rootRows[0]) return
-
     const ts = Date.now().toString().slice(-7)
 
     // Register an ancestor (gets a fresh member_counters row with 0/0/0)
-    const { memberId: ancestorId, memberCode: ancestorCode } = await registerMember({
-      sponsorCode: rootRows[0].member_code, preferredLeg: 'L',
-      name: `BonAnc${ts}`, phone: `7030${ts}`, password: 'Test@1234',
-    })
+    const { memberId: ancestorId, memberCode: ancestorCode } = await registerAnchor(`BonAnc${ts}`)
     // Register L and R members — their IDs are needed as source_member_id in CounterIncrement
-    // (and as FK targets in leg_activations)
+    // (and as FK targets in leg_activations). First referral fills L, second fills R.
     const { memberId: lMemberId } = await registerMember({
-      sponsorCode: ancestorCode, preferredLeg: 'L',
-      name: `BonL${ts}`, phone: `7031${ts}`, password: 'Test@1234',
+      sponsorCode: ancestorCode,
+      name: `BonL${ts}`, phone: `7031${ts}`, email: uniqueEmail(), password: 'Test@1234',
     })
     const { memberId: rMemberId } = await registerMember({
-      sponsorCode: ancestorCode, preferredLeg: 'R',
-      name: `BonR${ts}`, phone: `7032${ts}`, password: 'Test@1234',
+      sponsorCode: ancestorCode,
+      name: `BonR${ts}`, phone: `7032${ts}`, email: uniqueEmail(), password: 'Test@1234',
     })
 
     // Build a matching L+R batch — one pair should be minted
@@ -324,6 +301,9 @@ describe('T-G8-bonus – applyIncrements.pairs.bonus_amount comes from CFG.PAIR_
       side: 'R',
     }
 
+    // Phase 1.2: ancestor must be qualified for pairs to mint (BR-4/BR-6 gate)
+    await pool().query('UPDATE members SET is_qualified=TRUE WHERE id=$1', [ancestorId])
+
     await applyIncrements(ancestorId, [leftInc, rightInc])
 
     // Verify the pair was minted with the correct bonus_amount from CFG (not a hardcoded literal)
@@ -343,6 +323,214 @@ describe('T-G8-bonus – applyIncrements.pairs.bonus_amount comes from CFG.PAIR_
     // pg auto-parses JSONB columns — payload is already an object
     const evt = obRows[0].payload
     expect(evt.amount_paise).toBe(Number(CFG.PAIR_BONUS_PAISE))  // 100000
+  })
+})
+
+// T-qual-gate: unqualified ancestor mints zero pairs (BR-4/BR-6)
+describe('T-qual-gate – unqualified ancestor does not mint pairs', () => {
+  it('L+R increments with is_qualified=false → pairs table stays empty for ancestor', async () => {
+    const ts = Date.now().toString().slice(-7)
+    const { memberId: ancestorId, memberCode: ancestorCode } = await registerAnchor(`GateAnc${ts}`)
+    const { memberId: lId } = await registerMember({
+      sponsorCode: ancestorCode,
+      name: `GateL${ts}`, phone: `7041${ts}`, email: uniqueEmail(), password: 'Test@1234',
+    })
+    const { memberId: rId } = await registerMember({
+      sponsorCode: ancestorCode,
+      name: `GateR${ts}`, phone: `7042${ts}`, email: uniqueEmail(), password: 'Test@1234',
+    })
+
+    // ancestor is NOT qualified (is_qualified=false by default)
+    await applyIncrements(ancestorId, [
+      {
+        event_id: randomUUID(), event_type: 'CounterIncrement',
+        occurred_at: new Date().toISOString(), schema_version: 1,
+        ancestor_id: Number(ancestorId), side: 'L', counter_type: 'active',
+        source_member_id: Number(lId), source_event_id: randomUUID(),
+      },
+      {
+        event_id: randomUUID(), event_type: 'CounterIncrement',
+        occurred_at: new Date().toISOString(), schema_version: 1,
+        ancestor_id: Number(ancestorId), side: 'R', counter_type: 'active',
+        source_member_id: Number(rId), source_event_id: randomUUID(),
+      },
+    ])
+
+    const { rows: pRows } = await pool().query(
+      'SELECT id FROM pairs WHERE member_id=$1', [ancestorId]
+    )
+    expect(pRows.length).toBe(0)  // gate: no pairs minted while unqualified
+
+    // counters should still have been updated (backlog is in leg_activations)
+    const { rows: cRows } = await pool().query<{ left_active: string; right_active: string; pairs_matched: string }>(
+      'SELECT left_active, right_active, pairs_matched FROM member_counters WHERE member_id=$1',
+      [ancestorId]
+    )
+    expect(cRows[0].left_active).toBe('1')
+    expect(cRows[0].right_active).toBe('1')
+    expect(cRows[0].pairs_matched).toBe('0')
+  })
+})
+
+// T-backlog-mint: mint_check after qualification flushes backlog (D-3)
+describe('T-backlog-mint – mint_check after qualification mints accumulated backlog', () => {
+  it('qualify ancestor → send mint_check → backlog pair is minted', async () => {
+    const ts = (Date.now() + 1).toString().slice(-7)
+    const { memberId: ancestorId, memberCode: ancestorCode } = await registerAnchor(`BlAnc${ts}`)
+    const { memberId: lId } = await registerMember({
+      sponsorCode: ancestorCode,
+      name: `BlL${ts}`, phone: `7051${ts}`, email: uniqueEmail(), password: 'Test@1234',
+    })
+    const { memberId: rId } = await registerMember({
+      sponsorCode: ancestorCode,
+      name: `BlR${ts}`, phone: `7052${ts}`, email: uniqueEmail(), password: 'Test@1234',
+    })
+
+    const lEventId = randomUUID()
+    const rEventId = randomUUID()
+
+    // Accumulate backlog: L+R increments arrive while unqualified
+    await applyIncrements(ancestorId, [
+      {
+        event_id: lEventId, event_type: 'CounterIncrement',
+        occurred_at: new Date().toISOString(), schema_version: 1,
+        ancestor_id: Number(ancestorId), side: 'L', counter_type: 'active',
+        source_member_id: Number(lId), source_event_id: lEventId,
+      },
+      {
+        event_id: rEventId, event_type: 'CounterIncrement',
+        occurred_at: new Date().toISOString(), schema_version: 1,
+        ancestor_id: Number(ancestorId), side: 'R', counter_type: 'active',
+        source_member_id: Number(rId), source_event_id: rEventId,
+      },
+    ])
+
+    // Verify no pairs yet
+    const { rows: beforePairs } = await pool().query(
+      'SELECT id FROM pairs WHERE member_id=$1', [ancestorId]
+    )
+    expect(beforePairs.length).toBe(0)
+
+    // Qualify the ancestor (simulates evaluateQualification completing)
+    await pool().query('UPDATE members SET is_qualified=TRUE WHERE id=$1', [ancestorId])
+
+    // Send mint_check — synthetic increment that flushes the backlog
+    const mintCheckId = randomUUID()
+    await applyIncrements(ancestorId, [
+      {
+        event_id: mintCheckId, event_type: 'CounterIncrement',
+        occurred_at: new Date().toISOString(), schema_version: 1,
+        ancestor_id: Number(ancestorId), side: 'L', counter_type: 'mint_check',
+        source_member_id: Number(ancestorId), source_event_id: mintCheckId,
+      },
+    ])
+
+    // Backlog pair must now be minted
+    const { rows: afterPairs } = await pool().query<{ bonus_amount: string }>(
+      'SELECT bonus_amount FROM pairs WHERE member_id=$1', [ancestorId]
+    )
+    expect(afterPairs.length).toBe(1)
+    expect(afterPairs[0].bonus_amount).toBe(fromPaise(BigInt(CFG.PAIR_BONUS_PAISE)))
+
+    // pairs_matched should now be 1
+    const { rows: cRows } = await pool().query<{ pairs_matched: string }>(
+      'SELECT pairs_matched FROM member_counters WHERE member_id=$1', [ancestorId]
+    )
+    expect(cRows[0].pairs_matched).toBe('1')
+  })
+})
+
+// T-payout-idempotency: buildBatch split-phase idempotency (#2 fix)
+// CLAUDE.md rule: money-critical payout.ts changes require an integration test.
+describe('T-payout-idempotency — buildBatch: two calls produce one batch, one item, no double-ledger', () => {
+  let payoutMemberId: bigint
+
+  const TEST_PAYOUT_DATE = '2020-01-04'
+  const TEST_WINDOW_START = '2019-12-21T12:30:00.000Z' // 18:00 IST
+  const TEST_WINDOW_END   = '2019-12-28T12:29:59.000Z' // 17:59:59 IST next Saturday
+
+  beforeAll(async () => {
+    // Clean up any prior test-run state for this fixed date so the test is repeatable
+    await pool().query(
+      `DELETE FROM payout_items WHERE batch_id IN (SELECT id FROM payout_batches WHERE scheduled_for=$1)`,
+      [TEST_PAYOUT_DATE],
+    )
+    await pool().query(`DELETE FROM payout_batches WHERE scheduled_for=$1`, [TEST_PAYOUT_DATE])
+    await pool().query(`DELETE FROM cutoffs WHERE window_start=$1`, [TEST_WINDOW_START])
+
+    const { memberCode: anchorCode } = await registerAnchor('POAnchor')
+
+    const ts = Date.now().toString().slice(-7)
+    const { memberId } = await registerMember({
+      sponsorCode: anchorCode,
+      name: `POTest${ts}`, phone: `8080${ts}`, email: uniqueEmail(), password: 'Test@1234',
+    })
+    payoutMemberId = memberId
+
+    // Verify KYC + bank so the member is eligible for payout
+    await pool().query(
+      `UPDATE members SET kyc_status='verified', bank_status='verified' WHERE id=$1`,
+      [memberId],
+    )
+    // Set wallet to ₹1000 directly (MIN_PAYOUT is ₹500 = 50000 paise)
+    const { rows: accRows } = await pool().query<{ id: string }>(
+      `SELECT id FROM accounts WHERE owner_id=$1 AND kind='wallet'`,
+      [memberId],
+    )
+    await pool().query(
+      `UPDATE wallet_balances SET balance = 1000.00 WHERE account_id=$1`,
+      [accRows[0].id],
+    )
+
+    // Closed cutoff with a fixed past payout_date
+    await pool().query(
+      `INSERT INTO cutoffs (window_start, window_end, payout_date, status)
+       VALUES ($1, $2, $3, 'closed')`,
+      [TEST_WINDOW_START, TEST_WINDOW_END, TEST_PAYOUT_DATE],
+    )
+  })
+
+  it('first call: payout_batch created with status=sent', async () => {
+    await buildBatch(DateTime.fromISO(TEST_PAYOUT_DATE, { zone: CFG.TZ }))
+    const { rows } = await pool().query<{ status: string }>(
+      `SELECT status FROM payout_batches WHERE scheduled_for=$1`,
+      [TEST_PAYOUT_DATE],
+    )
+    expect(rows).toHaveLength(1)
+    expect(rows[0].status).toBe('sent')
+  })
+
+  it('second call is idempotent: still exactly one batch row', async () => {
+    await buildBatch(DateTime.fromISO(TEST_PAYOUT_DATE, { zone: CFG.TZ }))
+    const { rows } = await pool().query<{ count: string }>(
+      `SELECT COUNT(*) AS count FROM payout_batches WHERE scheduled_for=$1`,
+      [TEST_PAYOUT_DATE],
+    )
+    expect(Number(rows[0].count)).toBe(1)
+  })
+
+  it('second call is idempotent: exactly one payout_item for the test member', async () => {
+    const { rows: batch } = await pool().query<{ id: string }>(
+      `SELECT id FROM payout_batches WHERE scheduled_for=$1`,
+      [TEST_PAYOUT_DATE],
+    )
+    const { rows: items } = await pool().query<{ count: string }>(
+      `SELECT COUNT(*) AS count FROM payout_items WHERE batch_id=$1 AND member_id=$2`,
+      [batch[0].id, payoutMemberId],
+    )
+    expect(Number(items[0].count)).toBe(1)
+  })
+
+  it('ledger has exactly one txn per member-batch: no double-posting', async () => {
+    const { rows: batch } = await pool().query<{ id: string }>(
+      `SELECT id FROM payout_batches WHERE scheduled_for=$1`,
+      [TEST_PAYOUT_DATE],
+    )
+    const { rows: ledger } = await pool().query<{ count: string }>(
+      `SELECT COUNT(*) AS count FROM ledger_txns WHERE idempotency_key=$1`,
+      [`payout:${batch[0].id}:${payoutMemberId}`],
+    )
+    expect(Number(ledger[0].count)).toBe(1)
   })
 })
 

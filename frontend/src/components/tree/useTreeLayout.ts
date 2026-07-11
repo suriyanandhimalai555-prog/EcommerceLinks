@@ -11,6 +11,9 @@ export interface LayoutNode {
   x: number
   y: number
   depth: number
+  /** memberCode of the node's tree parent — set on vacant slots so the
+   *  "tap to refer" action can build that parent's referral link. */
+  parentCode?: string
 }
 
 export interface LayoutConnector {
@@ -40,6 +43,7 @@ function layoutNode(
   nodes: LayoutNode[],
   connectors: LayoutConnector[],
   totalCols: number,
+  parentCode?: string,
 ): void {
   if (depth > maxDepth) return
 
@@ -49,7 +53,7 @@ function layoutNode(
   const y = depth * (NODE_H + V_GAP)
 
   if (node) {
-    nodes.push({ node, x, y, depth })
+    nodes.push({ node, x, y, depth, parentCode })
 
     if (depth < maxDepth) {
       const leftSpan = columns(maxDepth - depth - 1)
@@ -62,8 +66,8 @@ function layoutNode(
       connectors.push({ x1: cx, y1: y + NODE_H, x2: leftCx, y2: childY })
       connectors.push({ x1: cx, y1: y + NODE_H, x2: rightCx, y2: childY })
 
-      layoutNode(node.left, depth + 1, maxDepth, colStart, nodes, connectors, totalCols)
-      layoutNode(node.right, depth + 1, maxDepth, rightColStart, nodes, connectors, totalCols)
+      layoutNode(node.left, depth + 1, maxDepth, colStart, nodes, connectors, totalCols, node.memberCode)
+      layoutNode(node.right, depth + 1, maxDepth, rightColStart, nodes, connectors, totalCols, node.memberCode)
     }
   } else {
     nodes.push({
@@ -76,7 +80,7 @@ function layoutNode(
         left: null,
         right: null,
       },
-      x, y, depth,
+      x, y, depth, parentCode,
     })
   }
 }

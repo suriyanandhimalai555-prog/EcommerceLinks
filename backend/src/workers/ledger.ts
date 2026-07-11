@@ -13,7 +13,7 @@ import { startConsumer } from "../lib/streams.js";
 
 const GROUP = "avg-ledger";
 
-interface LedgerLeg {
+export interface LedgerLeg {
 	accountId: bigint;
 	direction: "D" | "C";
 	amountPaise: bigint;
@@ -150,21 +150,26 @@ export async function creditPairBonus(e: PairMatched): Promise<void> {
 				amountPaise: defAmt,
 			});
 
-		await postLedgerTxn(
+		// Phase 0.2: only update cutoff_earnings when the ledger txn is new.
+		// If postLedgerTxn returns false (idempotency hit) the earnings row has already
+		// been incremented by the original execution — updating again would double-count
+		// against the cap on XAUTOCLAIM re-delivery.
+		const posted = await postLedgerTxn(
 			c,
 			`pair:${e.pair_id}`,
 			"pair",
 			BigInt(e.pair_id),
 			legs,
 		);
-
-		await c.query(
-			`UPDATE cutoff_earnings
-         SET earned   = earned   + $1,
-             deferred = deferred + $2
-       WHERE member_id=$3 AND cutoff_id=$4`,
-			[fromPaise(walletAmt), fromPaise(defAmt), memberId, cutoffId],
-		);
+		if (posted) {
+			await c.query(
+				`UPDATE cutoff_earnings
+           SET earned   = earned   + $1,
+               deferred = deferred + $2
+         WHERE member_id=$3 AND cutoff_id=$4`,
+				[fromPaise(walletAmt), fromPaise(defAmt), memberId, cutoffId],
+			);
+		}
 
 		await c.query(
 			"INSERT INTO processed_events (consumer_group, event_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",

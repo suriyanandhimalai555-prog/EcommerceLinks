@@ -1,5 +1,6 @@
-import { useState } from 'react'
-import { ZoomIn, ZoomOut, Maximize2, ChevronLeft, UserPlus, Copy } from 'lucide-react'
+import { useRef, useState } from 'react'
+import { ZoomIn, ZoomOut, Maximize2, ChevronLeft, UserPlus, Loader2, Link2, Check } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import type { TreeNode } from '../../types/api'
 import { computeLayout, type LayoutNode } from './useTreeLayout'
 
@@ -10,43 +11,59 @@ function initials(name: string) {
   return name.split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 2)
 }
 
+function referralUrl(memberCode: string) {
+  return `${window.location.origin}/register?sponsor=${memberCode}`
+}
+
 interface NodeCardProps {
   ln: LayoutNode
   onClick: (code: string) => void
-  referralBase?: string
 }
 
 function NodeCard({ ln, onClick }: NodeCardProps) {
-  const { node, x, y } = ln
+  const { t } = useTranslation()
+  const { node, x, y, parentCode } = ln
   const isVacant = node.name === 'Vacant'
+  const [copied, setCopied] = useState(false)
+  const copyTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
 
-  const handleCopyReferral = (e: React.MouseEvent) => {
-    e.stopPropagation()
-    const leg = node.position === 'L' ? 'L' : 'R'
-    navigator.clipboard.writeText(`${window.location.origin}/register?leg=${leg}`)
+  const copyReferral = (code: string) => {
+    navigator.clipboard.writeText(referralUrl(code))
+    setCopied(true)
+    clearTimeout(copyTimer.current)
+    copyTimer.current = setTimeout(() => setCopied(false), 1500)
   }
 
   if (isVacant) {
+    // Tapping a vacant slot copies the referral link of the member ABOVE it,
+    // so the new recruit registers directly into this slot.
+    const handleVacantClick = (e: React.MouseEvent) => {
+      e.stopPropagation()
+      if (!parentCode) return
+      copyReferral(parentCode)
+    }
     return (
       <g
         transform={`translate(${x}, ${y})`}
-        onClick={handleCopyReferral}
+        onClick={handleVacantClick}
         className="cursor-pointer"
       >
         <rect
           width={NODE_W} height={NODE_H}
           rx={8} ry={8}
           fill="white"
-          stroke="#E5E7EB"
+          stroke={copied ? '#16A34A' : '#E5E7EB'}
           strokeWidth={1.5}
           strokeDasharray="6 3"
         />
         <g transform={`translate(${NODE_W / 2}, ${NODE_H / 2})`}>
-          <circle r={14} fill="#EEF2FF" />
-          <UserPlus x={-7} y={-7} width={14} height={14} color="#2447D8" />
+          <circle r={14} fill={copied ? '#F0FDF4' : '#EEF2FF'} />
+          {copied
+            ? <Check x={-7} y={-7} width={14} height={14} color="#16A34A" />
+            : <UserPlus x={-7} y={-7} width={14} height={14} color="#2447D8" />}
         </g>
-        <text x={NODE_W / 2} y={NODE_H - 12} textAnchor="middle" fontSize={10} fill="#9CA3AF">
-          Tap to refer
+        <text x={NODE_W / 2} y={NODE_H - 12} textAnchor="middle" fontSize={10} fill={copied ? '#16A34A' : '#9CA3AF'}>
+          {copied ? t('tree.copied') : t('tree.tapToRefer')}
         </text>
       </g>
     )
@@ -93,6 +110,18 @@ function NodeCard({ ln, onClick }: NodeCardProps) {
           {node.position}
         </text>
       )}
+      {/* Copy referral link for this member */}
+      <g
+        transform={`translate(${NODE_W - 24}, ${NODE_H - 24})`}
+        onClick={(e) => { e.stopPropagation(); copyReferral(node.memberCode) }}
+        className="cursor-pointer"
+      >
+        <title>{copied ? t('tree.copied') : t('tree.copyLink')}</title>
+        <rect width={18} height={18} rx={5} fill={copied ? '#F0FDF4' : '#F9FAFB'} stroke={copied ? '#16A34A' : '#E5E7EB'} strokeWidth={1} />
+        {copied
+          ? <Check x={4} y={4} width={10} height={10} color="#16A34A" />
+          : <Link2 x={4} y={4} width={10} height={10} color="#6B7280" />}
+      </g>
     </g>
   )
 }
@@ -100,45 +129,40 @@ function NodeCard({ ln, onClick }: NodeCardProps) {
 interface Props {
   root: TreeNode
   depth?: number
-  onNodeClick?: (code: string) => void
   compact?: boolean
+  /** Called when a real (non-vacant) node is clicked — triggers a server drill-down. */
+  onNodeClick?: (code: string) => void
+  onBack?: () => void
+  onBackToMe?: () => void
+  canGoBack?: boolean
+  /** True while a drill-down refetch is in flight — shows a dimmed overlay. */
+  isFetching?: boolean
 }
 
 const ZOOM_LEVELS = [0.6, 0.8, 1.0]
 
-export function BinaryTree({ root, depth = 2, onNodeClick, compact = false }: Props) {
+export function BinaryTree({
+  root,
+  depth = 2,
+  compact = false,
+  onNodeClick,
+  onBack,
+  onBackToMe,
+  canGoBack = false,
+  isFetching = false,
+}: Props) {
+  const { t } = useTranslation()
   const isMobile = typeof window !== 'undefined' && window.innerWidth < 640
   const [zoom, setZoom] = useState(compact ? (isMobile ? 0.6 : 0.8) : 1.0)
-  const [rootCode, setRootCode] = useState(root.memberCode)
-  const [breadcrumb, setBreadcrumb] = useState<string[]>([])
 
-  const findNode = (node: TreeNode | null, code: string): TreeNode | null => {
-    if (!node) return null
-    if (node.memberCode === code) return node
-    return findNode(node.left, code) || findNode(node.right, code)
-  }
-
-  const currentRoot = findNode(root, rootCode) || root
-
+  // Delegate node clicks to the parent — no local re-rooting.
+  // Vacant nodes are handled by NodeCard's own copy-referral handler.
   const handleNodeClick = (code: string) => {
-    if (code === currentRoot.memberCode || code.startsWith('vacant-')) return
-    setBreadcrumb((b) => [...b, currentRoot.memberCode])
-    setRootCode(code)
+    if (code === root.memberCode || code.startsWith('vacant-')) return
     onNodeClick?.(code)
   }
 
-  const handleBack = () => {
-    const prev = breadcrumb[breadcrumb.length - 1]
-    setBreadcrumb((b) => b.slice(0, -1))
-    setRootCode(prev || root.memberCode)
-  }
-
-  const handleBackToMe = () => {
-    setBreadcrumb([])
-    setRootCode(root.memberCode)
-  }
-
-  const layout = computeLayout(currentRoot, depth)
+  const layout = computeLayout(root, depth)
   const svgW = layout.totalWidth
   const svgH = layout.totalHeight
 
@@ -148,14 +172,20 @@ export function BinaryTree({ root, depth = 2, onNodeClick, compact = false }: Pr
     <div className="relative w-full min-w-0">
       {/* Controls */}
       <div className="flex items-center gap-2 mb-3">
-        {breadcrumb.length > 0 && (
-          <button onClick={handleBack} className="flex items-center gap-1 text-xs text-primary font-medium hover:underline cursor-pointer">
-            <ChevronLeft size={12} /> Back
+        {canGoBack && (
+          <button
+            onClick={onBack}
+            className="flex items-center gap-1 text-xs text-primary font-medium hover:underline cursor-pointer"
+          >
+            <ChevronLeft size={12} /> {t('tree.back')}
           </button>
         )}
-        {breadcrumb.length > 0 && (
-          <button onClick={handleBackToMe} className="text-xs text-ink-muted hover:underline cursor-pointer">
-            Back to Me
+        {canGoBack && (
+          <button
+            onClick={onBackToMe}
+            className="text-xs text-ink-muted hover:underline cursor-pointer"
+          >
+            {t('tree.backToMe')}
           </button>
         )}
         <div className="flex-1" />
@@ -191,11 +221,15 @@ export function BinaryTree({ root, depth = 2, onNodeClick, compact = false }: Pr
       <div className="flex items-center gap-4 mb-3 text-[10px] text-ink-muted">
         <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-success" /> Active</div>
         <div className="flex items-center gap-1"><div className="w-3 h-3 rounded-full border border-warning border-dashed" /> Qualified</div>
-        <div className="flex items-center gap-1 cursor-pointer"><Copy size={10} className="text-primary" /> Vacant = copy referral</div>
       </div>
 
-      {/* Tree */}
-      <div className="overflow-x-auto rounded-xl bg-surface-page p-4 max-w-full">
+      {/* Tree (with fetching overlay) */}
+      <div className="relative overflow-x-auto rounded-xl bg-surface-page p-4 max-w-full">
+        {isFetching && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/60 rounded-xl">
+            <Loader2 size={22} className="animate-spin text-primary" />
+          </div>
+        )}
         <div
           style={{
             width: svgW * zoom,

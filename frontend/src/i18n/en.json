@@ -54,13 +54,22 @@
     "phone": "Phone Number",
     "password": "Password",
     "sponsorCode": "Sponsor Code",
-    "preferredLeg": "Preferred Leg",
+    "sponsorLocked": "Filled from your referral link",
+    "referralRequired": "You need a referral link to join",
+    "referralRequiredDesc": "Ask your sponsor to share their referral link with you.",
     "name": "Full Name",
-    "email": "Email (optional)",
+    "email": "Email",
     "confirmPassword": "Confirm Password",
     "termsAccept": "I agree to the Terms & Conditions",
-    "leftLeg": "Left Leg",
-    "rightLeg": "Right Leg"
+    "invalidCredentials": "Invalid email or password",
+    "registrationFailed": "Registration failed. Please try again."
+  },
+  "errors": {
+    "network": "Cannot reach the server. Check your internet connection and try again.",
+    "server": "Server error. Please try again in a moment.",
+    "tooMany": "Too many attempts. Please wait a minute and try again.",
+    "validation": "Some details are invalid",
+    "generic": "Something went wrong. Please try again."
   },
   "buy": {
     "verified": "Verified",
@@ -82,5 +91,13 @@
     "minWithdrawal": "Minimum withdrawal is ₹500.",
     "capNote": "Weekly cap: ₹1,00,000. Excess is deferred to next week.",
     "deferred": "Deferred (carried to next week)"
+  },
+  "tree": {
+    "back": "Back",
+    "backToMe": "Back to Me",
+    "loading": "Loading network…",
+    "tapToRefer": "Tap to refer",
+    "copyLink": "Copy referral link",
+    "copied": "Copied!"
   }
 }

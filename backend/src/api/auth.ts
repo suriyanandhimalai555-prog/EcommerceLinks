@@ -4,20 +4,19 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { CFG } from "../config.js";
 import { pool } from "../lib/db.js";
-import { findMemberByPhone, registerMember } from "../services/placement.js";
+import { findMemberByEmail, registerMember } from "../services/placement.js";
 import { buildMe } from "./frontend.js";
 
 const RegisterBody = z.object({
 	sponsorCode: z.string().min(1),
-	preferredLeg: z.enum(["L", "R"]),
 	name: z.string().min(1),
 	phone: z.string().min(10),
-	email: z.string().email().optional(),
+	email: z.string().email(),
 	password: z.string().min(8),
 });
 
 const LoginBody = z.object({
-	phone: z.string(),
+	email: z.string().email(),
 	password: z.string(),
 });
 
@@ -56,23 +55,36 @@ let app_instance: FastifyInstance;
 export async function authRoutes(app: FastifyInstance) {
 	app_instance = app;
 
-	app.post("/register", async (req, reply) => {
-		const body = RegisterBody.safeParse(req.body);
-		if (!body.success)
-			return reply.status(400).send({ error: body.error.flatten() });
+	app.post(
+		"/register",
+		{
+			config: {
+				rateLimit: {
+					max: 20,
+					timeWindow: "1 minute",
+				},
+			},
+		},
+		async (req, reply) => {
+			const body = RegisterBody.safeParse(req.body);
+			if (!body.success)
+				return reply.status(400).send({ error: body.error.flatten() });
 
-		try {
-			const { memberId, memberCode } = await registerMember(body.data);
-			return reply.status(201).send({ memberId: String(memberId), memberCode });
-		} catch (err: unknown) {
-			const e = err as { statusCode?: number; message?: string };
-			if (e.statusCode === 404)
-				return reply.status(404).send({ error: e.message });
-			if (e.statusCode === 409)
-				return reply.status(409).send({ error: e.message });
-			throw err;
-		}
-	});
+			try {
+				const { memberId, memberCode } = await registerMember(body.data);
+				return reply
+					.status(201)
+					.send({ memberId: String(memberId), memberCode });
+			} catch (err: unknown) {
+				const e = err as { statusCode?: number; message?: string };
+				if (e.statusCode === 404)
+					return reply.status(404).send({ error: e.message });
+				if (e.statusCode === 409)
+					return reply.status(409).send({ error: e.message });
+				throw err;
+			}
+		},
+	);
 
 	// G-9: 10 login attempts per minute per IP
 	app.post(
@@ -90,7 +102,7 @@ export async function authRoutes(app: FastifyInstance) {
 			if (!body.success)
 				return reply.status(400).send({ error: body.error.flatten() });
 
-			const member = await findMemberByPhone(body.data.phone);
+			const member = await findMemberByEmail(body.data.email);
 			if (!member)
 				return reply.status(401).send({ error: "Invalid credentials" });
 

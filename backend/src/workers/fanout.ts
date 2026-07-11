@@ -117,6 +117,27 @@ export async function run() {
 				}
 			}
 
+			// D-3: MemberQualified → emit one mint_check for M itself so counterPair
+			// flushes any backlog pairs that accumulated while M was unqualified.
+			// Deterministic id prevents re-emission on XAUTOCLAIM re-delivery.
+			if (e.event_type === "MemberQualified") {
+				const mintCheck: CounterIncrement = {
+					event_id: uuidv5(`${e.event_id}:mintcheck`, NS),
+					event_type: "CounterIncrement",
+					occurred_at: e.occurred_at,
+					schema_version: 1,
+					ancestor_id: e.member_id,
+					side: "L",
+					counter_type: "mint_check",
+					source_member_id: e.member_id,
+					source_event_id: e.event_id,
+				};
+				await publishToStream(
+					TOPICS.increments.name,
+					JSON.stringify(mintCheck),
+				);
+			}
+
 			await withTxn(async (c) => {
 				await c.query(
 					"INSERT INTO processed_events (consumer_group, event_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",

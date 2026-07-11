@@ -5,32 +5,34 @@ import { writeOutbox } from "../events/outbox.js";
 import { pool, withTxn } from "../lib/db.js";
 import { nextMemberCode } from "../lib/ids.js";
 
-export async function findPlacementSlot(
+// Each member may refer at most 2 people; a new registrant is always placed
+// directly under their sponsor — first referral fills L, second fills R.
+// The sponsor row lock (FOR UPDATE) serializes concurrent registrations under
+// the same sponsor so two of them cannot both claim the last open slot.
+async function nextChildPosition(
 	sponsorId: bigint,
-	leg: "L" | "R",
 	c: pg.PoolClient,
-): Promise<{ parentId: bigint; position: "L" | "R" }> {
-	// Single recursive CTE walk: start at sponsorId and follow the preferred leg
-	// down until a node has no child on that side — that node is the placement parent.
-	const { rows } = await c.query<{ id: string }>(
-		`WITH RECURSIVE walk AS (
-       SELECT id FROM members WHERE id = $1
-       UNION ALL
-       SELECT m.id FROM members m
-       JOIN walk w ON m.parent_id = w.id AND m.position = $2
-     )
-     SELECT id FROM walk ORDER BY id DESC LIMIT 1`,
-		[sponsorId, leg],
+): Promise<"L" | "R"> {
+	const { rows } = await c.query<{ position: "L" | "R" }>(
+		"SELECT position FROM members WHERE parent_id = $1",
+		[sponsorId],
 	);
-	return { parentId: BigInt(rows[0]?.id ?? sponsorId), position: leg };
+	const taken = rows.map((r) => r.position);
+	if (taken.includes("L") && taken.includes("R")) {
+		const e = new Error("Referral limit reached") as Error & {
+			statusCode: number;
+		};
+		e.statusCode = 409;
+		throw e;
+	}
+	return taken.includes("L") ? "R" : "L";
 }
 
 interface RegisterInput {
 	sponsorCode: string;
-	preferredLeg: "L" | "R";
 	name: string;
 	phone: string;
-	email?: string;
+	email: string;
 	password: string;
 }
 
@@ -38,6 +40,10 @@ export async function registerMember(
 	input: RegisterInput,
 ): Promise<{ memberId: bigint; memberCode: string }> {
 	const MAX_RETRIES = 5;
+
+	// Email is the login identifier — store it lowercase so the UNIQUE
+	// constraint is effectively case-insensitive.
+	const email = input.email.trim().toLowerCase();
 
 	// G-14: hash the password BEFORE opening the transaction so the slow CPU
 	// work does not hold a pooled connection, and does not repeat on retries.
@@ -52,7 +58,7 @@ export async function registerMember(
 					placement_path: string[];
 					placement_sides: string[];
 				}>(
-					"SELECT id, placement_path, placement_sides FROM members WHERE member_code = $1",
+					"SELECT id, placement_path, placement_sides FROM members WHERE member_code = $1 FOR UPDATE",
 					[input.sponsorCode],
 				);
 				if (sRows.length === 0) {
@@ -65,29 +71,16 @@ export async function registerMember(
 				const sponsor = sRows[0];
 				const sponsorId = BigInt(sponsor.id);
 
-				// Walk to placement slot (single recursive CTE — no unbounded per-level loop)
-				const { parentId, position } = await findPlacementSlot(
-					sponsorId,
-					input.preferredLeg,
-					c,
-				);
+				// Direct placement: the sponsor IS the binary parent (2-referral cap)
+				const position = await nextChildPosition(sponsorId, c);
+				const parentId = sponsorId;
 
-				// Read parent's path arrays
-				const { rows: pRows } = await c.query<{
-					id: string;
-					placement_path: string[];
-					placement_sides: string[];
-				}>(
-					"SELECT id, placement_path, placement_sides FROM members WHERE id = $1",
-					[parentId],
-				);
-				const parent = pRows[0];
-				// path = parent.placement_path + parent.id; sides = parent.placement_sides + position
+				// path = sponsor.placement_path + sponsor.id; sides = sponsor.placement_sides + position
 				const newPath = [
-					...(parent.placement_path ?? []).map(String),
-					String(parent.id),
+					...(sponsor.placement_path ?? []).map(String),
+					String(sponsorId),
 				];
-				const newSides = [...(parent.placement_sides ?? []), position];
+				const newSides = [...(sponsor.placement_sides ?? []), position];
 
 				// Insert with a temp unique member_code; update after getting id
 				const tmpCode = "TMP-" + randomUUID();
@@ -101,7 +94,7 @@ export async function registerMember(
 						tmpCode,
 						input.name,
 						input.phone,
-						input.email ?? null,
+						email,
 						passwordHash,
 						sponsorId,
 						parentId,
@@ -190,8 +183,8 @@ export async function registerMember(
 	throw e;
 }
 
-// Shared helper: look up a member by phone for auth
-export async function findMemberByPhone(phone: string) {
+// Shared helper: look up a member by email for auth (emails are stored lowercase)
+export async function findMemberByEmail(email: string) {
 	const { rows } = await pool().query<{
 		id: string;
 		member_code: string;
@@ -202,8 +195,8 @@ export async function findMemberByPhone(phone: string) {
 		kyc_status: string;
 		bank_status: string;
 	}>(
-		"SELECT id, member_code, name, phone, password_hash, is_active, kyc_status, bank_status FROM members WHERE phone = $1",
-		[phone],
+		"SELECT id, member_code, name, phone, password_hash, is_active, kyc_status, bank_status FROM members WHERE email = $1",
+		[email.trim().toLowerCase()],
 	);
 	return rows[0] ?? null;
 }

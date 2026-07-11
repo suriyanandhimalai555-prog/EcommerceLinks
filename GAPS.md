@@ -23,6 +23,7 @@ Severity legend: **S1** = money loss / security breach possible today · **S2** 
 
 ### ~~G-4. Withdrawals disconnected from ledger / dual payout models~~ ✅ FIXED
 - **What was fixed:** Chose model A (auto-payout only). Removed `POST /withdrawals` and `GET /withdrawals` from `frontend.ts`. Removed admin withdrawal approval/reject routes from `admin.ts`. Wallet page no longer shows withdrawal form or table. Added `POST /admin/payouts/trigger` (admin-only) so the admin can manually kick off the Saturday payout batch from Settings; the "Trigger Payout Now" button is visible only when `me.role === 'admin'`.
+- **Withdrawals table** (`backend/db/migrations/008_payouts.sql`): The `withdrawals` table is intentionally retained as dead schema — the feature was removed before it shipped, but the table is kept to avoid a destructive migration. It has no live callers. If member-initiated withdrawals are added in a future release, use this table rather than re-creating it.
 
 ### ~~G-5. First right-leg rank achiever silently lost~~ ✅ FIXED
 - **What was fixed:** One-line fix in `backend/src/workers/counterPair.ts` — right-side `INSERT INTO leg_rank_counters` now uses `VALUES ($1,$2,1)` (was `0`). Unit test added in `test/unit/counterPair.test.ts`.
@@ -54,7 +55,7 @@ Severity legend: **S1** = money loss / security breach possible today · **S2** 
 - **Fix:** Steps 6–7 of `INTEGRATION.md` remove the always-mock pages. Then a follow-up task: delete every `placeholderData: mock*` and `|| mock*` fallback, replacing with skeleton loaders (the `Skeleton` component already exists) and an error state (`EmptyState` exists).
 
 ### ~~G-12. Any member can read any other member's subtree~~ ✅ FIXED
-- **What was fixed:** `/network/tree` handler in `frontend.ts` now verifies after resolving `rootId` that either `rootId === user.sub` OR the caller's id appears in the target's `placement_path` (`SELECT 1 FROM members WHERE id = $1 AND placement_path @> ARRAY[$2::bigint]`). Returns 403 otherwise. Redis cache key unchanged (auth check runs before cache read, preventing cross-caller data leaks). Tested in `test/integration/http.test.ts`.
+- **What was fixed:** `/network/tree` handler in `frontend.ts` now verifies after resolving `rootId` that either `rootId === user.sub` OR the caller's id appears in the target's `placement_path` (`SELECT 1 FROM members WHERE id = $1 AND placement_path @> ARRAY[$2::bigint]`). Returns **404** (not 403) for both "not found" and "not in downline" — avoids leaking whether a member code exists. Redis cache key unchanged (auth check runs before cache read, preventing cross-caller data leaks). Tested in `test/integration/http.test.ts`.
 
 ---
 
@@ -93,7 +94,7 @@ Severity legend: **S1** = money loss / security breach possible today · **S2** 
 ### G-20. Assorted correctness papercuts
 - **What/Where/Fix, one line each:**
   - `fromPaise` goes through `Number` — precision loss above ~₹90 trillion; fine in practice, add a comment + guard (`lib/money.ts`).
-  - Cron workers use `setInterval` minute-matching (`hour===18 && minute===0`) — a GC pause or restart at the wrong second skips the week; switch cutoff/payout/reconciler to a persisted "last run" check (`if now >= scheduled && not yet run for this date`).
+  - ~~Cron workers use `setInterval` minute-matching~~ ✅ **FIXED for cutoff + payout** — both now query DB state each tick and self-heal after downtime. `reconciler` still uses clock-based scheduling (lower priority; fix when adding `ALERT_WEBHOOK_URL` per G-19).
   - `webhook`/`orders` cast paise through `Number(...)` for event payloads — consistent with event types but caps at 2^53; acceptable, document it.
   - `simulate.ts` hardcodes `10000/1800/11800` instead of computing via `money.ts` — will silently diverge if GST changes.
   - Redis cache for trees has no invalidation on registration — new members can be invisible for up to 60s; acceptable, but state it in the UI or shorten TTL.

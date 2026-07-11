@@ -7,6 +7,7 @@ import api from '../lib/api'
 import { formatDate, orDash } from '../lib/format'
 import { StatCard } from '../components/ui/StatCard'
 import { BinaryTree } from '../components/tree/BinaryTree'
+import { useTreeDrilldown } from '../components/tree/useTreeDrilldown'
 import { DataTable, type Column } from '../components/ui/DataTable'
 import { Badge } from '../components/ui/Badge'
 import { SkeletonCard } from '../components/ui/Skeleton'
@@ -24,10 +25,9 @@ export default function Network() {
     queryKey: ['directs'],
     queryFn: () => api.get('/network/directs').then(r => r.data),
   })
-  const { data: tree } = useQuery({
-    queryKey: ['tree', 'me', 3],
-    queryFn: () => api.get('/network/tree?root=me&depth=3').then(r => r.data),
-  })
+  // Server-side drill-down: clicking a member re-roots the tree at that member,
+  // letting the user browse the entire downline 3 levels at a time.
+  const { root: tree, isFetching, drillTo, back, backToMe, canGoBack } = useTreeDrilldown(3)
 
   // Guard divide-by-zero: totalTeam can be 0 for a fresh root
   const leftPct = summary && summary.totalTeam > 0
@@ -92,7 +92,15 @@ export default function Network() {
 
         {view === 'binary' ? (
           tree
-            ? <BinaryTree root={tree} depth={3} />
+            ? <BinaryTree
+                root={tree}
+                depth={3}
+                onNodeClick={drillTo}
+                onBack={back}
+                onBackToMe={backToMe}
+                canGoBack={canGoBack}
+                isFetching={isFetching}
+              />
             : <div className="py-10 text-center text-sm text-ink-muted">Loading tree…</div>
         ) : (
           <DataTable

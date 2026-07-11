@@ -4,7 +4,7 @@
  * Replaces orderRoutes, networkRoutes, walletRoutes, reportRoutes.
  * Keep the webhook here (orders.ts is no longer registered).
  */
-import { randomUUID } from "crypto";
+import { randomUUID, timingSafeEqual } from "crypto";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { CFG } from "../config.js";
@@ -305,36 +305,33 @@ export async function frontendRoutes(app: FastifyInstance) {
 		};
 	});
 
-	// Dev-only: pretend the payment gateway confirmed the order.
-	app.post("/dev/simulate-payment", auth, async (req, reply) => {
-		if (CFG.NODE_ENV === "production") {
-			return reply.status(403).send({
-				error: { code: "FORBIDDEN", message: "Not available in production" },
-			});
-		}
-		const body = z
-			.object({ orderId: z.union([z.string(), z.number()]) })
-			.safeParse(req.body);
-		if (!body.success)
-			return reply
-				.status(400)
-				.send({ error: { code: "BAD_REQUEST", message: "orderId required" } });
-		const orderId = String(body.data.orderId);
-		const { rows } = await pool().query<{ idempotency_key: string }>(
-			"SELECT idempotency_key FROM orders WHERE id = $1",
-			[orderId],
-		);
-		if (!rows[0])
-			return reply
-				.status(404)
-				.send({ error: { code: "NOT_FOUND", message: "Order not found" } });
-		await confirmOrder(
-			rows[0].idempotency_key,
-			BigInt(orderId),
-			`dev-sim-${orderId}`,
-		);
-		return { success: true };
-	});
+	// Dev-only route: only registered in development; not present in staging/production at all.
+	if (CFG.NODE_ENV === "development") {
+		app.post("/dev/simulate-payment", auth, async (req, reply) => {
+			const body = z
+				.object({ orderId: z.union([z.string(), z.number()]) })
+				.safeParse(req.body);
+			if (!body.success)
+				return reply
+					.status(400)
+					.send({ error: { code: "BAD_REQUEST", message: "orderId required" } });
+			const orderId = String(body.data.orderId);
+			const { rows } = await pool().query<{ idempotency_key: string }>(
+				"SELECT idempotency_key FROM orders WHERE id = $1",
+				[orderId],
+			);
+			if (!rows[0])
+				return reply
+					.status(404)
+					.send({ error: { code: "NOT_FOUND", message: "Order not found" } });
+			await confirmOrder(
+				rows[0].idempotency_key,
+				BigInt(orderId),
+				`dev-sim-${orderId}`,
+			);
+			return { success: true };
+		});
+	}
 
 	// Payment gateway webhook
 	const WebhookBody = z.object({
@@ -344,10 +341,15 @@ export async function frontendRoutes(app: FastifyInstance) {
 		status: z.enum(["success", "failed"]),
 	});
 	app.post("/webhooks/payment", async (req, reply) => {
-		// G-2: reject if secret is configured and header doesn't match
+		// G-2: constant-time secret comparison prevents timing-based secret enumeration
 		if (CFG.WEBHOOK_SECRET) {
 			const provided = req.headers["x-webhook-secret"];
-			if (provided !== CFG.WEBHOOK_SECRET) {
+			const providedBuf = Buffer.from(String(provided ?? ""));
+			const expectedBuf = Buffer.from(CFG.WEBHOOK_SECRET);
+			if (
+				providedBuf.length !== expectedBuf.length ||
+				!timingSafeEqual(providedBuf, expectedBuf)
+			) {
 				return reply.status(401).send({ error: "Invalid webhook secret" });
 			}
 		}
@@ -393,6 +395,7 @@ export async function frontendRoutes(app: FastifyInstance) {
 
 		// G-12: authorize tree access — caller must be the root themselves OR appear in
 		// the target's placement_path (i.e. the target is in the caller's downline).
+		// Return 404 (not 403) to avoid leaking whether a member code exists.
 		if (rootId !== user.sub) {
 			const { rows: authRows } = await pool().query<{ ok: number }>(
 				`SELECT 1 AS ok FROM members WHERE id = $1 AND placement_path @> ARRAY[$2::bigint]`,
@@ -400,8 +403,8 @@ export async function frontendRoutes(app: FastifyInstance) {
 			);
 			if (!authRows[0]) {
 				return reply
-					.status(403)
-					.send({ error: { code: "FORBIDDEN", message: "Access denied" } });
+					.status(404)
+					.send({ error: { code: "NOT_FOUND", message: "Root not found" } });
 			}
 		}
 

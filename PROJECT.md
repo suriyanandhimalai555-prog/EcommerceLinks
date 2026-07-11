@@ -85,7 +85,7 @@ Every member sits in **two different trees simultaneously**:
 1. **Sponsor tree** (`members.sponsor_id`) — who *referred* you. Used for the 3-generation qualification gate (BR-5 in code comments) and nothing else.
 2. **Placement tree** (`members.parent_id` + `position` L/R) — where you physically sit in the binary structure. Used for everything money-related: counters, pairs, ranks.
 
-They differ because of **spillover**: when you register under sponsor S choosing leg L, `findPlacementSlot()` walks from S down the *extreme left edge* until it finds an empty L slot. Your placement parent may be several levels below your sponsor.
+**Since the 2-referral cap** (July 2026) the trees coincide for all new registrations: each member may refer at most 2 people, and a new registrant is placed *directly under their sponsor* (first referral → L, second → R, third rejected with 409). There is no leg choice and no spillover — the old `findPlacementSlot()` walk was deleted. Both columns remain because the qualification gate still reads `sponsor_id` and pre-cap data may have `sponsor_id ≠ parent_id` (historical spillover placements put the parent several levels below the sponsor).
 
 Each member stores denormalized ancestry: `placement_path` (array of ancestor ids, root first) and `placement_sides` (which side of each ancestor this member falls on). These arrays are what makes fan-out O(depth) instead of a recursive query, and are guarded by a check constraint that both arrays have equal length.
 

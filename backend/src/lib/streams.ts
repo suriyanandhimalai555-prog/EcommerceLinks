@@ -1,5 +1,10 @@
 import { Redis } from "ioredis";
 import { CFG } from "../config.js";
+import { pool } from "./db.js";
+
+// After this many deliveries, park the entry in dead_letters and XACK it.
+// Prevents permanently-failing entries from blocking the consumer group forever.
+const MAX_DELIVERY_ATTEMPTS = 5;
 
 // Dedicated connection for publishing (non-blocking XADD).
 // Do NOT reuse the shared redis() singleton from redis.ts — its XREADGROUP
@@ -144,11 +149,47 @@ async function dispatch(
 			try {
 				await onMessage!(value);
 			} catch (err) {
-				// Leave in pending — XAUTOCLAIM will redeliver after 60s.
-				console.error(
-					`[streams:${group}] handler error (id=${id}), leaving pending`,
-					err,
-				);
+				// Check delivery count; park in dead_letters after MAX_DELIVERY_ATTEMPTS.
+				// XPENDING range [id, id] returns [[id, consumer, idle_ms, delivery_count]].
+				type PendingRow = [string, string, string, string];
+				const pendingInfo = (await (conn as any).call(
+					"XPENDING",
+					stream,
+					group,
+					id,
+					id,
+					"1",
+				)) as PendingRow[];
+				const deliveryCount = pendingInfo[0]
+					? parseInt(pendingInfo[0][3], 10)
+					: 1;
+
+				if (deliveryCount >= MAX_DELIVERY_ATTEMPTS) {
+					try {
+						await pool().query(
+							`INSERT INTO dead_letters (stream, consumer_group, entry_id, payload, delivery_count)
+               VALUES ($1,$2,$3,$4,$5)
+               ON CONFLICT (consumer_group, entry_id) DO UPDATE SET delivery_count=$5`,
+							[stream, group, id, value, deliveryCount],
+						);
+						await conn.xack(stream, group, id);
+						console.error(
+							`[streams:${group}] poison entry ${id} after ${deliveryCount} deliveries — moved to dead_letters`,
+							err,
+						);
+					} catch (dlErr) {
+						console.error(
+							`[streams:${group}] failed to write dead_letter for ${id}`,
+							dlErr,
+						);
+					}
+				} else {
+					// Leave in pending — XAUTOCLAIM will redeliver after 60s.
+					console.error(
+						`[streams:${group}] handler error (id=${id}, deliveries=${deliveryCount}), leaving pending`,
+						err,
+					);
+				}
 				continue;
 			}
 			// XACK after the handler's DB transaction commits → at-least-once delivery.

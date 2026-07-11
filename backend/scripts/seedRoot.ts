@@ -5,6 +5,15 @@ import { ensureCutoffExists } from '../src/workers/cutoff.js'
 import 'dotenv/config'
 
 export async function seedRoot(): Promise<void> {
+  const rootPassword = process.env.ROOT_SEED_PASSWORD
+  if (!rootPassword) {
+    throw new Error(
+      '[seedRoot] ROOT_SEED_PASSWORD env var is required — refusing to seed with a ' +
+      'hardcoded credential. Set it in .env (e.g. ROOT_SEED_PASSWORD=YourSecurePass) ' +
+      'and rotate any previously-seeded credentials.'
+    )
+  }
+
   await withTxn(async (c) => {
     // Check if root already exists
     const { rows: existing } = await c.query(
@@ -15,7 +24,7 @@ export async function seedRoot(): Promise<void> {
       return
     }
 
-    const passwordHash = await argon2.hash('Root@1234')
+    const passwordHash = await argon2.hash(rootPassword)
 
     // Insert root — no parent_id, no position, empty path arrays; role='admin'
     const { rows } = await c.query<{ id: string }>(

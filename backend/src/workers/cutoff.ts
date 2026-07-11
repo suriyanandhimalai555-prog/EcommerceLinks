@@ -103,8 +103,10 @@ export async function closeAndOpenCutoff(): Promise<void> {
 		if (!newCutoff[0]) return;
 		const newCutoffId = newCutoff[0].id;
 
-		// Emit DeferredSweepRequested for every member with deferred balance > 0
-		const { rows: deferred } = await pool().query<{ owner_id: string }>(
+		// Emit DeferredSweepRequested for every member with deferred balance > 0.
+		// Must use the transaction client `c`, not pool(), so the deferred query sees
+		// the same snapshot as the window-close UPDATE above (same connection, same txn).
+		const { rows: deferred } = await c.query<{ owner_id: string }>(
 			`SELECT a.owner_id FROM wallet_balances wb
        JOIN accounts a ON a.id = wb.account_id
        WHERE a.kind='deferred_bonus' AND wb.balance > 0`,
@@ -122,21 +124,19 @@ export async function closeAndOpenCutoff(): Promise<void> {
 	});
 }
 
-// Cron-style scheduler — checks every minute
+// Cron-style scheduler — checks every minute using DB state, not clock matching.
+// State-based approach: close any open window whose window_end has passed, regardless
+// of restart timing or GC pauses. Self-heals after downtime.
 export async function run() {
 	await ensureCutoffExists();
 	console.log("[cutoff] started, open window ensured");
 
 	setInterval(async () => {
 		try {
-			const now = DateTime.now().setZone(CFG.TZ);
-			// Close window on Saturday at 18:00 IST (weekday 6 = Saturday in luxon)
-			if (
-				now.weekday === 6 &&
-				now.hour === 18 &&
-				now.minute === 0 &&
-				now.second < 60
-			) {
+			const { rows } = await pool().query<{ id: string }>(
+				`SELECT id FROM cutoffs WHERE status='open' AND window_end < now() LIMIT 1`,
+			);
+			if (rows.length > 0) {
 				await closeAndOpenCutoff();
 				console.log("[cutoff] window closed and new window opened");
 			}
