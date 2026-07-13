@@ -18,6 +18,7 @@
     "adminOverview": "Overview",
     "adminMembers": "Members",
     "adminProducts": "Products",
+    "adminKyc": "KYC Approvals",
     "adminRanks": "Rank Approvals",
     "adminPayouts": "Payouts",
     "adminSystem": "System Health",
@@ -88,6 +89,18 @@
     "gst": "GST (18%)",
     "total": "Total Amount",
     "buyNow": "Buy Now",
+    "viewDetails": "View details →",
+    "backToCatalog": "Back to catalog",
+    "paymentMethod": "Payment Method",
+    "termsLabel": "I agree to the Terms & Conditions and confirm this purchase",
+    "orderCreated": "Order Created",
+    "orderIdLabel": "Order ID",
+    "amount": "Amount",
+    "successTitle": "You are now an Active Member!",
+    "successBody": "Your product purchase has been confirmed. You can now start building your network.",
+    "goToDashboard": "Go to Dashboard",
+    "notFoundTitle": "Product not found",
+    "notFoundDesc": "This product is not available.",
     "simulatePay": "Simulate Payment (Dev)",
     "alreadyActive": "Additional purchase — does not create a second activation.",
     "kycRequired": "KYC verification is required before you can buy. Upload your document and wait for approval.",
@@ -125,8 +138,26 @@
       "emptyTitle": "No products yet",
       "emptyDesc": "Add your first product to show it on the Buy Product page"
     },
+    "kyc": {
+      "title": "KYC Approvals",
+      "filterPending": "Pending",
+      "filterVerified": "Verified",
+      "filterRejected": "Rejected",
+      "review": "Review",
+      "docsTitle": "KYC Documents",
+      "noDocs": "No documents uploaded yet — verify only if checked another way.",
+      "notesLabel": "Notes (optional, audit-logged)",
+      "approve": "Approve",
+      "reject": "Reject",
+      "resetPending": "Reset to pending",
+      "statusNoDocs": "No Docs",
+      "statusAwaitingReview": "Awaiting Review",
+      "emptyTitle": "No members in this queue",
+      "emptyDesc": "All KYC submissions have been reviewed."
+    },
     "members": {
-      "noDocsWarning": "No KYC documents uploaded yet — verify only if documents were checked another way."
+      "noDocsWarning": "No KYC documents uploaded yet — verify only if documents were checked another way.",
+      "kycReadOnly": "KYC decisions are made by management on the KYC Approvals page."
     }
   },
   "payout": {

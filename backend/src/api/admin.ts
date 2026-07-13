@@ -210,10 +210,41 @@ export async function adminRoutes(app: FastifyInstance) {
 	});
 
 	// ===== member search =====
-	app.get("/members", auth, async (req) => {
-		const query = req.query as { q?: string; limit?: string };
+	const VALID_KYC_STATUSES = ["pending", "verified", "rejected"] as const;
+	app.get("/members", auth, async (req, reply) => {
+		const query = req.query as {
+			q?: string;
+			limit?: string;
+			page?: string;
+			kycStatus?: string;
+		};
 		const q = query.q ?? "";
-		const limit = Math.min(Number(query.limit ?? "50"), 200);
+		const limit = Math.min(Math.max(1, Number(query.limit ?? "20")), 100);
+		const page = Math.max(1, Number(query.page ?? "1"));
+		const offset = (page - 1) * limit;
+		const kycStatus = query.kycStatus;
+		if (
+			kycStatus !== undefined &&
+			!VALID_KYC_STATUSES.includes(
+				kycStatus as (typeof VALID_KYC_STATUSES)[number],
+			)
+		) {
+			return reply
+				.status(400)
+				.send({ error: "kycStatus must be one of: pending, verified, rejected" });
+		}
+		const baseParams: unknown[] = [`%${q}%`, `%${q}%`, `%${q}%`];
+		let where = `WHERE (m.name ILIKE $1 OR m.phone LIKE $2 OR m.member_code ILIKE $3)`;
+		if (kycStatus) {
+			baseParams.push(kycStatus);
+			where += ` AND m.kyc_status = $${baseParams.length} AND m.role <> 'management'`;
+		}
+		const { rows: countRows } = await pool().query<{ total: string }>(
+			`SELECT COUNT(*) AS total FROM members m ${where}`,
+			baseParams,
+		);
+		const total = Number(countRows[0].total);
+		const dataParams = [...baseParams, limit, offset];
 		const { rows } = await pool().query<{
 			id: string;
 			member_code: string;
@@ -227,29 +258,37 @@ export async function adminRoutes(app: FastifyInstance) {
 			bank_status: string;
 			blocked: boolean;
 			created_at: string;
+			has_documents: boolean;
 		}>(
-			`SELECT id, member_code, name, phone, email,
-              is_active, is_qualified, role, kyc_status, bank_status, blocked, created_at
-       FROM members
-       WHERE name ILIKE $1 OR phone LIKE $2 OR member_code ILIKE $3
-       ORDER BY created_at DESC
-       LIMIT $4`,
-			[`%${q}%`, `%${q}%`, `%${q}%`, limit],
+			`SELECT m.id, m.member_code, m.name, m.phone, m.email,
+			        m.is_active, m.is_qualified, m.role, m.kyc_status, m.bank_status, m.blocked, m.created_at,
+			        (SELECT COUNT(*) > 0 FROM kyc_documents kd WHERE kd.member_id = m.id) AS has_documents
+			 FROM members m
+			 ${where}
+			 ORDER BY m.created_at DESC
+			 LIMIT $${dataParams.length - 1} OFFSET $${dataParams.length}`,
+			dataParams,
 		);
-		return rows.map((m) => ({
-			id: String(m.id),
-			memberCode: m.member_code,
-			name: m.name,
-			phone: m.phone,
-			email: m.email,
-			isActive: m.is_active,
-			isQualified: m.is_qualified,
-			role: m.role,
-			kycStatus: m.kyc_status,
-			bankStatus: m.bank_status,
-			blocked: m.blocked,
-			createdAt: m.created_at,
-		}));
+		return {
+			items: rows.map((m) => ({
+				id: String(m.id),
+				memberCode: m.member_code,
+				name: m.name,
+				phone: m.phone,
+				email: m.email,
+				isActive: m.is_active,
+				isQualified: m.is_qualified,
+				role: m.role,
+				kycStatus: m.kyc_status,
+				bankStatus: m.bank_status,
+				blocked: m.blocked,
+				createdAt: m.created_at,
+				hasDocuments: m.has_documents,
+			})),
+			total,
+			page,
+			limit,
+		};
 	});
 
 	// ===== member update (name/email/phone only — BR-11) =====
@@ -318,6 +357,8 @@ export async function adminRoutes(app: FastifyInstance) {
 			return reply.status(400).send({ error: body.error.flatten() });
 
 		const actor = req.user as { sub: string };
+		if (!(await isManagement(actor.sub)))
+			return reply.status(403).send({ error: "Management only" });
 
 		await withTxn(async (c) => {
 			const { rows: before } = await c.query<{ kyc_status: string }>(

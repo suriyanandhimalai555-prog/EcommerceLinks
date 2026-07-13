@@ -52,6 +52,15 @@ export default function Topbar({ onMenuClick, breadcrumb }: Props) {
         <Menu size={20} />
       </button>
 
+      {/* Mobile logo */}
+      <div className="flex items-center gap-2 lg:hidden">
+        <img src="/AVGLOGO.jpeg" alt="AVG" className="w-7 h-7 rounded-lg object-cover flex-shrink-0" />
+        <div className="leading-tight">
+          <div className="text-xs font-bold text-ink">AGILA VETRI</div>
+          <div className="text-[9px] text-ink-muted tracking-widest">GROUPS</div>
+        </div>
+      </div>
+
       {/* Breadcrumb */}
       <div className="hidden lg:flex items-center gap-1.5 text-xs text-ink-muted flex-1">
         <span>Home</span>

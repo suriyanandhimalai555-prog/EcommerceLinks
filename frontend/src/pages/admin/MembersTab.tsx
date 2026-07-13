@@ -10,13 +10,14 @@ import { DataTable, type Column } from '../../components/ui/DataTable'
 import { Badge } from '../../components/ui/Badge'
 import { Modal } from '../../components/ui/Modal'
 import { FormField } from '../../components/ui/FormField'
-import type { AdminMemberRow, KycDocument, Me } from '../../types/api'
+import type { AdminMembersPage, AdminMemberRow, KycDocument, Me } from '../../types/api'
 
 export function MembersTab() {
   const { t } = useTranslation()
   const qc = useQueryClient()
   const [input, setInput] = useState('')
   const [q, setQ] = useState('')
+  const [page, setPage] = useState(1)
   const [selected, setSelected] = useState<AdminMemberRow | null>(null)
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
@@ -26,7 +27,7 @@ export function MembersTab() {
   const [newPassword, setNewPassword] = useState('')
 
   useEffect(() => {
-    const t = setTimeout(() => setQ(input), 350)
+    const t = setTimeout(() => { setQ(input); setPage(1) }, 350)
     return () => clearTimeout(t)
   }, [input])
 
@@ -36,11 +37,16 @@ export function MembersTab() {
     queryFn: () => api.get(`/admin/members/${selected!.id}/kyc-documents`).then((r) => r.data),
     enabled: !!selected,
   })
-  const { data: members, isPending } = useQuery<AdminMemberRow[]>({
-    queryKey: ['admin-members', q],
-    queryFn: () => api.get(`/admin/members?q=${encodeURIComponent(q)}`).then((r) => r.data),
+  const PAGE_SIZE = 20
+  const { data, isPending } = useQuery<AdminMembersPage>({
+    queryKey: ['admin-members', q, page],
+    queryFn: () =>
+      api.get(`/admin/members?q=${encodeURIComponent(q)}&page=${page}&limit=${PAGE_SIZE}`).then((r) => r.data),
     placeholderData: keepPreviousData,
   })
+  const members = data?.items ?? []
+  const total = data?.total ?? 0
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
 
   const openMember = (m: AdminMemberRow) => {
     setSelected(m)
@@ -64,11 +70,6 @@ export function MembersTab() {
       phone: contact.phone,
     }),
     onSuccess: () => refresh('Contact details saved'),
-    onError: fail,
-  })
-  const setKyc = useMutation({
-    mutationFn: (status: 'verified' | 'rejected' | 'pending') => api.post(`/admin/members/${selected!.id}/kyc`, { status }),
-    onSuccess: (_, status) => refresh(`KYC marked ${status}`),
     onError: fail,
   })
   const setBank = useMutation({
@@ -142,12 +143,37 @@ export function MembersTab() {
       </div>
       <DataTable
         columns={columns}
-        data={members ?? []}
+        data={members}
         loading={isPending}
         rowKey={(r) => r.id}
         emptyTitle="No members found"
         emptyDescription="Try a different search"
       />
+
+      {total > 0 && (
+        <div className="px-5 py-3 border-t border-surface-line flex items-center justify-between gap-4 flex-wrap">
+          <span className="text-xs text-ink-muted">
+            Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, total)} of {total} members
+          </span>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setPage((p) => p - 1)}
+              disabled={page === 1}
+              className="avg-btn-secondary py-1.5 px-3 text-xs disabled:opacity-40"
+            >
+              ‹ Prev
+            </button>
+            <span className="px-3 text-xs font-medium text-ink">{page} / {totalPages}</span>
+            <button
+              onClick={() => setPage((p) => p + 1)}
+              disabled={page >= totalPages}
+              className="avg-btn-secondary py-1.5 px-3 text-xs disabled:opacity-40"
+            >
+              Next ›
+            </button>
+          </div>
+        </div>
+      )}
 
       <Modal open={!!selected} onClose={() => setSelected(null)} title={selected ? `${selected.name} — ${selected.memberCode}` : ''} size="lg">
         {selected && (
@@ -193,9 +219,8 @@ export function MembersTab() {
               )}
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-sm text-ink-muted w-14">KYC</span>
-                <button onClick={() => setKyc.mutate('verified')} className="avg-btn-secondary py-1.5 px-3 text-xs"><ShieldCheck size={12} /> Verify</button>
-                <button onClick={() => setKyc.mutate('rejected')} className="avg-btn-danger">Reject</button>
-                <button onClick={() => setKyc.mutate('pending')} className="flex items-center gap-1 bg-white/5 text-ink-muted font-semibold rounded-lg px-3 py-1.5 text-xs cursor-pointer hover:bg-white/10">Reset to pending</button>
+                <Badge size="sm" variant={selected.kycStatus === 'verified' ? 'success' : selected.kycStatus === 'rejected' ? 'danger' : 'neutral'}>{selected.kycStatus}</Badge>
+                <span className="text-xs text-ink-muted">{t('admin.members.kycReadOnly')}</span>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-sm text-ink-muted w-14">Bank</span>

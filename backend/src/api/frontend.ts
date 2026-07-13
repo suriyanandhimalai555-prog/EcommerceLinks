@@ -335,6 +335,37 @@ export async function frontendRoutes(app: FastifyInstance) {
 		});
 	});
 
+	app.get("/products/:id", async (req, reply) => {
+		const { id } = req.params as { id: string };
+		const idNum = Number(id);
+		if (!Number.isInteger(idNum) || idNum <= 0)
+			return reply.status(404).send({ error: "Not found" });
+		const { rows } = await pool().query<{
+			id: number;
+			name: string;
+			description: string;
+			base_price: string;
+		}>(
+			"SELECT id, name, description, base_price FROM products WHERE id=$1 AND active=TRUE",
+			[idNum],
+		);
+		if (!rows[0]) return reply.status(404).send({ error: "Not found" });
+		const images = await imagesByProduct([idNum]);
+		const p = rows[0];
+		const base = toPaise(p.base_price);
+		const gst = pct(base, CFG.GST_PCT);
+		return {
+			id: Number(p.id),
+			name: p.name,
+			description: p.description,
+			basePricePaise: Number(base),
+			gstPaise: Number(gst),
+			totalPaise: Number(base + gst),
+			badges: PRODUCT_BADGES[Number(p.id)] ?? [],
+			images: images.get(Number(p.id)) ?? [],
+		};
+	});
+
 	const CreateOrderBody = z.object({ productId: z.number().int().positive() });
 	app.post("/orders", auth, async (req, reply) => {
 		const body = CreateOrderBody.safeParse(req.body);

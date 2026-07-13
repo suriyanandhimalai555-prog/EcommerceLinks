@@ -12,6 +12,7 @@ const Register = lazy(() => import('./pages/auth/Register'))
 const Dashboard = lazy(() => import('./pages/Dashboard'))
 const Network = lazy(() => import('./pages/Network'))
 const BuyProduct = lazy(() => import('./pages/BuyProduct'))
+const ProductDetail = lazy(() => import('./pages/ProductDetail'))
 const Profile = lazy(() => import('./pages/Profile'))
 const Wallet = lazy(() => import('./pages/Wallet'))
 const PayoutHistory = lazy(() => import('./pages/PayoutHistory'))
@@ -52,6 +53,7 @@ export default function App() {
               <Route path="/network" element={<Network />} />
               <Route path="/genealogy" element={<Network />} />
               <Route path="/buy" element={<BuyProduct />} />
+              <Route path="/buy/:id" element={<ProductDetail />} />
               <Route path="/pairs" element={<PairMatch />} />
               <Route path="/wallet" element={<Wallet />} />
               <Route path="/payouts" element={<PayoutHistory />} />

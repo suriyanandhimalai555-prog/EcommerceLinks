@@ -42,6 +42,7 @@ export interface ProductImage {
   sortOrder: number
 }
 
+// Served by both GET /products (list) and GET /products/:id (detail)
 export interface Product {
   id: number
   name: string
@@ -248,6 +249,14 @@ export interface AdminMemberRow {
   bankStatus: 'pending' | 'verified'
   blocked: boolean
   createdAt: string
+  hasDocuments: boolean
+}
+
+export interface AdminMembersPage {
+  items: AdminMemberRow[]
+  total: number
+  page: number
+  limit: number
 }
 
 export interface PendingRank {

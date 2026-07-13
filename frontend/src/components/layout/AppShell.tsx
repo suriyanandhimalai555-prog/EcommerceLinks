@@ -14,13 +14,14 @@ const breadcrumbMap: Record<string, string> = {
   '/payouts': 'Payout History',
   '/directs': 'Direct Members',
   '/income': 'Income Report',
-  '/genealogy': 'Genealogy Tree',
   '/ranks': 'Rank & Rewards',
   '/support': 'Support Ticket',
   '/notifications': 'Notifications',
   '/settings': 'Settings',
   '/admin': 'Admin Console',
   '/admin/members': 'Admin · Members',
+  '/admin/kyc': 'Admin · KYC Approvals',
+  '/admin/products': 'Admin · Products',
   '/admin/ranks': 'Admin · Rank Approvals',
   '/admin/payouts': 'Admin · Payouts',
   '/admin/system': 'Admin · System Health',
@@ -30,7 +31,9 @@ const breadcrumbMap: Record<string, string> = {
 export default function AppShell() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const location = useLocation()
-  const breadcrumb = breadcrumbMap[location.pathname]
+  const breadcrumb =
+    breadcrumbMap[location.pathname] ??
+    (/^\/buy\/\d+$/.test(location.pathname) ? 'Product Details' : undefined)
 
   return (
     <div className="flex h-screen overflow-hidden bg-surface-page">

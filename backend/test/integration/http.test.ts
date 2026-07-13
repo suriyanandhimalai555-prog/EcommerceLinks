@@ -505,6 +505,35 @@ describe('Phase 2 – Admin management endpoints', () => {
     expect(audit[0].after_state.kyc_status).toBe('verified')
   })
 
+  it('GET /admin/members?kycStatus=verified includes recently-verified member', async () => {
+    const res = await app.inject({
+      method: 'GET', url: '/admin/members?kycStatus=verified',
+      headers: { authorization: `Bearer ${rootToken}` },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body) as { items: Array<{ id: string; kycStatus: string }> }
+    expect(body.items.find((m) => m.id === targetMemberId)?.kycStatus).toBe('verified')
+    expect(body.items.every((m) => m.kycStatus === 'verified')).toBe(true)
+  })
+
+  it('GET /admin/members?kycStatus=pending excludes verified member', async () => {
+    const res = await app.inject({
+      method: 'GET', url: '/admin/members?kycStatus=pending',
+      headers: { authorization: `Bearer ${rootToken}` },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body) as { items: Array<{ id: string }> }
+    expect(body.items.find((m) => m.id === targetMemberId)).toBeUndefined()
+  })
+
+  it('GET /admin/members?kycStatus=invalid returns 400', async () => {
+    const res = await app.inject({
+      method: 'GET', url: '/admin/members?kycStatus=invalid',
+      headers: { authorization: `Bearer ${rootToken}` },
+    })
+    expect(res.statusCode).toBe(400)
+  })
+
   it('non-root admin is rejected from role change endpoint (403)', async () => {
     // Promote nonRootAdminId to admin role (using root)
     const promoteRes = await app.inject({
@@ -522,6 +551,118 @@ describe('Phase 2 – Admin management endpoints', () => {
     })
     expect(res.statusCode).toBe(403)
     expect(JSON.parse(res.body).error).toMatch(/management only/i)
+  })
+
+  it('non-management admin cannot update KYC status (403); DB unchanged', async () => {
+    // nonRootAdminId was promoted to admin in the previous test
+    const before = await pool().query<{ kyc_status: string }>(
+      'SELECT kyc_status FROM members WHERE id=$1', [targetMemberId]
+    )
+    const statusBefore = before.rows[0].kyc_status
+
+    const res = await app.inject({
+      method: 'POST', url: `/admin/members/${targetMemberId}/kyc`,
+      headers: { authorization: `Bearer ${nonRootAdminToken}` },
+      payload: { status: 'rejected' },
+    })
+    expect(res.statusCode).toBe(403)
+    expect(JSON.parse(res.body).error).toMatch(/management only/i)
+
+    const after = await pool().query<{ kyc_status: string }>(
+      'SELECT kyc_status FROM members WHERE id=$1', [targetMemberId]
+    )
+    expect(after.rows[0].kyc_status).toBe(statusBefore)
+  })
+})
+
+// ─── GET /products/:id ────────────────────────────────────────────────────────
+
+describe('GET /products/:id — single product detail', () => {
+  let productId: number
+
+  beforeAll(async () => {
+    const argon2 = (await import('argon2')).default
+    const mgmtEmail = uniqueEmail('mgmtprod2')
+    await pool().query(
+      `INSERT INTO members
+         (member_code, name, phone, email, password_hash,
+          sponsor_id, parent_id, position, placement_path, placement_sides,
+          is_active, role)
+       VALUES ($1,'ProdDetail Mgmt',$2,$3,$4,NULL,NULL,NULL,'{}','{}',TRUE,'management')`,
+      [`TSTPD${Date.now().toString().slice(-6)}`, uniquePhone(96), mgmtEmail,
+       await argon2.hash('Mgmt@12345')]
+    )
+    const loginRes = await app.inject({
+      method: 'POST', url: '/auth/login',
+      payload: { email: mgmtEmail, password: 'Mgmt@12345' },
+    })
+    const mgmtToken = JSON.parse(loginRes.body).accessToken
+
+    const createRes = await app.inject({
+      method: 'POST', url: '/admin/products',
+      headers: { authorization: `Bearer ${mgmtToken}` },
+      payload: {
+        name: 'Detail Test Product',
+        description: 'For GET /products/:id test',
+        basePricePaise: 123456,
+        active: true,
+        imageKeys: [],
+      },
+    })
+    expect(createRes.statusCode).toBe(201)
+    productId = JSON.parse(createRes.body).id
+  })
+
+  it('returns 200 with correct paise math (base + gst = total, floor rounding)', async () => {
+    const res = await app.inject({ method: 'GET', url: `/products/${productId}` })
+    expect(res.statusCode).toBe(200)
+    const p = JSON.parse(res.body) as {
+      id: number; basePricePaise: number; gstPaise: number; totalPaise: number
+    }
+    expect(p.id).toBe(productId)
+    expect(p.basePricePaise).toBe(123456)
+    expect(p.gstPaise).toBe(22222)      // floor(123456 * 0.18)
+    expect(p.totalPaise).toBe(145678)   // base + gst
+    expect(p.basePricePaise + p.gstPaise).toBe(p.totalPaise)
+  })
+
+  it('returns 404 for unknown id', async () => {
+    const res = await app.inject({ method: 'GET', url: '/products/999999' })
+    expect(res.statusCode).toBe(404)
+  })
+
+  it('returns 404 for non-integer path segment', async () => {
+    const res = await app.inject({ method: 'GET', url: '/products/abc' })
+    expect(res.statusCode).toBe(404)
+  })
+
+  it('returns 404 for inactive product', async () => {
+    const argon2 = (await import('argon2')).default
+    const mgmtEmail2 = uniqueEmail('mgmtprod3')
+    await pool().query(
+      `INSERT INTO members
+         (member_code, name, phone, email, password_hash,
+          sponsor_id, parent_id, position, placement_path, placement_sides,
+          is_active, role)
+       VALUES ($1,'ProdDetail2 Mgmt',$2,$3,$4,NULL,NULL,NULL,'{}','{}',TRUE,'management')`,
+      [`TSTPD2${Date.now().toString().slice(-5)}`, uniquePhone(97), mgmtEmail2,
+       await argon2.hash('Mgmt@12345')]
+    )
+    const loginRes = await app.inject({
+      method: 'POST', url: '/auth/login',
+      payload: { email: mgmtEmail2, password: 'Mgmt@12345' },
+    })
+    const mgmtToken2 = JSON.parse(loginRes.body).accessToken
+
+    const createRes = await app.inject({
+      method: 'POST', url: '/admin/products',
+      headers: { authorization: `Bearer ${mgmtToken2}` },
+      payload: { name: 'Inactive Product', basePricePaise: 50000, active: false, imageKeys: [] },
+    })
+    const inactiveId = JSON.parse(createRes.body).id
+
+    const res = await app.inject({ method: 'GET', url: `/products/${inactiveId}` })
+    expect(res.statusCode).toBe(404)
   })
 })
 
