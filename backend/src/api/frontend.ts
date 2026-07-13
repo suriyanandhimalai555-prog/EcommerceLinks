@@ -12,7 +12,18 @@ import { QUALIFIED_THRESHOLDS } from "../domain/ranks.js";
 import { pool } from "../lib/db.js";
 import { fromPaise, pct, toPaise } from "../lib/money.js";
 import { redis } from "../lib/redis.js";
+import {
+	buildKey,
+	IMAGE_CONTENT_TYPES,
+	kycKeyRe,
+	MAX_UPLOAD_BYTES,
+	objectExists,
+	presignGet,
+	presignUpload,
+	s3Configured,
+} from "../lib/s3.js";
 import { confirmOrder } from "../services/orderService.js";
+import { imagesByProduct } from "../services/productService.js";
 
 // Display names the frontend expects (index 1..12)
 const RANK_NAMES: Record<number, string> = {
@@ -205,6 +216,88 @@ export async function frontendRoutes(app: FastifyInstance) {
 		return reply.send(me);
 	});
 
+	// ===== KYC document upload (S3 kyc/{memberId}/ — private prefix) =====
+	const KycPresignBody = z.object({
+		docType: z.enum(["pan", "aadhaar", "other"]),
+		contentType: z.enum(IMAGE_CONTENT_TYPES),
+		sizeBytes: z.number().int().positive().max(MAX_UPLOAD_BYTES),
+	});
+
+	app.post("/me/kyc/presign", auth, async (req, reply) => {
+		const body = KycPresignBody.safeParse(req.body);
+		if (!body.success)
+			return reply.status(400).send({ error: body.error.flatten() });
+		if (!s3Configured())
+			return reply.status(503).send({ error: "S3_NOT_CONFIGURED" });
+		const memberId = (req.user as Auth).sub;
+		// Key is minted from the JWT identity — a member can never write
+		// outside their own kyc/{id}/ folder.
+		const key = buildKey(`kyc/${memberId}`, body.data.contentType);
+		return presignUpload(key, body.data.contentType);
+	});
+
+	async function listKycDocuments(memberId: string) {
+		const { rows } = await pool().query<{
+			id: string;
+			doc_type: string;
+			s3_key: string;
+			original_name: string | null;
+			uploaded_at: string;
+		}>(
+			`SELECT id, doc_type, s3_key, original_name, uploaded_at
+       FROM kyc_documents WHERE member_id = $1 ORDER BY uploaded_at DESC`,
+			[memberId],
+		);
+		return Promise.all(
+			rows.map(async (r) => ({
+				id: String(r.id),
+				docType: r.doc_type,
+				originalName: r.original_name,
+				uploadedAt: r.uploaded_at,
+				url: await presignGet(r.s3_key),
+			})),
+		);
+	}
+
+	const KycDocumentBody = z.object({
+		key: z.string(),
+		docType: z.enum(["pan", "aadhaar", "other"]),
+		originalName: z.string().max(200).optional(),
+	});
+
+	app.post("/me/kyc/documents", auth, async (req, reply) => {
+		const body = KycDocumentBody.safeParse(req.body);
+		if (!body.success)
+			return reply.status(400).send({ error: body.error.flatten() });
+		const memberId = (req.user as Auth).sub;
+
+		if (!kycKeyRe(memberId).test(body.data.key))
+			return reply
+				.status(400)
+				.send({ error: { code: "BAD_REQUEST", message: "Invalid key" } });
+		if (!(await objectExists(body.data.key)))
+			return reply.status(400).send({
+				error: { code: "BAD_REQUEST", message: "Upload not found in storage" },
+			});
+
+		// ON CONFLICT: registering the same uploaded object twice is a no-op.
+		await pool().query(
+			`INSERT INTO kyc_documents (member_id, doc_type, s3_key, original_name)
+       VALUES ($1,$2,$3,$4) ON CONFLICT (s3_key) DO NOTHING`,
+			[memberId, body.data.docType, body.data.key, body.data.originalName ?? null],
+		);
+		// A rejected member re-submitting documents re-enters the review queue.
+		await pool().query(
+			`UPDATE members SET kyc_status = 'pending' WHERE id = $1 AND kyc_status = 'rejected'`,
+			[memberId],
+		);
+		return reply.status(201).send(await listKycDocuments(memberId));
+	});
+
+	app.get("/me/kyc/documents", auth, async (req) => {
+		return listKycDocuments((req.user as Auth).sub);
+	});
+
 	app.put("/me/bank", auth, async (req, reply) => {
 		const memberId = (req.user as Auth).sub;
 		await pool().query(
@@ -220,20 +313,24 @@ export async function frontendRoutes(app: FastifyInstance) {
 		const { rows } = await pool().query<{
 			id: number;
 			name: string;
+			description: string;
 			base_price: string;
 		}>(
-			"SELECT id, name, base_price FROM products WHERE active = TRUE ORDER BY id",
+			"SELECT id, name, description, base_price FROM products WHERE active = TRUE ORDER BY id",
 		);
+		const images = await imagesByProduct(rows.map((p) => Number(p.id)));
 		return rows.map((p) => {
 			const base = toPaise(p.base_price);
 			const gst = pct(base, CFG.GST_PCT);
 			return {
 				id: Number(p.id),
 				name: p.name,
+				description: p.description,
 				basePricePaise: Number(base),
 				gstPaise: Number(gst),
 				totalPaise: Number(base + gst),
 				badges: PRODUCT_BADGES[Number(p.id)] ?? [],
+				images: images.get(Number(p.id)) ?? [],
 			};
 		});
 	});
@@ -246,6 +343,19 @@ export async function frontendRoutes(app: FastifyInstance) {
 				.status(400)
 				.send({ error: { code: "BAD_REQUEST", message: "Invalid body" } });
 		const memberId = (req.user as Auth).sub;
+
+		// KYC must be verified before any purchase can even be created.
+		const { rows: kycRows } = await pool().query<{ kyc_status: string }>(
+			"SELECT kyc_status FROM members WHERE id = $1",
+			[memberId],
+		);
+		if (kycRows[0]?.kyc_status !== "verified")
+			return reply.status(409).send({
+				error: {
+					code: "KYC_REQUIRED",
+					message: "KYC verification is required before purchase",
+				},
+			});
 
 		const { rows: pRows } = await pool().query<{ base_price: string }>(
 			"SELECT base_price FROM products WHERE id = $1 AND active = TRUE",

@@ -33,6 +33,7 @@ const navItems = [
 const managementNavItems = [
   { key: 'adminOverview', icon: LayoutDashboard, path: '/admin', end: true },
   { key: 'adminMembers', icon: Users, path: '/admin/members', end: false },
+  { key: 'adminProducts', icon: ShoppingBag, path: '/admin/products', end: false },
   { key: 'adminRanks', icon: Trophy, path: '/admin/ranks', end: false },
   { key: 'adminPayouts', icon: Banknote, path: '/admin/payouts', end: false },
   { key: 'adminSystem', icon: Activity, path: '/admin/system', end: false },

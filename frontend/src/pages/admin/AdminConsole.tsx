@@ -6,6 +6,7 @@ import { isManagement } from '../../lib/roles'
 import type { Me } from '../../types/api'
 import { OverviewTab } from './OverviewTab'
 import { MembersTab } from './MembersTab'
+import { ProductsTab } from './ProductsTab'
 import { RanksTab } from './RanksTab'
 import { PayoutsTab } from './PayoutsTab'
 import { SystemTab } from './SystemTab'
@@ -59,6 +60,8 @@ export default function AdminConsole() {
       <Routes>
         <Route index element={<OverviewTab />} />
         <Route path="members" element={<MembersTab />} />
+        {/* Product CRUD is management-only (backend enforces regardless) */}
+        {isManagement(me) && <Route path="products" element={<ProductsTab />} />}
         <Route path="ranks" element={<RanksTab />} />
         <Route path="payouts" element={<PayoutsTab />} />
         <Route path="system" element={<SystemTab />} />

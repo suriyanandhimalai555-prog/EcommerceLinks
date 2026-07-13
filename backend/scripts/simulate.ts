@@ -58,6 +58,13 @@ async function simulate() {
 				password: "Sim@12345",
 			});
 
+			// Sim members skip the real KYC flow — mark verified so demo data is
+			// coherent (the /orders KYC gate) and pendingKyc counts stay clean.
+			await pool().query(
+				"UPDATE members SET kyc_status = 'verified' WHERE id = $1",
+				[memberId],
+			);
+
 			// Simulate first product payment (Starter ₹10,000)
 			const { rows: orderRows } = await pool().query<{ id: string }>(
 				`INSERT INTO orders (member_id, product_id, base_amount, gst_amount, total_amount, idempotency_key)

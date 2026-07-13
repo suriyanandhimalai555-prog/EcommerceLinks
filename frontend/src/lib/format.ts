@@ -13,6 +13,17 @@ export function formatINR(paise: number): string {
   }).format(rupees)
 }
 
+/**
+ * Parse a rupee amount typed by a user ("1234", "1234.5", "1,234.56") into
+ * integer paise using string math — never float arithmetic on money.
+ */
+export function rupeesToPaise(input: string): number {
+  const cleaned = input.replace(/[,\s₹]/g, '')
+  if (!/^\d+(\.\d{1,2})?$/.test(cleaned)) return Number.NaN
+  const [whole, frac = ''] = cleaned.split('.')
+  return parseInt(whole, 10) * 100 + parseInt(frac.padEnd(2, '0') || '0', 10)
+}
+
 export function formatDate(isoString: string): string {
   return new Intl.DateTimeFormat('en-IN', {
     day: '2-digit',

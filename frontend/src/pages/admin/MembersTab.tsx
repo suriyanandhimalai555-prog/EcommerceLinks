@@ -10,7 +10,7 @@ import { DataTable, type Column } from '../../components/ui/DataTable'
 import { Badge } from '../../components/ui/Badge'
 import { Modal } from '../../components/ui/Modal'
 import { FormField } from '../../components/ui/FormField'
-import type { AdminMemberRow, Me } from '../../types/api'
+import type { AdminMemberRow, KycDocument, Me } from '../../types/api'
 
 export function MembersTab() {
   const { t } = useTranslation()
@@ -31,6 +31,11 @@ export function MembersTab() {
   }, [input])
 
   const { data: me } = useQuery<Me>({ queryKey: ['me'], queryFn: () => api.get('/me').then((r) => r.data) })
+  const { data: kycDocs } = useQuery<KycDocument[]>({
+    queryKey: ['admin-kyc-docs', selected?.id],
+    queryFn: () => api.get(`/admin/members/${selected!.id}/kyc-documents`).then((r) => r.data),
+    enabled: !!selected,
+  })
   const { data: members, isPending } = useQuery<AdminMemberRow[]>({
     queryKey: ['admin-members', q],
     queryFn: () => api.get(`/admin/members?q=${encodeURIComponent(q)}`).then((r) => r.data),
@@ -169,6 +174,23 @@ export function MembersTab() {
             {/* Verification */}
             <section className="space-y-2 border-t border-surface-line pt-4">
               <h3 className="text-xs font-semibold text-ink-muted uppercase tracking-wider">Verification</h3>
+              {/* Uploaded KYC documents (private S3, short-lived presigned URLs) */}
+              {kycDocs && kycDocs.length > 0 ? (
+                <div className="flex flex-wrap gap-3 pb-1">
+                  {kycDocs.map((d) => (
+                    <a key={d.id} href={d.url} target="_blank" rel="noreferrer" className="block w-20 text-center group">
+                      <img
+                        src={d.url}
+                        alt={d.docType}
+                        className="w-20 h-20 rounded-lg object-cover border border-surface-line group-hover:border-primary transition-colors"
+                      />
+                      <span className="text-[10px] text-ink-muted uppercase">{d.docType}</span>
+                    </a>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-warning">{t('admin.members.noDocsWarning')}</p>
+              )}
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-sm text-ink-muted w-14">KYC</span>
                 <button onClick={() => setKyc.mutate('verified')} className="avg-btn-secondary py-1.5 px-3 text-xs"><ShieldCheck size={12} /> Verify</button>

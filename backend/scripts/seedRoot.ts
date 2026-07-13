@@ -43,7 +43,12 @@ export async function seedRoot(): Promise<void> {
     const rootId   = BigInt(rows[0].id)
     const rootCode = nextMemberCode(rootId)
 
-    await c.query('UPDATE members SET member_code=$1 WHERE id=$2', [rootCode, rootId])
+    // Verified KYC so the dev root can exercise the purchase flow without a
+    // manual review pass (the /orders route gates on kyc_status).
+    await c.query(
+      `UPDATE members SET member_code=$1, kyc_status='verified' WHERE id=$2`,
+      [rootCode, rootId]
+    )
     await c.query('INSERT INTO member_counters (member_id) VALUES ($1)', [rootId])
 
     const { rows: wRows } = await c.query<{ id: string }>(

@@ -30,6 +30,7 @@ export async function findOpenSponsors(limit = 20): Promise<string[]> {
     `SELECT m.member_code
      FROM members m
      LEFT JOIN members c ON c.parent_id = m.id
+     WHERE m.role <> 'management'
      GROUP BY m.id, m.member_code
      HAVING COUNT(c.id) < 2
      ORDER BY m.id
@@ -57,7 +58,10 @@ export async function registerAnchor(
       })
     } catch (err) {
       const e = err as { statusCode?: number; message?: string }
-      if (e.statusCode === 409 && /referral limit/i.test(e.message ?? '')) continue
+      if (
+        e.statusCode === 409 &&
+        /referral limit|cannot be used as a sponsor/i.test(e.message ?? '')
+      ) continue
       throw err
     }
   }

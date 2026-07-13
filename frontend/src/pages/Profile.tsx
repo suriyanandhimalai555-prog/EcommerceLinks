@@ -1,16 +1,18 @@
 import { useState } from 'react'
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
+import { useTranslation } from 'react-i18next'
 import { Loader2, CheckCircle2 } from 'lucide-react'
 import { Tabs, TabList, TabTrigger, TabContent } from '../components/ui/Tabs'
 import { VerifiedRow } from '../components/ui/VerifiedRow'
 import { FormField } from '../components/ui/FormField'
 import { Badge } from '../components/ui/Badge'
+import { ImageUploader, type UploadedImage } from '../components/ui/ImageUploader'
 import { formatDate, formatINR, orDash } from '../lib/format'
 import api from '../lib/api'
-import type { Me, Dashboard } from '../types/api'
+import type { Me, Dashboard, KycDocument, PresignRes } from '../types/api'
 
 function initials(name: string) {
   return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
@@ -28,10 +30,19 @@ const bankSchema = z.object({
 })
 
 export default function Profile() {
+  const { t } = useTranslation()
+  const qc = useQueryClient()
   const { data: me } = useQuery<Me>({ queryKey: ['me'], queryFn: () => api.get('/me').then((r) => r.data) })
   const { data: dash } = useQuery<Dashboard>({ queryKey: ['dashboard'], queryFn: () => api.get('/dashboard').then((r) => r.data) })
   const [kycSuccess, setKycSuccess] = useState(false)
   const [bankSuccess, setBankSuccess] = useState(false)
+  const [docType, setDocType] = useState<KycDocument['docType']>('pan')
+  const [pendingDocs, setPendingDocs] = useState<UploadedImage[]>([])
+
+  const { data: kycDocs } = useQuery<KycDocument[]>({
+    queryKey: ['kycDocuments'],
+    queryFn: () => api.get('/me/kyc/documents').then((r) => r.data),
+  })
 
   const kycForm = useForm({ resolver: zodResolver(kycSchema) })
   const bankForm = useForm({ resolver: zodResolver(bankSchema) })
@@ -40,6 +51,26 @@ export default function Profile() {
     mutationFn: (d: any) => api.put('/me/kyc', d),
     onSuccess: () => setKycSuccess(true),
   })
+
+  const registerDoc = useMutation({
+    mutationFn: (img: UploadedImage) =>
+      api.post('/me/kyc/documents', { key: img.key, docType }),
+    onSuccess: () => {
+      setPendingDocs([])
+      qc.invalidateQueries({ queryKey: ['kycDocuments'] })
+      qc.invalidateQueries({ queryKey: ['me'] })
+    },
+  })
+
+  function getKycPresign(file: File): Promise<PresignRes> {
+    return api
+      .post('/me/kyc/presign', {
+        docType,
+        contentType: file.type,
+        sizeBytes: file.size,
+      })
+      .then((r) => r.data)
+  }
 
   const bankMutation = useMutation({
     mutationFn: (d: any) => api.put('/me/bank', d),
@@ -109,15 +140,67 @@ export default function Profile() {
                       {...kycForm.register('aadhaarLast4')}
                       error={kycForm.formState.errors.aadhaarLast4?.message}
                     />
-                    <div className="p-3 bg-warning-50 border border-warning/20 rounded-lg text-xs text-ink-muted">
-                      📎 Document upload coming soon. Only text fields required now.
-                    </div>
                     <button type="submit" disabled={kycMutation.isPending} className="avg-btn-primary">
                       {kycMutation.isPending ? <Loader2 size={14} className="animate-spin" /> : null}
                       Submit KYC
                     </button>
                   </form>
                 )}
+
+                {/* Document upload — required before buying */}
+                <div className="mt-6 pt-5 border-t border-surface-line space-y-4">
+                  <div>
+                    <h3 className="text-sm font-semibold text-ink">{t('profile.kycUploadTitle')}</h3>
+                    <p className="text-xs text-ink-muted">{t('profile.kycUploadHint')}</p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="block text-sm font-medium text-ink">{t('profile.kycDocType')}</label>
+                    <select
+                      value={docType}
+                      onChange={(e) => setDocType(e.target.value as KycDocument['docType'])}
+                      className="w-full rounded-lg border border-surface-line bg-[#10141F] px-3 py-2.5 text-sm text-ink outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+                    >
+                      <option value="pan">PAN</option>
+                      <option value="aadhaar">Aadhaar</option>
+                      <option value="other">{t('profile.kycDocOther')}</option>
+                    </select>
+                  </div>
+                  <ImageUploader
+                    maxFiles={1}
+                    value={pendingDocs}
+                    onChange={(imgs) => {
+                      setPendingDocs(imgs)
+                      const added = imgs[imgs.length - 1]
+                      if (added) registerDoc.mutate(added)
+                    }}
+                    getPresign={getKycPresign}
+                  />
+                  {kycDocs && kycDocs.length > 0 && (
+                    <div>
+                      <h4 className="text-xs font-semibold text-ink-muted uppercase tracking-wider mb-2">
+                        {t('profile.kycDocuments')}
+                      </h4>
+                      <div className="flex flex-wrap gap-3">
+                        {kycDocs.map((d) => (
+                          <a
+                            key={d.id}
+                            href={d.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="block w-20 text-center group"
+                          >
+                            <img
+                              src={d.url}
+                              alt={d.docType}
+                              className="w-20 h-20 rounded-lg object-cover border border-surface-line group-hover:border-primary transition-colors"
+                            />
+                            <span className="text-[10px] text-ink-muted uppercase">{d.docType}</span>
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             </TabContent>
 

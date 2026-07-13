@@ -5,15 +5,120 @@ import { DateTime } from "luxon";
 import { z } from "zod";
 import { CFG } from "../config.js";
 import { pool, withTxn } from "../lib/db.js";
-import { fromPaise, toPaise } from "../lib/money.js";
+import { toPaise } from "../lib/money.js";
 // DLQ replay is a sanctioned re-delivery of an already-published event — not a
 // new producer; consumers stay safe via processed_events idempotency.
+import {
+	buildKey,
+	IMAGE_CONTENT_TYPES,
+	MAX_UPLOAD_BYTES,
+	presignGet,
+	presignUpload,
+	s3Configured,
+} from "../lib/s3.js";
 import { publishToStream } from "../lib/streams.js";
+import {
+	createProduct,
+	listAdminProducts,
+	updateProduct,
+} from "../services/productService.js";
 import { postLedgerTxn } from "../workers/ledger.js";
 import { buildBatch } from "../workers/payout.js";
 
 export async function adminRoutes(app: FastifyInstance) {
 	const auth = { preHandler: [app.requireAdmin] };
+
+	// Product catalog mutations are reserved for the management master account
+	// (same live-lookup pattern as the role-change route below).
+	async function isManagement(actorId: string): Promise<boolean> {
+		const { rows } = await pool().query<{ role: string }>(
+			"SELECT role FROM members WHERE id=$1",
+			[actorId],
+		);
+		return rows[0]?.role === "management";
+	}
+
+	// ===== products (catalog managed by management) =====
+	app.get("/products", auth, async () => {
+		return listAdminProducts();
+	});
+
+	const PresignBody = z.object({
+		contentType: z.enum(IMAGE_CONTENT_TYPES),
+		sizeBytes: z.number().int().positive().max(MAX_UPLOAD_BYTES),
+	});
+
+	app.post("/products/images/presign", auth, async (req, reply) => {
+		const body = PresignBody.safeParse(req.body);
+		if (!body.success)
+			return reply.status(400).send({ error: body.error.flatten() });
+		const actor = req.user as { sub: string };
+		if (!(await isManagement(actor.sub)))
+			return reply.status(403).send({ error: "Management only" });
+		if (!s3Configured())
+			return reply.status(503).send({ error: "S3_NOT_CONFIGURED" });
+
+		const key = buildKey("products", body.data.contentType);
+		return presignUpload(key, body.data.contentType);
+	});
+
+	const ProductBody = z.object({
+		name: z.string().min(1).max(120),
+		description: z.string().max(5000).default(""),
+		basePricePaise: z.number().int().positive(),
+		active: z.boolean().default(true),
+		imageKeys: z.array(z.string()).max(8).default([]),
+	});
+
+	app.post("/products", auth, async (req, reply) => {
+		const body = ProductBody.safeParse(req.body);
+		if (!body.success)
+			return reply.status(400).send({ error: body.error.flatten() });
+		const actor = req.user as { sub: string };
+		if (!(await isManagement(actor.sub)))
+			return reply.status(403).send({ error: "Management only" });
+
+		const id = await createProduct(actor.sub, body.data);
+		return reply.status(201).send({ id });
+	});
+
+	app.patch("/products/:id", auth, async (req, reply) => {
+		const { id } = req.params as { id: string };
+		const body = ProductBody.partial().safeParse(req.body);
+		if (!body.success)
+			return reply.status(400).send({ error: body.error.flatten() });
+		const actor = req.user as { sub: string };
+		if (!(await isManagement(actor.sub)))
+			return reply.status(403).send({ error: "Management only" });
+
+		await updateProduct(actor.sub, Number(id), body.data);
+		return { ok: true };
+	});
+
+	// ===== KYC document review (read-only; the status change route audits) =====
+	app.get("/members/:id/kyc-documents", auth, async (req) => {
+		const { id } = req.params as { id: string };
+		const { rows } = await pool().query<{
+			id: string;
+			doc_type: string;
+			s3_key: string;
+			original_name: string | null;
+			uploaded_at: string;
+		}>(
+			`SELECT id, doc_type, s3_key, original_name, uploaded_at
+       FROM kyc_documents WHERE member_id = $1 ORDER BY uploaded_at DESC`,
+			[id],
+		);
+		return Promise.all(
+			rows.map(async (r) => ({
+				id: String(r.id),
+				docType: r.doc_type,
+				originalName: r.original_name,
+				uploadedAt: r.uploaded_at,
+				url: await presignGet(r.s3_key),
+			})),
+		);
+	});
 
 	// ===== ranks =====
 	app.get("/ranks", auth, async (req) => {

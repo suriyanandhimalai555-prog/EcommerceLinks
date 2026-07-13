@@ -17,6 +17,7 @@
     "admin": "Admin Console",
     "adminOverview": "Overview",
     "adminMembers": "Members",
+    "adminProducts": "Products",
     "adminRanks": "Rank Approvals",
     "adminPayouts": "Payouts",
     "adminSystem": "System Health",
@@ -88,7 +89,45 @@
     "total": "Total Amount",
     "buyNow": "Buy Now",
     "simulatePay": "Simulate Payment (Dev)",
-    "alreadyActive": "Additional purchase — does not create a second activation."
+    "alreadyActive": "Additional purchase — does not create a second activation.",
+    "kycRequired": "KYC verification is required before you can buy. Upload your document and wait for approval.",
+    "kycRequiredCta": "Complete KYC"
+  },
+  "profile": {
+    "kycUploadTitle": "KYC Documents",
+    "kycUploadHint": "Upload a clear photo of your PAN or Aadhaar. Required before buying — reviewed by AVG management.",
+    "kycDocType": "Document type",
+    "kycDocOther": "Other",
+    "kycDocuments": "Uploaded documents"
+  },
+  "uploader": {
+    "add": "Add image",
+    "uploading": "Uploading…",
+    "remove": "Remove image",
+    "tooLarge": "Image is too large (max 5 MB)",
+    "badType": "Only JPG, PNG or WebP images are allowed"
+  },
+  "admin": {
+    "products": {
+      "title": "Product catalog",
+      "add": "Add product",
+      "edit": "Edit",
+      "name": "Name",
+      "description": "Description",
+      "price": "Base price (₹)",
+      "priceHint": "Excluding GST — 18% is added at checkout",
+      "active": "Status",
+      "activeHint": "Visible on the member Buy Product page",
+      "images": "Images",
+      "save": "Save product",
+      "nameRequired": "Product name is required",
+      "priceInvalid": "Enter a valid price in rupees",
+      "emptyTitle": "No products yet",
+      "emptyDesc": "Add your first product to show it on the Buy Product page"
+    },
+    "members": {
+      "noDocsWarning": "No KYC documents uploaded yet — verify only if documents were checked another way."
+    }
   },
   "payout": {
     "tdsNote": "5% TDS deducted as per Sec 194H"

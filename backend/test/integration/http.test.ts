@@ -202,10 +202,13 @@ describe('G-2/G-7 – Webhook secret gate and payment status', () => {
     // Register a fresh member for webhook tests
     hookAnchorCode = (await registerAnchor('HookAnchor')).memberCode
     const email = uniqueEmail('hook')
-    await app.inject({
+    const regRes = await app.inject({
       method: 'POST', url: '/auth/register',
       payload: { sponsorCode: hookAnchorCode, name: 'HookTest', phone: uniquePhone(10), email, password: 'Test@12345' },
     })
+    // POST /orders now gates on verified KYC
+    await pool().query("UPDATE members SET kyc_status='verified' WHERE id=$1",
+      [JSON.parse(regRes.body).memberId])
     const loginRes = await app.inject({
       method: 'POST', url: '/auth/login',
       payload: { email, password: 'Test@12345' },
@@ -306,10 +309,12 @@ describe('G-2/G-7 – Webhook secret gate and payment status', () => {
   it('webhook with status=failed marks order as failed (G-7)', async () => {
     // Use a second member so the 'first activation' guard doesn't block
     const email2 = uniqueEmail('hookfail')
-    await app.inject({
+    const regFail = await app.inject({
       method: 'POST', url: '/auth/register',
       payload: { sponsorCode: hookAnchorCode, name: 'HookFail', phone: uniquePhone(11), email: email2, password: 'Test@12345' },
     })
+    await pool().query("UPDATE members SET kyc_status='verified' WHERE id=$1",
+      [JSON.parse(regFail.body).memberId])
     const login2 = await app.inject({
       method: 'POST', url: '/auth/login',
       payload: { email: email2, password: 'Test@12345' },
@@ -349,10 +354,22 @@ describe('Phase 2 – Admin management endpoints', () => {
   let nonRootAdminToken: string
 
   beforeAll(async () => {
-    // Login as root admin (seeded by npm run seed)
+    // Since the three-tier roles change the tree root is a plain member —
+    // admin control lives on management accounts. Create a login-able one.
+    const argon2 = (await import('argon2')).default
+    const mgmtEmail = uniqueEmail('mgmtphase2')
+    await pool().query(
+      `INSERT INTO members
+         (member_code, name, phone, email, password_hash,
+          sponsor_id, parent_id, position, placement_path, placement_sides,
+          is_active, role)
+       VALUES ($1,'Phase2 Mgmt',$2,$3,$4,NULL,NULL,NULL,'{}','{}',TRUE,'management')`,
+      [`TSTP2${Date.now().toString().slice(-6)}`, uniquePhone(904), mgmtEmail,
+       await argon2.hash('Mgmt@12345')]
+    )
     const loginRes = await app.inject({
       method: 'POST', url: '/auth/login',
-      payload: { email: 'root@avg.com', password: 'Root@1234' },
+      payload: { email: mgmtEmail, password: 'Mgmt@12345' },
     })
     rootToken = JSON.parse(loginRes.body).accessToken
 
@@ -504,7 +521,7 @@ describe('Phase 2 – Admin management endpoints', () => {
       payload: { role: 'member' },
     })
     expect(res.statusCode).toBe(403)
-    expect(JSON.parse(res.body).error).toMatch(/root only/i)
+    expect(JSON.parse(res.body).error).toMatch(/management only/i)
   })
 })
 
@@ -654,5 +671,158 @@ describe('Management sponsor guard (placement.ts)', () => {
     })
     expect(res.statusCode).toBe(409)
     expect(JSON.parse(res.body).error).toMatch(/cannot be used as a sponsor/i)
+  })
+})
+
+// ─── KYC gate: orders require verified KYC ───────────────────────────────────
+
+describe('KYC gate – POST /orders requires kyc_status=verified', () => {
+  let token: string
+  let memberId: string
+
+  beforeAll(async () => {
+    const anchorCode = (await registerAnchor('KycGateAnchor')).memberCode
+    const email = uniqueEmail('kycgate')
+    const reg = await app.inject({
+      method: 'POST', url: '/auth/register',
+      payload: { sponsorCode: anchorCode, name: 'KycGate', phone: uniquePhone(60), email, password: 'Test@12345' },
+    })
+    memberId = JSON.parse(reg.body).memberId
+    const login = await app.inject({
+      method: 'POST', url: '/auth/login',
+      payload: { email, password: 'Test@12345' },
+    })
+    token = JSON.parse(login.body).accessToken
+  })
+
+  it('unverified member gets 409 KYC_REQUIRED', async () => {
+    const res = await app.inject({
+      method: 'POST', url: '/orders',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { productId: 1 },
+    })
+    expect(res.statusCode).toBe(409)
+    expect(JSON.parse(res.body).error.code).toBe('KYC_REQUIRED')
+  })
+
+  it('verified member can create the order (201)', async () => {
+    await pool().query("UPDATE members SET kyc_status='verified' WHERE id=$1", [memberId])
+    const res = await app.inject({
+      method: 'POST', url: '/orders',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { productId: 1 },
+    })
+    expect(res.statusCode).toBe(201)
+    expect(JSON.parse(res.body).status).toBe('created')
+  })
+})
+
+// ─── Product catalog: management-only CRUD ───────────────────────────────────
+
+describe('Products – management-only catalog CRUD', () => {
+  let mgmtToken: string
+  let adminToken: string
+  let productId: number
+
+  beforeAll(async () => {
+    // A login-able management account (the seeded one's password is unknown here)
+    const argon2 = (await import('argon2')).default
+    const mgmtEmail = uniqueEmail('mgmtprod')
+    const hash = await argon2.hash('Mgmt@12345')
+    await pool().query(
+      `INSERT INTO members
+         (member_code, name, phone, email, password_hash,
+          sponsor_id, parent_id, position, placement_path, placement_sides,
+          is_active, role)
+       VALUES ($1,'Prod Mgmt',$2,$3,$4,NULL,NULL,NULL,'{}','{}',TRUE,'management')`,
+      [`TSTPM${Date.now().toString().slice(-6)}`, uniquePhone(903), mgmtEmail, hash]
+    )
+    const mgmtLogin = await app.inject({
+      method: 'POST', url: '/auth/login',
+      payload: { email: mgmtEmail, password: 'Mgmt@12345' },
+    })
+    mgmtToken = JSON.parse(mgmtLogin.body).accessToken
+
+    // A plain admin (not management) to prove the 403
+    const anchorCode = (await registerAnchor('ProdAdminAnchor')).memberCode
+    const adminEmail = uniqueEmail('prodadmin')
+    const reg = await app.inject({
+      method: 'POST', url: '/auth/register',
+      payload: { sponsorCode: anchorCode, name: 'ProdAdmin', phone: uniquePhone(61), email: adminEmail, password: 'Test@12345' },
+    })
+    await pool().query("UPDATE members SET role='admin' WHERE id=$1",
+      [JSON.parse(reg.body).memberId])
+    const adminLogin = await app.inject({
+      method: 'POST', url: '/auth/login',
+      payload: { email: adminEmail, password: 'Test@12345' },
+    })
+    adminToken = JSON.parse(adminLogin.body).accessToken
+  })
+
+  it('a non-management admin cannot create products (403)', async () => {
+    const res = await app.inject({
+      method: 'POST', url: '/admin/products',
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { name: 'Nope', basePricePaise: 100000 },
+    })
+    expect(res.statusCode).toBe(403)
+  })
+
+  it('management creates a product; it appears on the member catalog with correct paise math and an audit row', async () => {
+    const res = await app.inject({
+      method: 'POST', url: '/admin/products',
+      headers: { authorization: `Bearer ${mgmtToken}` },
+      payload: {
+        name: 'Test Catalog Product',
+        description: 'Integration test product',
+        basePricePaise: 123456,
+        active: true,
+        imageKeys: [],
+      },
+    })
+    expect(res.statusCode).toBe(201)
+    productId = JSON.parse(res.body).id
+    expect(productId).toBeGreaterThan(3)
+
+    const list = await app.inject({ method: 'GET', url: '/products' })
+    const products = JSON.parse(list.body) as Array<{
+      id: number; description: string; basePricePaise: number
+      gstPaise: number; totalPaise: number; images: unknown[]
+    }>
+    const created = products.find((p) => p.id === productId)
+    expect(created).toBeTruthy()
+    expect(created?.basePricePaise).toBe(123456)
+    expect(created?.gstPaise).toBe(22222)          // floor(123456 * 18%)
+    expect(created?.totalPaise).toBe(145678)
+    expect(created?.description).toBe('Integration test product')
+    expect(created?.images).toEqual([])
+
+    const { rows: audit } = await pool().query(
+      `SELECT action FROM admin_audit_log
+       WHERE action='create_product' AND target_id=$1`,
+      [productId]
+    )
+    expect(audit.length).toBe(1)
+  })
+
+  it('PATCH active=false hides the product from the member catalog', async () => {
+    const res = await app.inject({
+      method: 'PATCH', url: `/admin/products/${productId}`,
+      headers: { authorization: `Bearer ${mgmtToken}` },
+      payload: { active: false },
+    })
+    expect(res.statusCode).toBe(200)
+
+    const list = await app.inject({ method: 'GET', url: '/products' })
+    const products = JSON.parse(list.body) as Array<{ id: number }>
+    expect(products.find((p) => p.id === productId)).toBeUndefined()
+
+    // Still visible on the admin catalog
+    const adminList = await app.inject({
+      method: 'GET', url: '/admin/products',
+      headers: { authorization: `Bearer ${mgmtToken}` },
+    })
+    const adminProducts = JSON.parse(adminList.body) as Array<{ id: number; active: boolean }>
+    expect(adminProducts.find((p) => p.id === productId)?.active).toBe(false)
   })
 })

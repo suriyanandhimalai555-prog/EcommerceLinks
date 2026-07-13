@@ -12,6 +12,10 @@ const DATABASE_URL = env(
 	"postgresql://avg:avg@localhost:5432/avg",
 );
 const REDIS_URL = env("REDIS_URL", "redis://localhost:6379");
+const AWS_REGION = env("AWS_REGION", "ap-south-1");
+const AWS_BUCKET_NAME = env("AWS_BUCKET_NAME", "");
+const AWS_ACCESS_KEY_ID = env("AWS_ACCESS_KEY_ID", "");
+const AWS_SECRET_ACCESS_KEY = env("AWS_SECRET_ACCESS_KEY", "");
 
 // Fail fast when insecure defaults are present in staging/production.
 // development + test: local dev and vitest are exempt.
@@ -36,6 +40,11 @@ if (NODE_ENV !== "development" && NODE_ENV !== "test") {
 			"[config] REDIS_URL must be set in non-development environments — refusing to start",
 		);
 	}
+	if (!AWS_BUCKET_NAME || !AWS_ACCESS_KEY_ID || !AWS_SECRET_ACCESS_KEY) {
+		throw new Error(
+			"[config] AWS_BUCKET_NAME / AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY must be set in non-development environments — refusing to start",
+		);
+	}
 }
 
 export const CFG = {
@@ -53,6 +62,14 @@ export const CFG = {
 	PORT: parseInt(env("PORT", "3000"), 10),
 	NODE_ENV,
 	WEBHOOK_SECRET,
+	AWS_REGION,
+	AWS_BUCKET_NAME,
+	AWS_ACCESS_KEY_ID,
+	AWS_SECRET_ACCESS_KEY,
+	S3_PUBLIC_BASE_URL: env(
+		"S3_PUBLIC_BASE_URL",
+		`https://${AWS_BUCKET_NAME}.s3.${AWS_REGION}.amazonaws.com`,
+	),
 	// G-9: CORS allowlist (space-separated origins). In dev, localhost is allowed.
 	CORS_ORIGINS: env(
 		"CORS_ORIGINS",

@@ -35,13 +35,22 @@ export interface AuthRes {
 }
 
 // ---- catalog & orders ----
+export interface ProductImage {
+  id: string
+  key: string
+  url: string
+  sortOrder: number
+}
+
 export interface Product {
   id: number
   name: string
+  description: string
   basePricePaise: number
   gstPaise: number
   totalPaise: number
   badges: string[]
+  images: ProductImage[]
 }
 
 export interface Order {
@@ -298,6 +307,30 @@ export interface AuditRow {
   beforeState: Record<string, unknown> | null
   afterState: Record<string, unknown> | null
   createdAt: string
+}
+
+export interface AdminProduct {
+  id: number
+  name: string
+  description: string
+  basePricePaise: number
+  active: boolean
+  images: ProductImage[]
+}
+
+// ---- uploads (S3 presigned POST) ----
+export interface PresignRes {
+  key: string
+  url: string
+  fields: Record<string, string>
+}
+
+export interface KycDocument {
+  id: string
+  docType: 'pan' | 'aadhaar' | 'other'
+  originalName: string | null
+  uploadedAt: string
+  url: string
 }
 
 // ---- error ----
