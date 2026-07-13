@@ -4,7 +4,7 @@ import { fromPaise, toPaise } from "../lib/money.js";
 import {
 	deleteObject,
 	objectExists,
-	publicUrl,
+	presignGet,
 	PRODUCT_KEY_RE,
 } from "../lib/s3.js";
 
@@ -28,8 +28,7 @@ function httpError(message: string, statusCode: number): Error {
 	return Object.assign(new Error(message), { statusCode });
 }
 
-/** Ordered images for a set of products, keyed by product id.
- *  Uses public S3 URLs — products/* is public-read per bucket policy. */
+/** Ordered images for a set of products, keyed by product id. */
 export async function imagesByProduct(
 	productIds: number[],
 ): Promise<Map<number, ProductImage[]>> {
@@ -45,15 +44,19 @@ export async function imagesByProduct(
      WHERE product_id = ANY($1) ORDER BY product_id, sort_order`,
 		[productIds],
 	);
-	for (const r of rows) {
-		const list = map.get(Number(r.product_id)) ?? [];
-		list.push({
+	const presignedRows = await Promise.all(
+		rows.map(async (r) => ({
 			id: String(r.id),
+			product_id: Number(r.product_id),
 			key: r.s3_key,
-			url: publicUrl(r.s3_key),
+			url: await presignGet(r.s3_key, 3600),
 			sortOrder: Number(r.sort_order),
-		});
-		map.set(Number(r.product_id), list);
+		})),
+	);
+	for (const r of presignedRows) {
+		const list = map.get(r.product_id) ?? [];
+		list.push({ id: r.id, key: r.key, url: r.url, sortOrder: r.sortOrder });
+		map.set(r.product_id, list);
 	}
 	return map;
 }
