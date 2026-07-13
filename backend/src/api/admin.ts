@@ -5,7 +5,10 @@ import { DateTime } from "luxon";
 import { z } from "zod";
 import { CFG } from "../config.js";
 import { pool, withTxn } from "../lib/db.js";
-import { fromPaise } from "../lib/money.js";
+import { fromPaise, toPaise } from "../lib/money.js";
+// DLQ replay is a sanctioned re-delivery of an already-published event — not a
+// new producer; consumers stay safe via processed_events idempotency.
+import { publishToStream } from "../lib/streams.js";
 import { postLedgerTxn } from "../workers/ledger.js";
 import { buildBatch } from "../workers/payout.js";
 
@@ -51,7 +54,9 @@ export async function adminRoutes(app: FastifyInstance) {
 			}
 		});
 		if (!updated)
-			return reply.status(404).send({ error: "Not found or already processed" });
+			return reply
+				.status(404)
+				.send({ error: "Not found or already processed" });
 		return { ok: true };
 	});
 
@@ -78,7 +83,9 @@ export async function adminRoutes(app: FastifyInstance) {
 			}
 		});
 		if (!updated)
-			return reply.status(404).send({ error: "Not found or already processed" });
+			return reply
+				.status(404)
+				.send({ error: "Not found or already processed" });
 		return { ok: true };
 	});
 
@@ -113,10 +120,11 @@ export async function adminRoutes(app: FastifyInstance) {
 			role: string;
 			kyc_status: string;
 			bank_status: string;
+			blocked: boolean;
 			created_at: string;
 		}>(
 			`SELECT id, member_code, name, phone, email,
-              is_active, is_qualified, role, kyc_status, bank_status, created_at
+              is_active, is_qualified, role, kyc_status, bank_status, blocked, created_at
        FROM members
        WHERE name ILIKE $1 OR phone LIKE $2 OR member_code ILIKE $3
        ORDER BY created_at DESC
@@ -134,6 +142,7 @@ export async function adminRoutes(app: FastifyInstance) {
 			role: m.role,
 			kycStatus: m.kyc_status,
 			bankStatus: m.bank_status,
+			blocked: m.blocked,
 			createdAt: m.created_at,
 		}));
 	});
@@ -157,8 +166,10 @@ export async function adminRoutes(app: FastifyInstance) {
 		const setClauses: string[] = [];
 		const values: unknown[] = [];
 		if (d.name !== undefined) setClauses.push(`name=$${values.push(d.name)}`);
-		if (d.email !== undefined) setClauses.push(`email=$${values.push(d.email)}`);
-		if (d.phone !== undefined) setClauses.push(`phone=$${values.push(d.phone)}`);
+		if (d.email !== undefined)
+			setClauses.push(`email=$${values.push(d.email)}`);
+		if (d.phone !== undefined)
+			setClauses.push(`phone=$${values.push(d.phone)}`);
 
 		if (setClauses.length === 0)
 			return reply.status(400).send({ error: "No fields to update" });
@@ -168,10 +179,7 @@ export async function adminRoutes(app: FastifyInstance) {
 				name: string;
 				email: string | null;
 				phone: string;
-			}>(
-				"SELECT name, email, phone FROM members WHERE id=$1 FOR UPDATE",
-				[id],
-			);
+			}>("SELECT name, email, phone FROM members WHERE id=$1 FOR UPDATE", [id]);
 			if (!before[0])
 				throw Object.assign(new Error("Member not found"), { statusCode: 404 });
 
@@ -385,7 +393,7 @@ export async function adminRoutes(app: FastifyInstance) {
 		return { ok: true };
 	});
 
-	// ===== Role change (root only — actor must have parent_id IS NULL) =====
+	// ===== Role change (management only — the master account appoints/removes admins) =====
 	const RoleBody = z.object({
 		role: z.enum(["member", "admin"]),
 	});
@@ -398,12 +406,12 @@ export async function adminRoutes(app: FastifyInstance) {
 
 		const actor = req.user as { sub: string };
 
-		const { rows: actorRows } = await pool().query<{ parent_id: string | null }>(
-			"SELECT parent_id FROM members WHERE id=$1",
+		const { rows: actorRows } = await pool().query<{ role: string }>(
+			"SELECT role FROM members WHERE id=$1",
 			[actor.sub],
 		);
-		if (!actorRows[0] || actorRows[0].parent_id !== null)
-			return reply.status(403).send({ error: "Root only" });
+		if (!actorRows[0] || actorRows[0].role !== "management")
+			return reply.status(403).send({ error: "Management only" });
 
 		await withTxn(async (c) => {
 			const { rows: before } = await c.query<{ role: string }>(
@@ -412,6 +420,14 @@ export async function adminRoutes(app: FastifyInstance) {
 			);
 			if (!before[0])
 				throw Object.assign(new Error("Member not found"), { statusCode: 404 });
+			// The management role itself is fixed — never grantable or revocable via API.
+			if (before[0].role === "management")
+				throw Object.assign(
+					new Error("Cannot change a management account's role"),
+					{
+						statusCode: 403,
+					},
+				);
 
 			await c.query("UPDATE members SET role=$1 WHERE id=$2", [
 				body.data.role,
@@ -422,14 +438,314 @@ export async function adminRoutes(app: FastifyInstance) {
 				`INSERT INTO admin_audit_log
            (actor_id, action, target_type, target_id, before_state, after_state)
          VALUES ($1,'role_change','member',$2,$3,$4)`,
+				[actor.sub, id, { role: before[0].role }, { role: body.data.role }],
+			);
+		});
+		return { ok: true };
+	});
+
+	// ===== Block / unblock (login suspension — deliberately NOT is_active,
+	// which drives counters/qualification through the event pipeline) =====
+	const BlockBody = z.object({
+		blocked: z.boolean(),
+	});
+
+	app.post("/members/:id/block", auth, async (req, reply) => {
+		const { id } = req.params as { id: string };
+		const body = BlockBody.safeParse(req.body);
+		if (!body.success)
+			return reply.status(400).send({ error: body.error.flatten() });
+
+		const actor = req.user as { sub: string };
+		if (id === actor.sub)
+			return reply.status(403).send({ error: "Cannot block yourself" });
+
+		await withTxn(async (c) => {
+			const { rows: before } = await c.query<{
+				role: string;
+				blocked: boolean;
+			}>("SELECT role, blocked FROM members WHERE id=$1 FOR UPDATE", [id]);
+			if (!before[0])
+				throw Object.assign(new Error("Member not found"), { statusCode: 404 });
+			if (before[0].role === "management")
+				throw Object.assign(new Error("Cannot block a management account"), {
+					statusCode: 403,
+				});
+
+			await c.query("UPDATE members SET blocked=$1 WHERE id=$2", [
+				body.data.blocked,
+				id,
+			]);
+
+			// Kill the session too: revoking all refresh tokens caps the remaining
+			// exposure at the access-token TTL (login and refresh both reject
+			// blocked members; app.authenticate deliberately stays DB-free).
+			if (body.data.blocked) {
+				await c.query(
+					`UPDATE refresh_tokens SET revoked_at = now()
+           WHERE member_id = $1 AND revoked_at IS NULL`,
+					[id],
+				);
+			}
+
+			await c.query(
+				`INSERT INTO admin_audit_log
+           (actor_id, action, target_type, target_id, before_state, after_state)
+         VALUES ($1,'block_update','member',$2,$3,$4)`,
 				[
 					actor.sub,
 					id,
-					{ role: before[0].role },
-					{ role: body.data.role },
+					{ blocked: before[0].blocked },
+					{ blocked: body.data.blocked },
 				],
 			);
 		});
+		return { ok: true };
+	});
+
+	// ===== System overview (read-only aggregates; one parallel round trip) =====
+	app.get("/overview", auth, async () => {
+		const [
+			membersRes,
+			kycRes,
+			ranksRes,
+			todayRes,
+			windowRes,
+			outboxRes,
+			dlqRes,
+		] = await Promise.all([
+			pool().query<{ total: string; active: string; blocked: string }>(
+				`SELECT COUNT(*) AS total,
+                COUNT(*) FILTER (WHERE is_active) AS active,
+                COUNT(*) FILTER (WHERE blocked) AS blocked
+         FROM members WHERE role <> 'management'`,
+			),
+			pool().query<{ c: string }>(
+				`SELECT COUNT(*) AS c FROM members
+         WHERE kyc_status = 'pending' AND role <> 'management'`,
+			),
+			pool().query<{ c: string }>(
+				`SELECT COUNT(*) AS c FROM rank_achievements WHERE verification_status = 'pending'`,
+			),
+			pool().query<{ pairs: string; total: string }>(
+				`SELECT COUNT(*) AS pairs, COALESCE(SUM(bonus_amount),0) AS total
+         FROM pairs
+         WHERE to_char(created_at AT TIME ZONE 'Asia/Kolkata','YYYY-MM-DD')
+             = to_char(now() AT TIME ZONE 'Asia/Kolkata','YYYY-MM-DD')`,
+			),
+			pool().query<{ window_start: string; window_end: string }>(
+				`SELECT window_start, window_end FROM cutoffs WHERE status = 'open' LIMIT 1`,
+			),
+			pool().query<{ c: string }>(
+				`SELECT COUNT(*) AS c FROM events_outbox WHERE published_at IS NULL`,
+			),
+			pool().query<{ c: string }>(`SELECT COUNT(*) AS c FROM dead_letters`),
+		]);
+
+		const m = membersRes.rows[0];
+		const win = windowRes.rows[0];
+		return {
+			totalMembers: parseInt(m?.total ?? "0"),
+			activeMembers: parseInt(m?.active ?? "0"),
+			blockedMembers: parseInt(m?.blocked ?? "0"),
+			pendingKyc: parseInt(kycRes.rows[0]?.c ?? "0"),
+			pendingRanks: parseInt(ranksRes.rows[0]?.c ?? "0"),
+			todayPairs: parseInt(todayRes.rows[0]?.pairs ?? "0"),
+			todayBonusPaise: Number(toPaise(todayRes.rows[0]?.total ?? "0")),
+			openWindow: win
+				? {
+						start: new Date(win.window_start).toISOString(),
+						end: new Date(win.window_end).toISOString(),
+					}
+				: null,
+			outboxBacklog: parseInt(outboxRes.rows[0]?.c ?? "0"),
+			deadLetters: parseInt(dlqRes.rows[0]?.c ?? "0"),
+		};
+	});
+
+	// ===== Payout batch visibility =====
+	app.get("/payouts", auth, async () => {
+		const { rows } = await pool().query<{
+			id: string;
+			scheduled_for: string;
+			status: string;
+			created_at: string;
+			items: string;
+			pending: string;
+			sent: string;
+			settled: string;
+			failed: string;
+			net_total: string;
+		}>(
+			`SELECT pb.id, pb.scheduled_for, pb.status, pb.created_at,
+              COUNT(pi.id) AS items,
+              COUNT(*) FILTER (WHERE pi.status = 'pending') AS pending,
+              COUNT(*) FILTER (WHERE pi.status = 'sent') AS sent,
+              COUNT(*) FILTER (WHERE pi.status = 'settled') AS settled,
+              COUNT(*) FILTER (WHERE pi.status = 'failed') AS failed,
+              COALESCE(SUM(pi.net), 0) AS net_total
+       FROM payout_batches pb
+       LEFT JOIN payout_items pi ON pi.batch_id = pb.id
+       GROUP BY pb.id
+       ORDER BY pb.scheduled_for DESC
+       LIMIT 52`,
+		);
+		return rows.map((r) => ({
+			id: String(r.id),
+			scheduledFor: new Date(r.scheduled_for).toISOString(),
+			status: r.status,
+			createdAt: r.created_at,
+			items: parseInt(r.items),
+			pending: parseInt(r.pending),
+			sent: parseInt(r.sent),
+			settled: parseInt(r.settled),
+			failed: parseInt(r.failed),
+			netTotalPaise: Number(toPaise(r.net_total)),
+		}));
+	});
+
+	app.get("/payouts/:batchId/items", auth, async (req) => {
+		const { batchId } = req.params as { batchId: string };
+		const { rows } = await pool().query<{
+			id: string;
+			member_code: string;
+			name: string;
+			gross: string;
+			tds: string;
+			net: string;
+			status: string;
+			bank_ref: string | null;
+			failure_reason: string | null;
+		}>(
+			`SELECT pi.id, m.member_code, m.name, pi.gross, pi.tds, pi.net,
+              pi.status, pi.bank_ref, pi.failure_reason
+       FROM payout_items pi
+       JOIN members m ON m.id = pi.member_id
+       WHERE pi.batch_id = $1
+       ORDER BY pi.id`,
+			[batchId],
+		);
+		return rows.map((r) => ({
+			id: String(r.id),
+			memberCode: r.member_code,
+			name: r.name,
+			grossPaise: Number(toPaise(r.gross)),
+			tdsPaise: Number(toPaise(r.tds)),
+			netPaise: Number(toPaise(r.net)),
+			status: r.status,
+			bankRef: r.bank_ref,
+			failureReason: r.failure_reason,
+		}));
+	});
+
+	// ===== Dead-letter queue =====
+	app.get("/dead-letters", auth, async () => {
+		const { rows } = await pool().query<{
+			id: string;
+			stream: string;
+			consumer_group: string;
+			entry_id: string;
+			payload: string;
+			delivery_count: number;
+			created_at: string;
+		}>(
+			`SELECT id, stream, consumer_group, entry_id, payload, delivery_count, created_at
+       FROM dead_letters ORDER BY created_at DESC LIMIT 100`,
+		);
+		return rows.map((r) => ({
+			id: String(r.id),
+			stream: r.stream,
+			consumerGroup: r.consumer_group,
+			entryId: r.entry_id,
+			payload: r.payload,
+			deliveryCount: r.delivery_count,
+			createdAt: r.created_at,
+		}));
+	});
+
+	// Replay = re-deliver the original payload to its stream. Consumers are
+	// idempotent via processed_events, so a duplicate delivery is harmless.
+	app.post("/dead-letters/:id/replay", auth, async (req, reply) => {
+		const { id } = req.params as { id: string };
+		const actor = req.user as { sub: string };
+
+		const { rows } = await pool().query<{
+			stream: string;
+			consumer_group: string;
+			entry_id: string;
+			payload: string;
+		}>(
+			`SELECT stream, consumer_group, entry_id, payload FROM dead_letters WHERE id = $1`,
+			[id],
+		);
+		if (!rows[0]) return reply.status(404).send({ error: "Not found" });
+
+		// Publish before delete: if the delete fails the row survives and can be
+		// replayed again (duplicate delivery is safe — consumers are idempotent).
+		await publishToStream(rows[0].stream, rows[0].payload);
+
+		await withTxn(async (c) => {
+			const { rowCount } = await c.query(
+				"DELETE FROM dead_letters WHERE id = $1",
+				[id],
+			);
+			// A concurrent replay may have deleted the row first — don't record a
+			// second audit entry for a replay this request didn't complete.
+			if (!rowCount || rowCount === 0) return;
+			await c.query(
+				`INSERT INTO admin_audit_log
+           (actor_id, action, target_type, target_id, before_state, after_state)
+         VALUES ($1,'dlq_replay','dead_letter',$2,$3,NULL)`,
+				[
+					actor.sub,
+					id,
+					{
+						stream: rows[0].stream,
+						consumerGroup: rows[0].consumer_group,
+						entryId: rows[0].entry_id,
+					},
+				],
+			);
+		});
+		return { ok: true };
+	});
+
+	app.delete("/dead-letters/:id", auth, async (req, reply) => {
+		const { id } = req.params as { id: string };
+		const actor = req.user as { sub: string };
+
+		let found = false;
+		await withTxn(async (c) => {
+			const { rows } = await c.query<{
+				stream: string;
+				consumer_group: string;
+				entry_id: string;
+				payload: string;
+			}>(
+				`DELETE FROM dead_letters WHERE id = $1
+         RETURNING stream, consumer_group, entry_id, payload`,
+				[id],
+			);
+			found = !!rows[0];
+			if (found) {
+				await c.query(
+					`INSERT INTO admin_audit_log
+             (actor_id, action, target_type, target_id, before_state, after_state)
+           VALUES ($1,'dlq_discard','dead_letter',$2,$3,NULL)`,
+					[
+						actor.sub,
+						id,
+						{
+							stream: rows[0].stream,
+							consumerGroup: rows[0].consumer_group,
+							entryId: rows[0].entry_id,
+							payload: rows[0].payload,
+						},
+					],
+				);
+			}
+		});
+		if (!found) return reply.status(404).send({ error: "Not found" });
 		return { ok: true };
 	});
 
@@ -448,9 +764,7 @@ export async function adminRoutes(app: FastifyInstance) {
 		if (query.target_id)
 			conditions.push(`al.target_id=$${values.push(query.target_id)}`);
 
-		const where = conditions.length
-			? `WHERE ${conditions.join(" AND ")}`
-			: "";
+		const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
 		values.push(limit);
 		values.push(offset);
 

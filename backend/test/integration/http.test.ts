@@ -26,7 +26,7 @@ function uniquePhone(suffix: number) {
 beforeAll(async () => {
   await app.ready()
   const { rows } = await pool().query<{ member_code: string }>(
-    'SELECT member_code FROM members WHERE parent_id IS NULL LIMIT 1'
+    "SELECT member_code FROM members WHERE parent_id IS NULL AND role <> 'management' LIMIT 1"
   )
   if (!rows[0]) throw new Error('Root member not seeded — run npm run seed first')
 })
@@ -600,5 +600,59 @@ describe('CAP – each member can refer at most 2 people, placed L then R', () =
     ])
     const statuses = [resA.statusCode, resB.statusCode].sort()
     expect(statuses).toEqual([201, 409])
+  })
+})
+
+// ─── Management accounts are off-tree: nothing may register under them ───────
+
+describe('Management sponsor guard (placement.ts)', () => {
+  let mgmtCode: string
+
+  beforeAll(async () => {
+    // Use the seeded management account, or create a throwaway one.
+    const { rows } = await pool().query<{ member_code: string }>(
+      "SELECT member_code FROM members WHERE role = 'management' LIMIT 1"
+    )
+    if (rows[0]) {
+      mgmtCode = rows[0].member_code
+    } else {
+      mgmtCode = `TSTMGMT${Date.now().toString().slice(-6)}`
+      await pool().query(
+        `INSERT INTO members
+           (member_code, name, phone, email, password_hash,
+            sponsor_id, parent_id, position, placement_path, placement_sides,
+            is_active, role)
+         VALUES ($1,'Test Mgmt',$2,$3,'x',NULL,NULL,NULL,'{}','{}',TRUE,'management')`,
+        [mgmtCode, uniquePhone(900), uniqueEmail('mgmt')]
+      )
+    }
+  })
+
+  it('registerMember service rejects a management sponsor with 409', async () => {
+    const { registerMember } = await import('../../src/services/placement.js')
+    await expect(
+      registerMember({
+        sponsorCode: mgmtCode,
+        name: 'UnderMgmt',
+        phone: uniquePhone(901),
+        email: uniqueEmail('undermgmt'),
+        password: 'Test@12345',
+      })
+    ).rejects.toMatchObject({ statusCode: 409 })
+  })
+
+  it('POST /auth/register with a management sponsor returns 409', async () => {
+    const res = await app.inject({
+      method: 'POST', url: '/auth/register',
+      payload: {
+        sponsorCode: mgmtCode,
+        name: 'UnderMgmt2',
+        phone: uniquePhone(902),
+        email: uniqueEmail('undermgmt2'),
+        password: 'Test@12345',
+      },
+    })
+    expect(res.statusCode).toBe(409)
+    expect(JSON.parse(res.body).error).toMatch(/cannot be used as a sponsor/i)
   })
 })

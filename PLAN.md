@@ -36,7 +36,7 @@
 
 **Database:** Postgres 16, append-only numbered migrations tracked in `schema_migrations`. Money as NUMERIC(14,2) rupees in columns / bigint paise in logic. Two-trees model: `sponsor_id` (qualification only) vs `parent_id`+`position` (all counting). Integrity constraints (unique slot, single root, single open cutoff, `pairs_matched <= LEAST(l,r)`, `balance >= 0`, `earned <= cap`) are the last line of defense and are never weakened.
 
-**Auth:** JWT access+refresh; `app.authenticate` preHandler; **G-3 open: admin routes lack role checks.** Other known gaps: G-4 withdrawals not ledger-connected, G-5 right-leg rank counter first-insert, G-6 cutoff window drift, G-7 failed payments marked `paid`.
+**Auth:** JWT access+refresh; `app.authenticate` preHandler; ~~G-3 open: admin routes lack role checks~~ **G-3 FIXED** — `app.requireAdmin` (live DB role lookup; three-tier roles `management`/`admin`/`member` since migration 016, see STATUS.md 2026-07-12). Other known gaps: G-4 withdrawals not ledger-connected, G-5 right-leg rank counter first-insert, G-6 cutoff window drift, G-7 failed payments marked `paid`.
 
 **Background jobs:** the nine workers above; no cron infrastructure needed (cutoff/payout/reconciler carry internal schedulers, timezone-correct for Asia/Kolkata).
 
@@ -211,7 +211,7 @@ Region **Singapore**; private networking (`.railway.internal`) between services 
 
 1. **CI first** (Phase 5's `ci.yml` + branch protection) — nothing else moves until green.
 2. ~~**Transport build** per §2A~~ ✅ **DONE** — `lib/streams.ts` + `workers/all.ts` built; legacy broker/kafka files deleted; build clean; all 14 tests passing.
-3. **Launch-blocking gap fixes:** G-3 (admin roles), G-7 (failed payments + webhook auth), then G-5, G-6, G-4 per GAPS.md order. Each with a test (money-critical-file rule).
+3. **Launch-blocking gap fixes:** ~~G-3 (admin roles — done 2026-07-12, requireAdmin + admin_audit_log + integration tests)~~, G-7 (failed payments + webhook auth), then G-5, G-6, G-4 per GAPS.md order. Each with a test (money-critical-file rule).
 4. **Phase 3 structural alignment**, one folder per commit, build+test after each.
 5. **Phase 4 index migration** + EXPLAIN baselines.
 6. **Phase 6 items 1–4** (logging, pagination, rate limit, contract tests).

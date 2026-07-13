@@ -14,6 +14,12 @@ export function apiErrorMessage(err: unknown, t: TFunction, fallback: string): s
 
     if (typeof serverError === 'string' && serverError) return serverError
 
+    // Structured errors arrive as { error: { code, message } } (ApiError contract)
+    if (serverError && typeof serverError === 'object' && 'message' in serverError) {
+      const msg = (serverError as { message?: unknown }).message
+      if (typeof msg === 'string' && msg) return msg
+    }
+
     // Zod safeParse failures arrive as error.flatten():
     // { formErrors: string[], fieldErrors: Record<string, string[]> }
     if (serverError && typeof serverError === 'object') {

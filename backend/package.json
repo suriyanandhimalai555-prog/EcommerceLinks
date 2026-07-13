@@ -13,6 +13,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "seed": "tsx scripts/seedRoot.ts",
+    "seed:management": "tsx scripts/seedManagement.ts",
     "reset": "tsx scripts/reset.ts",
     "simulate": "tsx scripts/simulate.ts",
     "worker:outbox": "tsx src/workers/outboxRelay.ts",

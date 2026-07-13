@@ -19,6 +19,12 @@ const breadcrumbMap: Record<string, string> = {
   '/support': 'Support Ticket',
   '/notifications': 'Notifications',
   '/settings': 'Settings',
+  '/admin': 'Admin Console',
+  '/admin/members': 'Admin · Members',
+  '/admin/ranks': 'Admin · Rank Approvals',
+  '/admin/payouts': 'Admin · Payouts',
+  '/admin/system': 'Admin · System Health',
+  '/admin/audit': 'Admin · Audit Log',
 }
 
 export default function AppShell() {

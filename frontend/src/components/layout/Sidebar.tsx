@@ -1,12 +1,15 @@
-import { NavLink, useNavigate } from 'react-router-dom'
+import { NavLink } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { useQueryClient } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import {
   LayoutDashboard, User, Network, ShoppingBag, GitMerge, Wallet,
   Clock, Users, BarChart2, GitFork, Trophy, TicketCheck, Bell,
-  Settings, LogOut, X,
+  Settings, LogOut, X, ShieldCheck, Banknote, Activity, ScrollText,
 } from 'lucide-react'
-import { logout } from '../../lib/auth'
+import api from '../../lib/api'
+import { isManagement } from '../../lib/roles'
+import { useLogout } from '../../lib/useLogout'
+import type { Me } from '../../types/api'
 
 const navItems = [
   { key: 'dashboard', icon: LayoutDashboard, path: '/' },
@@ -25,6 +28,18 @@ const navItems = [
   { key: 'settings', icon: Settings, path: '/settings' },
 ]
 
+// The management account gets the admin pages as first-class routes instead
+// of the member menu (it is off-tree; member pages are meaningless for it).
+const managementNavItems = [
+  { key: 'adminOverview', icon: LayoutDashboard, path: '/admin', end: true },
+  { key: 'adminMembers', icon: Users, path: '/admin/members', end: false },
+  { key: 'adminRanks', icon: Trophy, path: '/admin/ranks', end: false },
+  { key: 'adminPayouts', icon: Banknote, path: '/admin/payouts', end: false },
+  { key: 'adminSystem', icon: Activity, path: '/admin/system', end: false },
+  { key: 'adminAudit', icon: ScrollText, path: '/admin/audit', end: false },
+  { key: 'settings', icon: Settings, path: '/settings', end: false },
+]
+
 interface Props {
   open?: boolean
   onClose?: () => void
@@ -32,15 +47,16 @@ interface Props {
 
 export default function Sidebar({ open = true, onClose }: Props) {
   const { t } = useTranslation()
-  const navigate = useNavigate()
+  const { data: me } = useQuery<Me>({
+    queryKey: ['me'],
+    queryFn: () => api.get('/me').then((r) => r.data),
+  })
+  // Appointed admins are real members: full member menu + one console entry.
+  // Management is off-tree: only the admin pages + settings.
+  const isAdminMember = me?.role === 'admin'
+  const visibleNavItems = isManagement(me) ? managementNavItems : navItems
 
-  const queryClient = useQueryClient()
-
-  const handleLogout = async () => {
-    await logout()
-    queryClient.clear()
-    navigate('/login')
-  }
+  const handleLogout = useLogout()
 
   return (
     <>
@@ -75,13 +91,29 @@ export default function Sidebar({ open = true, onClose }: Props) {
 
         {/* Nav */}
         <nav className="flex-1 py-3 overflow-y-auto scrollbar-thin">
-          {navItems.map((item) => {
+          {isAdminMember && (
+            <NavLink
+              to="/admin"
+              onClick={() => onClose?.()}
+              className={({ isActive }) =>
+                `flex items-center gap-3 mx-2 mb-1 px-3 py-2.5 rounded-xl text-sm transition-all duration-150 ${
+                  isActive
+                    ? 'bg-primary text-white font-semibold shadow-sm'
+                    : 'text-warning hover:bg-primary-50 hover:text-primary font-medium'
+                }`
+              }
+            >
+              <ShieldCheck size={17} className="flex-shrink-0" />
+              <span>{t('nav.admin')}</span>
+            </NavLink>
+          )}
+          {visibleNavItems.map((item) => {
             const Icon = item.icon
             return (
               <NavLink
                 key={item.path}
                 to={item.path}
-                end={item.path === '/'}
+                end={(item as { end?: boolean }).end ?? item.path === '/'}
                 onClick={() => onClose?.()}
                 className={({ isActive }) =>
                   `flex items-center gap-3 mx-2 px-3 py-2.5 rounded-xl text-sm transition-all duration-150 ${

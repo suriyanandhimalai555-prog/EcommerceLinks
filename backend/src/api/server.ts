@@ -42,7 +42,8 @@ app.decorate(
 	},
 );
 
-// Decorator: verifies JWT and checks role='admin' in DB (DB lookup avoids stale JWT claims)
+// Decorator: verifies JWT and checks staff role in DB (DB lookup avoids stale JWT claims).
+// 'management' is the master account role; 'admin' is staff it appoints.
 app.decorate(
 	"requireAdmin",
 	async (request: FastifyRequest, reply: FastifyReply) => {
@@ -57,7 +58,7 @@ app.decorate(
 			"SELECT role FROM members WHERE id = $1",
 			[user.sub],
 		);
-		if (!rows[0] || rows[0].role !== "admin") {
+		if (!rows[0] || !["admin", "management"].includes(rows[0].role)) {
 			reply.status(403).send({ error: "Forbidden" });
 		}
 	},

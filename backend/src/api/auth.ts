@@ -70,6 +70,8 @@ export async function authRoutes(app: FastifyInstance) {
 			if (!body.success)
 				return reply.status(400).send({ error: body.error.flatten() });
 
+			// Management-sponsor rejection (409) is enforced inside registerMember,
+			// so every caller of the service shares the guard.
 			try {
 				const { memberId, memberCode } = await registerMember(body.data);
 				return reply
@@ -113,6 +115,19 @@ export async function authRoutes(app: FastifyInstance) {
 			if (!valid)
 				return reply.status(401).send({ error: "Invalid credentials" });
 
+			// buildMe carries the blocked flag, so the suspend check costs no
+			// extra round trip (findMemberByEmail stays untouched — placement.ts
+			// is money-critical).
+			const me = await buildMe(String(member.id));
+			if (!me) return reply.status(401).send({ error: "Invalid credentials" });
+			if (me.blocked)
+				return reply.status(403).send({
+					error: {
+						code: "ACCOUNT_BLOCKED",
+						message: "Account is blocked. Contact support.",
+					},
+				});
+
 			const payload = {
 				sub: member.id,
 				code: member.member_code,
@@ -123,7 +138,6 @@ export async function authRoutes(app: FastifyInstance) {
 			});
 			const refreshToken = await issueRefreshToken(String(member.id));
 
-			const me = await buildMe(String(member.id));
 			return {
 				accessToken,
 				refreshToken,
@@ -167,11 +181,21 @@ export async function authRoutes(app: FastifyInstance) {
 		if (!revokeRows[0])
 			return reply.status(401).send({ error: "Token revoked or expired" });
 
-		const { rows } = await pool().query<{ member_code: string; name: string }>(
-			"SELECT member_code, name FROM members WHERE id = $1",
-			[payload.sub],
-		);
+		const { rows } = await pool().query<{
+			member_code: string;
+			name: string;
+			blocked: boolean;
+		}>("SELECT member_code, name, blocked FROM members WHERE id = $1", [
+			payload.sub,
+		]);
 		if (!rows[0]) return reply.status(401).send({ error: "Member not found" });
+		if (rows[0].blocked)
+			return reply.status(403).send({
+				error: {
+					code: "ACCOUNT_BLOCKED",
+					message: "Account is blocked. Contact support.",
+				},
+			});
 
 		// Old jti is now revoked; issue a new refresh token.
 		const newPayload = {

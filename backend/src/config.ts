@@ -56,6 +56,6 @@ export const CFG = {
 	// G-9: CORS allowlist (space-separated origins). In dev, localhost is allowed.
 	CORS_ORIGINS: env(
 		"CORS_ORIGINS",
-		"http://localhost:5173 http://localhost:3000 http://localhost:5174 http://localhost:5175 https://agilavetriglobal.com" ,
+		"http://localhost:5173 http://localhost:3000 http://localhost:5174 http://localhost:5175 https://agilavetriglobal.com",
 	),
 } as const;

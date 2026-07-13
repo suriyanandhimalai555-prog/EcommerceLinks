@@ -10,6 +10,7 @@ import { isAxiosError } from 'axios'
 import api from '../../lib/api'
 import { apiErrorMessage } from '../../lib/apiError'
 import { tokenStore } from '../../lib/auth'
+import { homeFor } from '../../lib/roles'
 import { FormField } from '../../components/ui/FormField'
 
 const schema = z.object({
@@ -37,7 +38,7 @@ export default function Login() {
       tokenStore.setRefresh(res.data.refreshToken)
       tokenStore.setMe(res.data.member)
       queryClient.clear()
-      navigate('/', { replace: true })
+      navigate(homeFor(res.data.member?.role), { replace: true })
     } catch (err) {
       // 401 = wrong credentials; anything else gets its real reason
       // (network unreachable, rate limited, server error, …)

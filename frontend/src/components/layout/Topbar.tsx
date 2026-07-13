@@ -1,8 +1,12 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { Menu, Bell, ChevronDown, Globe } from 'lucide-react'
+import { Menu, Bell, ChevronDown, Globe, User, Settings, LogOut } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import api from '../../lib/api'
+import { isManagement as isManagementRole } from '../../lib/roles'
+import { useLogout } from '../../lib/useLogout'
+import { useNotifications } from '../../lib/useNotifications'
 import type { Me } from '../../types/api'
 
 function initials(name: string) {
@@ -12,12 +16,13 @@ function initials(name: string) {
 interface Props {
   onMenuClick: () => void
   breadcrumb?: string
-  unreadCount?: number
 }
 
-export default function Topbar({ onMenuClick, breadcrumb, unreadCount = 3 }: Props) {
+export default function Topbar({ onMenuClick, breadcrumb }: Props) {
   const { i18n } = useTranslation()
+  const navigate = useNavigate()
   const [langOpen, setLangOpen] = useState(false)
+  const [profileOpen, setProfileOpen] = useState(false)
 
   const switchLang = (lang: string) => {
     i18n.changeLanguage(lang)
@@ -29,6 +34,13 @@ export default function Topbar({ onMenuClick, breadcrumb, unreadCount = 3 }: Pro
     queryKey: ['me'],
     queryFn: () => api.get('/me').then((r) => r.data),
   })
+  const isManagement = isManagementRole(me)
+
+  // Bell reflects the same derived feed the Notifications page shows.
+  // Management is off-tree — it has no member notifications, so skip the queries.
+  const { unread } = useNotifications(!isManagement)
+
+  const handleLogout = useLogout()
 
   return (
     <header className="h-16 bg-surface-card border-b border-surface-line flex items-center px-4 lg:px-6 gap-3 sticky top-0 z-20">
@@ -55,7 +67,7 @@ export default function Topbar({ onMenuClick, breadcrumb, unreadCount = 3 }: Pro
       {/* Language switcher */}
       <div className="relative">
         <button
-          onClick={() => setLangOpen(!langOpen)}
+          onClick={() => { setLangOpen(!langOpen); setProfileOpen(false) }}
           className="flex items-center gap-1.5 text-sm text-ink-muted border border-surface-line rounded-lg px-3 py-1.5 hover:bg-white/5 transition-colors cursor-pointer"
         >
           <Globe size={14} />
@@ -79,26 +91,62 @@ export default function Topbar({ onMenuClick, breadcrumb, unreadCount = 3 }: Pro
         )}
       </div>
 
-      {/* Notifications bell */}
-      <button className="relative p-2 rounded-lg text-ink-muted hover:bg-white/10 transition-colors cursor-pointer" aria-label="Notifications">
-        <Bell size={18} />
-        {unreadCount > 0 && (
-          <span className="absolute top-1 right-1 bg-danger text-white text-[9px] font-bold rounded-full w-4 h-4 flex items-center justify-center">
-            {unreadCount > 9 ? '9+' : unreadCount}
-          </span>
-        )}
-      </button>
+      {/* Notifications bell — hidden for the off-tree management account */}
+      {!isManagement && (
+        <button
+          onClick={() => navigate('/notifications')}
+          className="relative p-2 rounded-lg text-ink-muted hover:bg-white/10 transition-colors cursor-pointer"
+          aria-label="Notifications"
+        >
+          <Bell size={18} />
+          {unread > 0 && (
+            <span className="absolute top-1 right-1 bg-danger text-white text-[9px] font-bold rounded-full w-4 h-4 flex items-center justify-center">
+              {unread > 9 ? '9+' : unread}
+            </span>
+          )}
+        </button>
+      )}
 
-      {/* Avatar */}
-      <div className="flex items-center gap-2.5 pl-2 border-l border-surface-line">
-        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-primary to-violet flex items-center justify-center text-white font-bold text-xs flex-shrink-0">
-          {initials(me.name)}
-        </div>
-        <div className="hidden sm:block text-left">
-          <div className="text-sm font-semibold text-ink leading-tight">{me.name}</div>
-          <div className="text-[10px] text-ink-muted">{me.memberCode}</div>
-        </div>
-        <ChevronDown size={13} className="text-ink-muted hidden sm:block" />
+      {/* Profile dropdown */}
+      <div className="relative">
+        <button
+          onClick={() => { setProfileOpen(!profileOpen); setLangOpen(false) }}
+          className="flex items-center gap-2.5 pl-2 border-l border-surface-line cursor-pointer"
+        >
+          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-primary to-violet flex items-center justify-center text-white font-bold text-xs flex-shrink-0">
+            {initials(me.name)}
+          </div>
+          <div className="hidden sm:block text-left">
+            <div className="text-sm font-semibold text-ink leading-tight">{me.name}</div>
+            <div className="text-[10px] text-ink-muted">{me.memberCode}</div>
+          </div>
+          <ChevronDown size={13} className={`text-ink-muted hidden sm:block transition-transform ${profileOpen ? 'rotate-180' : ''}`} />
+        </button>
+        {profileOpen && (
+          <div className="absolute right-0 top-full mt-2 bg-surface-card rounded-xl shadow-lg border border-surface-line overflow-hidden z-50 min-w-[180px] animate-fade-in">
+            {!isManagement && (
+              <button
+                onClick={() => { setProfileOpen(false); navigate('/profile') }}
+                className="w-full flex items-center gap-2.5 text-left px-4 py-2.5 text-sm text-ink hover:bg-white/5 transition-colors cursor-pointer"
+              >
+                <User size={14} className="text-ink-muted" /> My Profile
+              </button>
+            )}
+            <button
+              onClick={() => { setProfileOpen(false); navigate('/settings') }}
+              className="w-full flex items-center gap-2.5 text-left px-4 py-2.5 text-sm text-ink hover:bg-white/5 transition-colors cursor-pointer"
+            >
+              <Settings size={14} className="text-ink-muted" /> Settings
+            </button>
+            <div className="border-t border-surface-line" />
+            <button
+              onClick={handleLogout}
+              className="w-full flex items-center gap-2.5 text-left px-4 py-2.5 text-sm text-danger hover:bg-danger/10 transition-colors cursor-pointer"
+            >
+              <LogOut size={14} /> Logout
+            </button>
+          </div>
+        )}
       </div>
     </header>
   )

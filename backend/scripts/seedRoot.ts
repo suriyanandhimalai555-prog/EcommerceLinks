@@ -16,8 +16,10 @@ export async function seedRoot(): Promise<void> {
 
   await withTxn(async (c) => {
     // Check if root already exists
+    // Management accounts also sit at parent_id NULL — only a non-management
+    // row counts as the tree root here.
     const { rows: existing } = await c.query(
-      `SELECT id FROM members WHERE parent_id IS NULL LIMIT 1`
+      `SELECT id FROM members WHERE parent_id IS NULL AND role <> 'management' LIMIT 1`
     )
     if (existing.length > 0) {
       console.log('Root member already exists:', nextMemberCode(BigInt(existing[0].id)))

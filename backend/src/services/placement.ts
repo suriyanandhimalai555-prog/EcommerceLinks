@@ -57,8 +57,9 @@ export async function registerMember(
 					id: string;
 					placement_path: string[];
 					placement_sides: string[];
+					role: string;
 				}>(
-					"SELECT id, placement_path, placement_sides FROM members WHERE member_code = $1 FOR UPDATE",
+					"SELECT id, placement_path, placement_sides, role FROM members WHERE member_code = $1 FOR UPDATE",
 					[input.sponsorCode],
 				);
 				if (sRows.length === 0) {
@@ -66,6 +67,16 @@ export async function registerMember(
 						statusCode: number;
 					};
 					e.statusCode = 404;
+					throw e;
+				}
+				// Management accounts are off-tree: nothing may ever be placed under
+				// them. Enforced here (not only at the register route) so every
+				// caller — including simulate/test scripts — hits the same wall.
+				if (sRows[0].role === "management") {
+					const e = new Error(
+						"This code cannot be used as a sponsor",
+					) as Error & { statusCode: number };
+					e.statusCode = 409;
 					throw e;
 				}
 				const sponsor = sRows[0];

@@ -115,11 +115,21 @@ export async function buildBatch(payoutDay: DateTime): Promise<bigint> {
 			if (!itemIns[0]) continue; // ledger already posted for this member
 
 			const itemId = BigInt(itemIns[0].id);
-			await postLedgerTxn(c, `payout:${batchId}:${memberId}`, "payout_item", itemId, [
-				{ accountId: walletAccId, direction: "D", amountPaise: grossPaise },
-				{ accountId: payoutClearingId, direction: "C", amountPaise: netPaise },
-				{ accountId: tdsPayableId, direction: "C", amountPaise: tdsPaise },
-			]);
+			await postLedgerTxn(
+				c,
+				`payout:${batchId}:${memberId}`,
+				"payout_item",
+				itemId,
+				[
+					{ accountId: walletAccId, direction: "D", amountPaise: grossPaise },
+					{
+						accountId: payoutClearingId,
+						direction: "C",
+						amountPaise: netPaise,
+					},
+					{ accountId: tdsPayableId, direction: "C", amountPaise: tdsPaise },
+				],
+			);
 
 			totalNetPaise += netPaise;
 			itemCount++;
@@ -158,7 +168,9 @@ export async function buildBatch(payoutDay: DateTime): Promise<bigint> {
 
 	const csvLines = [csvRow(["member_code", "name", "gross", "tds", "net"])];
 	for (const item of items) {
-		csvLines.push(csvRow([item.member_code, item.name, item.gross, item.tds, item.net]));
+		csvLines.push(
+			csvRow([item.member_code, item.name, item.gross, item.tds, item.net]),
+		);
 	}
 
 	await mkdir(OUT_DIR, { recursive: true });

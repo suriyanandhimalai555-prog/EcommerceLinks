@@ -51,10 +51,11 @@ export async function buildMe(memberId: string) {
 		is_active: boolean;
 		created_at: string;
 		role: string;
+		blocked: boolean;
 		sponsor_code: string | null;
 	}>(
 		`SELECT m.member_code, m.name, m.phone, m.email, m.kyc_status, m.bank_status,
-            m.is_active, m.created_at, m.role, s.member_code AS sponsor_code
+            m.is_active, m.created_at, m.role, m.blocked, s.member_code AS sponsor_code
      FROM members m LEFT JOIN members s ON s.id = m.sponsor_id
      WHERE m.id = $1`,
 		[memberId],
@@ -78,7 +79,8 @@ export async function buildMe(memberId: string) {
 		bankStatus: m.bank_status,
 		currentRankLevel: level,
 		currentRankName: level > 0 ? RANK_NAMES[level] : "Member",
-		role: m.role as "member" | "admin",
+		role: m.role as "member" | "admin" | "management",
+		blocked: m.blocked,
 	};
 }
 
@@ -312,9 +314,9 @@ export async function frontendRoutes(app: FastifyInstance) {
 				.object({ orderId: z.union([z.string(), z.number()]) })
 				.safeParse(req.body);
 			if (!body.success)
-				return reply
-					.status(400)
-					.send({ error: { code: "BAD_REQUEST", message: "orderId required" } });
+				return reply.status(400).send({
+					error: { code: "BAD_REQUEST", message: "orderId required" },
+				});
 			const orderId = String(body.data.orderId);
 			const { rows } = await pool().query<{ idempotency_key: string }>(
 				"SELECT idempotency_key FROM orders WHERE id = $1",

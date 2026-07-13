@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Globe, Bell, LogOut, Shield, Zap, Loader2, CheckCircle2 } from 'lucide-react'
+import { Globe, Bell, LogOut, Shield, Zap } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { logout } from '../lib/auth'
 import api from '../lib/api'
+import { isStaff } from '../lib/roles'
 import type { Me } from '../types/api'
 
 export default function Settings() {
@@ -13,23 +14,12 @@ export default function Settings() {
   const [emailNotif, setEmailNotif] = useState(true)
   const [smsNotif, setSmsNotif] = useState(false)
   const [pairNotif, setPairNotif] = useState(true)
-  const [payoutMsg, setPayoutMsg] = useState<string | null>(null)
 
   const queryClient = useQueryClient()
 
   const { data: me } = useQuery<Me>({
     queryKey: ['me'],
     queryFn: () => api.get('/me').then(r => r.data),
-  })
-
-  const triggerPayout = useMutation({
-    mutationFn: () => api.post('/admin/payouts/trigger'),
-    onSuccess: (res) => {
-      setPayoutMsg(`Payout batch triggered — batch ID ${res.data.batchId}`)
-    },
-    onError: (err: any) => {
-      setPayoutMsg(err.response?.data?.error || 'Failed to trigger payout')
-    },
   })
 
   const handleLogoutAll = async () => {
@@ -111,33 +101,20 @@ export default function Settings() {
         </div>
       </div>
 
-      {/* Admin controls — only visible to admins */}
-      {me?.role === 'admin' && (
+      {/* Admin controls now live in the Admin Console */}
+      {isStaff(me) && (
         <div className="avg-card p-5 border-l-4 border-warning">
-          <div className="flex items-center gap-2 mb-4">
+          <div className="flex items-center gap-2 mb-3">
             <Zap size={16} className="text-warning" />
             <h2 className="text-sm font-semibold text-ink">Admin Controls</h2>
           </div>
-          <div className="space-y-3">
-            <p className="text-sm text-ink-muted">
-              Manually trigger the payout batch for today. All KYC- and bank-verified members
-              with wallet balance ≥ minimum will be included. This is idempotent — running it
-              twice on the same date is safe.
-            </p>
-            {payoutMsg && (
-              <div className="flex items-center gap-2 text-sm bg-success/10 text-success border border-success/20 rounded-lg px-3 py-2">
-                <CheckCircle2 size={14} /> {payoutMsg}
-              </div>
-            )}
-            <button
-              onClick={() => { setPayoutMsg(null); triggerPayout.mutate() }}
-              disabled={triggerPayout.isPending}
-              className="flex items-center gap-2 bg-warning text-[#0B0E16] rounded-lg px-4 py-2.5 text-sm font-semibold hover:bg-warning/90 transition-colors cursor-pointer disabled:opacity-60"
-            >
-              {triggerPayout.isPending ? <Loader2 size={15} className="animate-spin" /> : <Zap size={15} />}
-              Trigger Payout Now
-            </button>
-          </div>
+          <p className="text-sm text-ink-muted mb-3">
+            Member management, rank verification, payouts, pipeline health and the audit trail
+            live in the Admin Console.
+          </p>
+          <button onClick={() => navigate('/admin')} className="avg-btn-primary">
+            <Zap size={15} /> Open Admin Console
+          </button>
         </div>
       )}
     </div>

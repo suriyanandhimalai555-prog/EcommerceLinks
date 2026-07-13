@@ -14,6 +14,13 @@
     "support": "Support Ticket",
     "notifications": "Notifications",
     "settings": "Settings",
+    "admin": "Admin Console",
+    "adminOverview": "Overview",
+    "adminMembers": "Members",
+    "adminRanks": "Rank Approvals",
+    "adminPayouts": "Payouts",
+    "adminSystem": "System Health",
+    "adminAudit": "Audit Log",
     "logout": "Logout"
   },
   "counters": {

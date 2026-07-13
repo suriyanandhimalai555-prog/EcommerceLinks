@@ -14,6 +14,13 @@
     "support": "ஆதரவு",
     "notifications": "அறிவிப்புகள்",
     "settings": "அமைப்புகள்",
+    "admin": "நிர்வாக மையம்",
+    "adminOverview": "மேலோட்டம்",
+    "adminMembers": "உறுப்பினர்கள்",
+    "adminRanks": "தர அனுமதிகள்",
+    "adminPayouts": "பணவழங்கல்கள்",
+    "adminSystem": "கணினி நிலை",
+    "adminAudit": "தணிக்கை பதிவு",
     "logout": "வெளியேறு"
   },
   "counters": {

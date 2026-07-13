@@ -1,6 +1,11 @@
 import { useState, useEffect } from 'react'
 import { Navigate, useLocation } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
+import api from '../lib/api'
+import type { Me } from '../types/api'
 import { tokenStore, bootstrapAuth } from '../lib/auth'
+import { isManagement, isStaff } from '../lib/roles'
+import { SkeletonCard } from '../components/ui/Skeleton'
 
 /**
  * RequireAuth — gates all protected routes.
@@ -62,5 +67,42 @@ function AuthBootstrap({
     )
   }
 
+  return <>{children}</>
+}
+
+/**
+ * RequireAdmin — gates the admin console. Server-side requireAdmin is the real
+ * enforcement; this is UX only (no flash of admin UI for members).
+ */
+export function RequireAdmin({ children }: { children: React.ReactNode }) {
+  const { data: me, isPending } = useQuery<Me>({
+    queryKey: ['me'],
+    queryFn: () => api.get('/me').then((r) => r.data),
+  })
+
+  if (isPending) {
+    return <SkeletonCard lines={2} />
+  }
+
+  if (!isStaff(me)) {
+    return <Navigate to="/" replace />
+  }
+
+  return <>{children}</>
+}
+
+/**
+ * MemberHome — the management account has no tree/wallet, so the member
+ * dashboard is empty noise for it; send it to the console instead. Gated on
+ * isPending so the dashboard never mounts (and never fires its API calls)
+ * before the role is known.
+ */
+export function MemberHome({ children }: { children: React.ReactNode }) {
+  const { data: me, isPending } = useQuery<Me>({
+    queryKey: ['me'],
+    queryFn: () => api.get('/me').then((r) => r.data),
+  })
+  if (isPending) return <SkeletonCard lines={2} />
+  if (isManagement(me)) return <Navigate to="/admin" replace />
   return <>{children}</>
 }

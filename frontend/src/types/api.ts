@@ -11,7 +11,8 @@ export interface Me {
   bankStatus: 'pending' | 'verified'
   currentRankLevel: number
   currentRankName: string
-  role: 'member' | 'admin'
+  role: 'member' | 'admin' | 'management'
+  blocked?: boolean
 }
 
 export interface RegisterReq {
@@ -209,6 +210,94 @@ export interface RankLevel {
 
 export interface RankProgress {
   levels: RankLevel[]
+}
+
+// ---- admin console ----
+export interface AdminOverview {
+  totalMembers: number
+  activeMembers: number
+  blockedMembers: number
+  pendingKyc: number
+  pendingRanks: number
+  todayPairs: number
+  todayBonusPaise: number
+  openWindow: { start: string; end: string } | null
+  outboxBacklog: number
+  deadLetters: number
+}
+
+export interface AdminMemberRow {
+  id: string
+  memberCode: string
+  name: string
+  phone: string
+  email: string | null
+  isActive: boolean
+  isQualified: boolean
+  role: 'member' | 'admin' | 'management'
+  kycStatus: 'pending' | 'verified' | 'rejected'
+  bankStatus: 'pending' | 'verified'
+  blocked: boolean
+  createdAt: string
+}
+
+export interface PendingRank {
+  id: string
+  member_id: string
+  member_code: string
+  name: string
+  rank_level: number
+  achieved_at: string
+  verification_status: 'pending' | 'approved' | 'rejected'
+  fulfilled_at: string | null
+  fulfillment_notes: string | null
+}
+
+export interface AdminPayoutBatch {
+  id: string
+  scheduledFor: string
+  status: 'building' | 'sent' | 'reconciled'
+  createdAt: string
+  items: number
+  pending: number
+  sent: number
+  settled: number
+  failed: number
+  netTotalPaise: number
+}
+
+export interface AdminPayoutItem {
+  id: string
+  memberCode: string
+  name: string
+  grossPaise: number
+  tdsPaise: number
+  netPaise: number
+  status: 'pending' | 'sent' | 'settled' | 'failed'
+  bankRef: string | null
+  failureReason: string | null
+}
+
+export interface DeadLetter {
+  id: string
+  stream: string
+  consumerGroup: string
+  entryId: string
+  payload: string
+  deliveryCount: number
+  createdAt: string
+}
+
+export interface AuditRow {
+  id: string
+  actorId: string
+  actorName: string
+  action: string
+  targetType: string
+  targetId: string | null
+  beforeState: Record<string, unknown> | null
+  afterState: Record<string, unknown> | null
+  createdAt: string
 }
 
 // ---- error ----
