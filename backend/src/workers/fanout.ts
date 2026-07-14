@@ -1,4 +1,3 @@
-import { randomUUID } from "crypto";
 import { v5 as uuidv5 } from "uuid";
 import { TOPICS } from "../events/topics.js";
 import type {
@@ -6,6 +5,8 @@ import type {
 	CounterIncrement,
 	MemberActivated,
 	MemberQualified,
+	PairBonusAccrued,
+	PairCompleted,
 	RankAchieved,
 } from "../events/types.js";
 import { pool, withTxn } from "../lib/db.js";
@@ -66,6 +67,27 @@ export function fanOut(
 	return increments;
 }
 
+// A completed pair pays the pair owner AND every placement ancestor ₹1000 each
+// ("every member is the root of their own subtree"). One PairBonusAccrued per
+// beneficiary; deterministic ids make XAUTOCLAIM re-delivery safe.
+export function fanOutPairBonus(
+	e: PairCompleted,
+	ownerPlacementPath: bigint[],
+): PairBonusAccrued[] {
+	const beneficiaries = [BigInt(e.member_id), ...ownerPlacementPath];
+	return beneficiaries.map((beneficiaryId) => ({
+		event_id: deterministicIncrementId(e.event_id, beneficiaryId),
+		event_type: "PairBonusAccrued",
+		occurred_at: e.occurred_at,
+		schema_version: 1,
+		beneficiary_id: Number(beneficiaryId),
+		pair_id: e.pair_id,
+		pair_member_id: e.member_id,
+		amount_paise: e.amount_paise,
+		source_event_id: e.event_id,
+	}));
+}
+
 export async function run() {
 	await startConsumer({
 		stream: TOPICS.lifecycle.name,
@@ -77,7 +99,8 @@ export async function run() {
 			if (
 				e.event_type !== "MemberActivated" &&
 				e.event_type !== "MemberQualified" &&
-				e.event_type !== "RankAchieved"
+				e.event_type !== "RankAchieved" &&
+				e.event_type !== "PairCompleted"
 			)
 				return;
 
@@ -103,15 +126,22 @@ export async function run() {
 			const placementPath = (mRows[0].placement_path ?? []).map(BigInt);
 			const placementSides = mRows[0].placement_sides ?? [];
 
-			const increments = fanOut(
-				e as MemberActivated | MemberQualified | RankAchieved,
-				placementPath,
-				placementSides,
-			);
-
 			// Produce first, then record — at-least-once is safe; downstream dedupes via
-			// deterministic uuidv5 increment ids (sourceEventId:ancestorId).
-			if (increments.length > 0) {
+			// deterministic uuidv5 ids (sourceEventId:ancestorId).
+			if (e.event_type === "PairCompleted") {
+				// For PairCompleted, member_id is the pair owner: bonus accruals go to
+				// the owner + every placement ancestor, straight to the ledger stream
+				// (sanctioned direct-publish exception, same as increments).
+				const accruals = fanOutPairBonus(e, placementPath);
+				for (const acc of accruals) {
+					await publishToStream(TOPICS.ledger.name, JSON.stringify(acc));
+				}
+			} else {
+				const increments = fanOut(
+					e as MemberActivated | MemberQualified | RankAchieved,
+					placementPath,
+					placementSides,
+				);
 				for (const inc of increments) {
 					await publishToStream(TOPICS.increments.name, JSON.stringify(inc));
 				}

@@ -44,5 +44,13 @@ export async function evaluateQualification(
 		via_child_id: Number(rows[0].child_id),
 		via_grandchild_id: Number(rows[0].grandchild_id),
 	});
+	// Qualification releases the member's pending pair bonuses (ledger worker).
+	await writeOutbox(c, {
+		event_id: randomUUID(),
+		event_type: "PendingBonusReleaseRequested",
+		occurred_at: new Date().toISOString(),
+		schema_version: 1,
+		member_id: Number(memberId),
+	});
 	return true;
 }

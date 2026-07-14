@@ -19,6 +19,7 @@
     "worker:outbox": "tsx src/workers/outboxRelay.ts",
     "worker:fanout": "tsx src/workers/fanout.ts",
     "worker:counter": "tsx src/workers/counterPair.ts",
+    "worker:paircomplete": "tsx src/workers/pairComplete.ts",
     "worker:qualification": "tsx src/workers/qualification.ts",
     "worker:ledger": "tsx src/workers/ledger.ts",
     "worker:rank": "tsx src/workers/rank.ts",

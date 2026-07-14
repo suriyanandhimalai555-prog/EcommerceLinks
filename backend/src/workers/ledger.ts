@@ -1,7 +1,12 @@
 import type pg from "pg";
 import { CFG } from "../config.js";
 import { TOPICS } from "../events/topics.js";
-import type { AvgEvent, DeferredSweepRequested } from "../events/types.js";
+import type {
+	AvgEvent,
+	DeferredSweepRequested,
+	PairBonusAccrued,
+	PendingBonusReleaseRequested,
+} from "../events/types.js";
 import { withTxn } from "../lib/db.js";
 import { txnUuid } from "../lib/ids.js";
 import { fromPaise, toPaise } from "../lib/money.js";
@@ -178,6 +183,116 @@ export async function creditBonusWithCap(
 	return posted;
 }
 
+interface AccrualRow {
+	id: string;
+	pair_id: string;
+	beneficiary_id: string;
+	amount: string;
+}
+
+// Pay one accrual and mark it released. The idempotency key is shared between
+// the immediate path (accruePairBonus) and the retroactive path
+// (releasePendingBonuses), so any interleaving posts the money exactly once;
+// posted=false means a prior partial delivery already moved it.
+async function releaseAccrual(c: pg.PoolClient, a: AccrualRow): Promise<void> {
+	await creditBonusWithCap(
+		c,
+		BigInt(a.beneficiary_id),
+		toPaise(a.amount),
+		`pairbonus:${a.pair_id}:${a.beneficiary_id}`,
+		"pair",
+		BigInt(a.id),
+	);
+	await c.query(
+		`UPDATE pair_accruals SET status='released', released_at=now()
+      WHERE id=$1 AND status='pending'`,
+		[a.id],
+	);
+}
+
+// Record the accrual for one beneficiary of a completed pair; pay immediately
+// if the beneficiary is already qualified, otherwise leave it pending for
+// releasePendingBonuses.
+export async function accruePairBonus(e: PairBonusAccrued): Promise<void> {
+	await withTxn(async (c) => {
+		const { rows: done } = await c.query(
+			"SELECT 1 FROM processed_events WHERE consumer_group=$1 AND event_id=$2",
+			[GROUP, e.event_id],
+		);
+		if (done.length > 0) return;
+
+		const { rows: ins } = await c.query<{ id: string }>(
+			`INSERT INTO pair_accruals (pair_id, beneficiary_id, amount)
+       VALUES ($1,$2,$3)
+       ON CONFLICT (pair_id, beneficiary_id) DO NOTHING
+       RETURNING id`,
+			[e.pair_id, e.beneficiary_id, fromPaise(BigInt(e.amount_paise))],
+		);
+
+		let accrual: AccrualRow | undefined;
+		if (ins[0]) {
+			accrual = {
+				id: ins[0].id,
+				pair_id: String(e.pair_id),
+				beneficiary_id: String(e.beneficiary_id),
+				amount: fromPaise(BigInt(e.amount_paise)),
+			};
+		} else {
+			const { rows } = await c.query<AccrualRow & { status: string }>(
+				`SELECT id, pair_id, beneficiary_id, amount, status
+           FROM pair_accruals WHERE pair_id=$1 AND beneficiary_id=$2 FOR UPDATE`,
+				[e.pair_id, e.beneficiary_id],
+			);
+			if (rows[0]?.status === "pending") accrual = rows[0];
+		}
+
+		if (accrual) {
+			const { rows: q } = await c.query<{ is_qualified: boolean }>(
+				"SELECT is_qualified FROM members WHERE id=$1",
+				[e.beneficiary_id],
+			);
+			if (q[0]?.is_qualified) await releaseAccrual(c, accrual);
+		}
+
+		await c.query(
+			"INSERT INTO processed_events (consumer_group, event_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
+			[GROUP, e.event_id],
+		);
+	});
+}
+
+// Retroactive payout: the member just qualified — release everything pending.
+export async function releasePendingBonuses(
+	e: PendingBonusReleaseRequested,
+): Promise<void> {
+	await withTxn(async (c) => {
+		const { rows: done } = await c.query(
+			"SELECT 1 FROM processed_events WHERE consumer_group=$1 AND event_id=$2",
+			[GROUP, e.event_id],
+		);
+		if (done.length > 0) return;
+
+		const { rows: pending } = await c.query<AccrualRow>(
+			`SELECT id, pair_id, beneficiary_id, amount
+         FROM pair_accruals
+        WHERE beneficiary_id=$1 AND status='pending'
+        ORDER BY id
+        FOR UPDATE`,
+			[e.member_id],
+		);
+		// Large backlogs make a large txn; per-accrual ledger idempotency keys
+		// keep a mid-txn crash + re-delivery safe. Acceptable at current scale.
+		for (const a of pending) {
+			await releaseAccrual(c, a);
+		}
+
+		await c.query(
+			"INSERT INTO processed_events (consumer_group, event_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
+			[GROUP, e.event_id],
+		);
+	});
+}
+
 export async function sweepDeferred(e: DeferredSweepRequested): Promise<void> {
 	await withTxn(async (c) => {
 		const { rows: done } = await c.query(
@@ -261,6 +376,9 @@ export async function run() {
 		mode: "message",
 		onMessage: async (value) => {
 			const e = JSON.parse(value) as AvgEvent;
+			if (e.event_type === "PairBonusAccrued") await accruePairBonus(e);
+			if (e.event_type === "PendingBonusReleaseRequested")
+				await releasePendingBonuses(e);
 			if (e.event_type === "DeferredSweepRequested") await sweepDeferred(e);
 		},
 	});
