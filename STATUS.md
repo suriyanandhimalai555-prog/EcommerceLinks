@@ -135,6 +135,25 @@
 
 **Migration to apply:** `npm run migrate` (applies `016_email_required.sql`)
 
+### Phase 9 — Income rework: 2-Direct Pair Matching (2026-07-14)
+
+The L/R counter-matched income model (`newPairs = min(L,R) − pairs_matched`, qualification-gated minting, `PairMatched` → `creditPairBonus`) was **replaced** per the confirmed business plan:
+
+| Area | Change | Files |
+|---|---|---|
+| Pair definition | A pair completes at member P when **both of P's direct referrals are active** (≤1 own pair per member — `uq_pairs_one_per_member`); leg balance is irrelevant to income | `workers/pairComplete.ts` (new, group `avg-pair-complete` on lifecycle), `db/migrations/020_pair_accruals.sql` |
+| Beneficiaries | ₹1000 per completed pair to P **and every placement ancestor** — one `pair_accruals` row each, fanned out as `PairBonusAccrued` (deterministic uuidv5, direct-published to the ledger stream) | `workers/fanout.ts` (`fanOutPairBonus`) |
+| Qualification gate | ALL accruals stay `pending` until the earner qualifies (unchanged 3-gen gate); `evaluateQualification` also emits `PendingBonusReleaseRequested` → retroactive release; already-qualified earners are paid immediately on accrual | `services/qualification.ts`, `workers/ledger.ts` (`accruePairBonus`, `releasePendingBonuses`) |
+| Ledger | `creditBonusWithCap` extracted from `creditPairBonus` (deleted); release key `pairbonus:{pair_id}:{beneficiary_id}` shared by both paths; cap/deferred/sweep unchanged | `workers/ledger.ts` |
+| Removed | `PairMatched`, `mint_check` (D-3 flush), counterPair minting; `member_counters.pairs_matched` frozen at 0 (drop in a later release); `avg.pair.matched` stream unused | `workers/counterPair.ts`, `workers/fanout.ts`, `events/types.ts` |
+| Reconciler | pairs_matched drift check → released-accrual-has-ledger-txn + pending-implies-unqualified (1h grace) | `workers/reconciler.ts` |
+| API/frontend | `/dashboard` income from released accruals + `pendingBonusPaise`; `/pairs` = accrual history (`pairMemberCode`, `status`); PairMatch/Dashboard UI + en/ta strings | `api/frontend.ts`, `frontend/src/types/api.ts`, `pages/PairMatch.tsx`, `pages/Dashboard.tsx` |
+| Tests | Worked-example E2E (02=₹2000, 03 pending→released), sibling-activation concurrency, accrue/release idempotency, retroactive-release cap split, reconciler invariants | `test/integration/pairAccrual.test.ts` (new), `pipeline.test.ts`, `test/unit/*` |
+
+**Worked example (ground truth):** 02 → 03(L), 04(R) active; 03 → 05(L), 06(R). 05 activates → 02 qualifies → 02's own-pair ₹1000 releases. 06 activates → pair at 03 → 03 accrues ₹1000 pending; 02 paid ₹1000 → **02 = ₹2000, 03 = ₹0**. A buyer under 05/06 → 03 qualifies → 03 = ₹1000.
+
+**Migration to apply:** `npm run migrate` (applies `020_pair_accruals.sql`; requires a dev DB reset first if legacy multi-pair rows exist — `npm run reset -- --yes && npm run migrate && npm run seed`).
+
 ### Open gaps (see GAPS.md)
 
 - **G-11** — Cosmetic hardcodes (Topbar unreadCount, Profile "mobile verified", no-op save buttons) — not real-money bugs; cleanup deferred

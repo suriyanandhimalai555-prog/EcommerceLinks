@@ -26,7 +26,8 @@
 |---|---|---|
 | outboxRelay | producer | `FOR UPDATE SKIP LOCKED` poll → `XADD` → stamp `published_at` |
 | fanout | consumer (per-event) | lifecycle → per-ancestor CounterIncrements; **also direct-publishes** (sanctioned exception) |
-| counterPair | consumer (batch) | per-ancestor grouping, one txn per ancestor, `FOR UPDATE` on counters — the hot path |
+| counterPair | consumer (batch) | per-ancestor grouping, one txn per ancestor, `FOR UPDATE` on counters — the hot path (counters/ranks only; income minting removed in migration 020) |
+| pairComplete | consumer (per-event) | 3rd group on lifecycle stream: on MemberActivated, parent-row `FOR UPDATE`, both-directs-active check, emits PairCompleted (the income trigger since 020) |
 | qualification | consumer (per-event) | 2nd group on lifecycle stream |
 | ledger | consumer (per-event) | money writes; per-event txn atomicity is the contract |
 | rank | consumer (per-event) | rank ladder |
@@ -81,17 +82,17 @@ This section is the implementation spec for the transport. It is what `avg-worke
 
 | Stream key | Producer | Consumer groups |
 |---|---|---|
-| `avg.member.lifecycle` | outboxRelay | `avg-fanout`, `avg-qualification` |
-| `avg.counter.increments` | fanout (direct `XADD` — the one sanctioned non-relay producer) | `avg-counter-pair` |
-| `avg.pair.matched` | outboxRelay | `avg-ledger` |
-| `avg.ledger.commands` | outboxRelay | `avg-ledger` |
+| `avg.member.lifecycle` | outboxRelay | `avg-fanout`, `avg-qualification`, `avg-pair-complete` |
+| `avg.counter.increments` | fanout (direct `XADD` — sanctioned non-relay producer) | `avg-counter-pair` |
+| `avg.pair.matched` | *(unused since migration 020 — PairMatched removed; constant kept in topics.ts, delete with dead code in Phase 3)* | — |
+| `avg.ledger.commands` | outboxRelay + fanout (direct `XADD` of PairBonusAccrued — sanctioned) | `avg-ledger` |
 | `avg.rank.events` | outboxRelay | `avg-rank` |
 | `avg.payout.events` | outboxRelay | (audit/consumed by payout tooling) |
 
 **Invariants that carry over unchanged (do not renegotiate):**
-- `writeOutbox(c, event)` inside the caller's transaction; only `outboxRelay` publishes (fanout's increment publishing is the single exception).
+- `writeOutbox(c, event)` inside the caller's transaction; only `outboxRelay` publishes (fanout's publishing of increments and pair-bonus accruals is the exception).
 - Every consumer checks/records `processed_events (consumer_group, event_id)` — keep the exact group names above; they are the dedup keyspace.
-- Fan-out increment ids stay deterministic uuidv5 of `sourceEventId:ancestorId` — this is what makes at-least-once delivery and `XAUTOCLAIM` re-delivery safe.
+- Fan-out ids (increments and pair-bonus accruals) stay deterministic uuidv5 of `sourceEventId:ancestorId`/`sourceEventId:beneficiaryId` — this is what makes at-least-once delivery and `XAUTOCLAIM` re-delivery safe.
 - `counterPair` keeps batch semantics: read COUNT ≈ 500, group by ancestor, one txn per ancestor, `XACK` per entry after its txn commits. Ordering guarantees needed are per-stream FIFO only; final serialization happens at the DB via `FOR UPDATE`.
 
 **`workers/all.ts`** (new): starts all nine loops in one process; on SIGTERM stops reading, drains in-flight handlers, closes pg pool and redis, exits 0. `package.json` gains `start:api` (node `out/api/server.js`) and `start:workers` (node `out/workers/all.js`); the per-worker `worker:*` scripts remain for debugging a single loop locally.
