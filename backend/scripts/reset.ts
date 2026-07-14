@@ -2,7 +2,7 @@ import "dotenv/config";
 import { CFG } from "../src/config.js";
 import { pool, withTxn } from "../src/lib/db.js";
 import { redis } from "../src/lib/redis.js";
-import { seedManagement } from "./seedManagement.js";
+import { MGMT_RESERVED_ID, seedManagement } from "./seedManagement.js";
 import { ROOT_SEED_EMAIL, seedRoot } from "./seedRoot.js";
 
 async function reset() {
@@ -80,7 +80,8 @@ async function reset() {
 	await withTxn(async (c) => {
 		await c.query(`
       TRUNCATE
-        members, member_counters, leg_activations, leg_rank_counters,
+        members, member_counters, member_code_counter,
+        leg_activations, leg_rank_counters,
         accounts, wallet_balances, ledger_txns, ledger_entries,
         cutoffs, cutoff_earnings,
         pairs, rank_achievements,
@@ -93,12 +94,11 @@ async function reset() {
 	console.log("  ✓ database truncated");
 
 	// ── 4. Restore reference data seeded by migrations ───────────────────────
-	// Two migrations INSERT static reference data that must survive every reset:
-	//   003_commerce.sql  → products (preserved via TRUNCATE exclusion above)
-	//   004_ledger.sql    → 4 system accounts (bonus_expense, payout_clearing,
-	//                        tds_payable, bank) — must be re-inserted after truncate
-	//                        because the TRUNCATE above wipes accounts CASCADE.
-	//   Without these, creditPairBonus throws on SELECT bonus_expense → wallet never credits.
+	// Re-initialize the gapless member code counter (starts at 1 for root).
+	await pool().query(
+		"INSERT INTO member_code_counter (id, next_val) VALUES (1, 1)",
+	);
+	// System accounts from 004_ledger.sql — wiped by CASCADE above.
 	await pool().query(`
     INSERT INTO accounts (owner_type, owner_id, kind) VALUES
       ('system', NULL, 'bonus_expense'),
@@ -107,38 +107,51 @@ async function reset() {
       ('system', NULL, 'bank'),
       ('system', NULL, 'adjustment')
   `);
-	console.log("  ✓ system accounts restored");
+	console.log("  ✓ system accounts + member code counter restored");
 
-	// ── 5. Restore the management master account ──────────────────────────────
+	// ── 5. Flush Redis transport ───────────────────────────────────────────────
+	// Redis is transport-only (losing it loses no data per CLAUDE.md).
+	// Must flush: stale stream entries would replay into a fresh DB and
+	// resurrect deleted counters/pairs.
+	await redis().flushdb();
+	console.log("  ✓ Redis flushed");
+
+	// ── 6. Seed the fresh tree root FIRST ────────────────────────────────────
+	// Root is seeded before the management account so it gets id=1 from the
+	// freshly-reset IDENTITY sequence → AVG100001. Management uses a reserved
+	// high ID (OVERRIDING SYSTEM VALUE) so it never consumes a regular slot.
+	await seedRoot();
+	console.log("  ✓ tree root seeded (id=1 → AVG100001)");
+
+	// ── 7. Restore the management master account (reserved high ID) ──────────
 	if (mgmt) {
 		await withTxn(async (c) => {
-			const { rows } = await c.query<{ id: string }>(
+			await c.query(
 				`INSERT INTO members
-           (member_code, name, phone, email, password_hash,
+           (id, member_code, name, phone, email, password_hash,
             sponsor_id, parent_id, position,
             placement_path, placement_sides,
             is_active, activated_at, role, kyc_status)
-         VALUES ($1,$2,$3,$4,$5,
-                 NULL,NULL,NULL,'{}','{}',TRUE,now(),'management',$6)
-         RETURNING id`,
-				[mgmt.member_code, mgmt.name, mgmt.phone, mgmt.email, mgmt.password_hash, mgmt.kyc_status],
+         OVERRIDING SYSTEM VALUE
+         VALUES ($1,$2,$3,$4,$5,$6,
+                 NULL,NULL,NULL,'{}','{}',TRUE,now(),'management',$7)`,
+				[MGMT_RESERVED_ID, mgmt.member_code, mgmt.name, mgmt.phone, mgmt.email, mgmt.password_hash, mgmt.kyc_status],
 			);
-			const mgmtId = BigInt(rows[0].id);
-			await c.query("INSERT INTO member_counters (member_id) VALUES ($1)", [mgmtId]);
+			await c.query("INSERT INTO member_counters (member_id) VALUES ($1)", [MGMT_RESERVED_ID]);
 			const { rows: wRows } = await c.query<{ id: string }>(
 				`INSERT INTO accounts (owner_type, owner_id, kind) VALUES ('member',$1,'wallet') RETURNING id`,
-				[mgmtId],
+				[MGMT_RESERVED_ID],
 			);
 			const { rows: dRows } = await c.query<{ id: string }>(
 				`INSERT INTO accounts (owner_type, owner_id, kind) VALUES ('member',$1,'deferred_bonus') RETURNING id`,
-				[mgmtId],
+				[MGMT_RESERVED_ID],
 			);
 			await c.query(
 				"INSERT INTO wallet_balances (account_id, balance) VALUES ($1,0),($2,0)",
 				[wRows[0].id, dRows[0].id],
 			);
 		});
-		console.log(`  ✓ management account restored (${mgmt.email}, password unchanged)`);
+		console.log(`  ✓ management account restored (${mgmt.email}, reserved id=${MGMT_RESERVED_ID})`);
 	} else if (process.env.MGMT_SEED_PASSWORD) {
 		await seedManagement();
 		console.log("  ✓ management account seeded (none existed before the wipe)");
@@ -149,26 +162,15 @@ async function reset() {
 		);
 	}
 
-	// ── 6. Flush Redis transport ───────────────────────────────────────────────
-	// Redis is transport-only (losing it loses no data per CLAUDE.md).
-	// Must flush: stale stream entries would replay into a fresh DB and
-	// resurrect deleted counters/pairs.
-	await redis().flushdb();
-	console.log("  ✓ Redis flushed");
-
-	// ── 7. Seed the fresh tree root + open cutoff window ──────────────────────
-	await seedRoot();
-	// Three-tier roles: the tree root is a business account, not an admin —
-	// demote it whenever a management account holds admin control (same guard
-	// as seedManagement: never demote if it would leave zero admin logins).
+	// Demote root to member if a management account exists (separation of duties)
 	const { rowCount: demoted } = await pool().query(
 		`UPDATE members SET role = 'member'
      WHERE parent_id IS NULL AND role = 'admin'
        AND EXISTS (SELECT 1 FROM members WHERE role = 'management')`,
 	);
-	console.log(
-		`  ✓ tree root seeded${demoted ? " (role=member — admin control stays on the management account)" : ""}`,
-	);
+	if (demoted) {
+		console.log("  ✓ tree root demoted to role=member (admin control on management account)");
+	}
 
 	// ── 8. Cleanup ────────────────────────────────────────────────────────────
 	await pool().end();
@@ -176,8 +178,8 @@ async function reset() {
 
 	console.log(`
 Done. DB is clean.
-  Tree root:  ${ROOT_SEED_EMAIL} / $ROOT_SEED_PASSWORD  (role: ${demoted ? "member" : "admin"})
-  Management: ${mgmt ? `${mgmt.email} (password unchanged)` : "see seed:management"}
+  Tree root:  ${ROOT_SEED_EMAIL} / $ROOT_SEED_PASSWORD  (AVG100001)
+  Management: ${mgmt ? `${mgmt.email} (password unchanged, reserved id=${MGMT_RESERVED_ID})` : "see seed:management"}
 `);
 }
 

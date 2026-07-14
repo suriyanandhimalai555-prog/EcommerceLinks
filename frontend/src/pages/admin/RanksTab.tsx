@@ -17,7 +17,7 @@ export function RanksTab() {
 
   const { data: pending, isPending } = useQuery<PendingRank[]>({
     queryKey: ['admin-ranks', 'pending'],
-    queryFn: () => api.get('/admin/ranks?status=pending').then((r) => r.data),
+    queryFn: () => api.get('/admin/ranks?status=pending').then((r) => r.data.ranks),
   })
 
   const decide = useMutation({

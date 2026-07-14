@@ -6,8 +6,19 @@ const MGMT_EMAIL = 'management@avg.com'
 const MGMT_CODE = 'AVGMGMT1'
 
 /**
+ * Reserved ID for the management account. Uses a high value so it never
+ * collides with the auto-incrementing IDENTITY sequence used by regular
+ * members. This keeps the management account "out of" the normal numbering
+ * (root admin = id 1 → AVG100001, next member = id 2 → AVG100002, etc.).
+ */
+export const MGMT_RESERVED_ID = 99999999n;
+
+/**
  * Seeds the default management account — the off-tree master account that
  * holds admin control (role='management'), separate from the tree root.
+ *
+ * Uses OVERRIDING SYSTEM VALUE to assign a reserved high ID so it does not
+ * consume a slot from the regular member IDENTITY sequence.
  *
  * Order matters and is idempotent:
  *   1. create the management account if missing
@@ -29,34 +40,33 @@ export async function seedManagement(): Promise<void> {
     )
     if (existing.length === 0) {
       const passwordHash = await argon2.hash(password)
-      const { rows } = await c.query<{ id: string }>(
+      await c.query(
         `INSERT INTO members
-           (member_code, name, phone, email, password_hash,
+           (id, member_code, name, phone, email, password_hash,
             sponsor_id, parent_id, position,
             placement_path, placement_sides,
             is_active, activated_at, role)
-         VALUES ($1,'AVG Management','9999999998',$2,$3,
-                 NULL,NULL,NULL,'{}','{}',TRUE,now(),'management')
-         RETURNING id`,
-        [MGMT_CODE, MGMT_EMAIL, passwordHash]
+         OVERRIDING SYSTEM VALUE
+         VALUES ($1,$2,'AVG Management','9999999998',$3,$4,
+                 NULL,NULL,NULL,'{}','{}',TRUE,now(),'management')`,
+        [MGMT_RESERVED_ID, MGMT_CODE, MGMT_EMAIL, passwordHash]
       )
-      const mgmtId = BigInt(rows[0].id)
       // Counters + wallet rows keep every member-shaped query well-defined for
       // this account, even though it never participates in the tree.
-      await c.query('INSERT INTO member_counters (member_id) VALUES ($1)', [mgmtId])
+      await c.query('INSERT INTO member_counters (member_id) VALUES ($1)', [MGMT_RESERVED_ID])
       const { rows: wRows } = await c.query<{ id: string }>(
         `INSERT INTO accounts (owner_type, owner_id, kind) VALUES ('member',$1,'wallet') RETURNING id`,
-        [mgmtId]
+        [MGMT_RESERVED_ID]
       )
       const { rows: dRows } = await c.query<{ id: string }>(
         `INSERT INTO accounts (owner_type, owner_id, kind) VALUES ('member',$1,'deferred_bonus') RETURNING id`,
-        [mgmtId]
+        [MGMT_RESERVED_ID]
       )
       await c.query(
         'INSERT INTO wallet_balances (account_id, balance) VALUES ($1,0),($2,0)',
         [wRows[0].id, dRows[0].id]
       )
-      console.log(`Management account created: ${MGMT_CODE} (${MGMT_EMAIL})`)
+      console.log(`Management account created: ${MGMT_CODE} (${MGMT_EMAIL}) [reserved id=${MGMT_RESERVED_ID}]`)
     } else {
       console.log('Management account already exists.')
     }

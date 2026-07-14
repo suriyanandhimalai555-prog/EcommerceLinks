@@ -3,7 +3,7 @@ import { randomUUID } from "crypto";
 import type pg from "pg";
 import { writeOutbox } from "../events/outbox.js";
 import { pool, withTxn } from "../lib/db.js";
-import { nextMemberCode } from "../lib/ids.js";
+import { claimNextMemberCode } from "../lib/ids.js";
 
 // Each member may refer at most 2 people; a new registrant is always placed
 // directly under their sponsor — first referral fills L, second fills R.
@@ -93,8 +93,10 @@ export async function registerMember(
 				];
 				const newSides = [...(sponsor.placement_sides ?? []), position];
 
-				// Insert with a temp unique member_code; update after getting id
-				const tmpCode = "TMP-" + randomUUID();
+				// Claim a gapless member code inside this txn — if the txn
+				// rolls back, the counter increment also rolls back (no gaps).
+				const { code: memberCode } = await claimNextMemberCode(c);
+
 				const { rows: ins } = await c.query<{ id: string }>(
 					`INSERT INTO members
              (member_code, name, phone, email, password_hash,
@@ -102,7 +104,7 @@ export async function registerMember(
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
            RETURNING id`,
 					[
-						tmpCode,
+						memberCode,
 						input.name,
 						input.phone,
 						email,
@@ -115,11 +117,6 @@ export async function registerMember(
 					],
 				);
 				const memberId = BigInt(ins[0].id);
-				const memberCode = nextMemberCode(memberId);
-				await c.query("UPDATE members SET member_code = $1 WHERE id = $2", [
-					memberCode,
-					memberId,
-				]);
 
 				// Counters row + accounts + wallet_balances
 				await c.query("INSERT INTO member_counters (member_id) VALUES ($1)", [

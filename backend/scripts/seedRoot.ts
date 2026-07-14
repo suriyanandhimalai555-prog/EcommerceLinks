@@ -1,6 +1,6 @@
 import argon2 from 'argon2'
 import { pool, withTxn } from '../src/lib/db.js'
-import { nextMemberCode } from '../src/lib/ids.js'
+import { claimNextMemberCode } from '../src/lib/ids.js'
 import { ensureCutoffExists } from '../src/workers/cutoff.js'
 import 'dotenv/config'
 
@@ -21,15 +21,18 @@ export async function seedRoot(): Promise<void> {
     // Check if root already exists
     // Management accounts also sit at parent_id NULL — only a non-management
     // row counts as the tree root here.
-    const { rows: existing } = await c.query(
-      `SELECT id FROM members WHERE parent_id IS NULL AND role <> 'management' LIMIT 1`
+    const { rows: existing } = await c.query<{ member_code: string }>(
+      `SELECT member_code FROM members WHERE parent_id IS NULL AND role <> 'management' LIMIT 1`
     )
     if (existing.length > 0) {
-      console.log('Root member already exists:', nextMemberCode(BigInt(existing[0].id)))
+      console.log('Root member already exists:', existing[0].member_code)
       return
     }
 
     const passwordHash = await argon2.hash(rootPassword)
+
+    // Claim a gapless code from the counter (rolls back if txn fails)
+    const { code: rootCode } = await claimNextMemberCode(c)
 
     // Insert root — no parent_id, no position, empty path arrays; role='admin'
     const { rows } = await c.query<{ id: string }>(
@@ -37,21 +40,13 @@ export async function seedRoot(): Promise<void> {
          (member_code, name, phone, email, password_hash,
           sponsor_id, parent_id, position,
           placement_path, placement_sides,
-          is_active, activated_at, role)
-       VALUES ('TMP-ROOT','Root Admin','9999999999',$2,$1,
-               NULL,NULL,NULL,'{}','{}',TRUE,now(),'admin')
+          is_active, activated_at, role, kyc_status)
+       VALUES ($3,'Root Admin','9999999999',$2,$1,
+               NULL,NULL,NULL,'{}','{}',TRUE,now(),'admin','verified')
        RETURNING id`,
-      [passwordHash, ROOT_SEED_EMAIL]
+      [passwordHash, ROOT_SEED_EMAIL, rootCode]
     )
-    const rootId   = BigInt(rows[0].id)
-    const rootCode = nextMemberCode(rootId)
-
-    // Verified KYC so the dev root can exercise the purchase flow without a
-    // manual review pass (the /orders route gates on kyc_status).
-    await c.query(
-      `UPDATE members SET member_code=$1, kyc_status='verified' WHERE id=$2`,
-      [rootCode, rootId]
-    )
+    const rootId = BigInt(rows[0].id)
     await c.query('INSERT INTO member_counters (member_id) VALUES ($1)', [rootId])
 
     const { rows: wRows } = await c.query<{ id: string }>(

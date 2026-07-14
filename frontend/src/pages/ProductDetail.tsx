@@ -33,6 +33,8 @@ export default function ProductDetail() {
   const { data: me } = useQuery<Me>({
     queryKey: ['me'],
     queryFn: () => api.get('/me').then((r) => r.data),
+    refetchInterval: (query) =>
+      query.state.data?.kycStatus === 'pending' ? 30_000 : false,
   })
 
   const { data: product, isPending, isError } = useQuery<Product>({
