@@ -26,6 +26,9 @@ await app.register(cors, {
 // G-9: global rate limit (generous baseline); login route tightened below
 await app.register(rateLimit, {
 	global: false, // opt-in per-route; avoids breaking unit tests that inject many requests
+	// Integration tests inject dozens of logins per minute from 127.0.0.1; the
+	// 10/min login cap would 429 the later ones. Never true outside NODE_ENV=test.
+	allowList: () => CFG.NODE_ENV === "test",
 });
 
 await app.register(fjwt, { secret: CFG.JWT_SECRET });

@@ -69,7 +69,7 @@ export default function BuyProduct() {
                 </div>
               )}
               <div className="mb-4 mt-2">
-                <div className="mb-3 h-28 rounded-lg overflow-hidden border border-surface-line bg-[#10141F]">
+                <div className="mb-3 aspect-[4/3] rounded-lg overflow-hidden border border-surface-line bg-[#10141F]">
                   {p.images[0] ? (
                     <img src={p.images[0].url} alt={p.name} className="w-full h-full object-cover" />
                   ) : (

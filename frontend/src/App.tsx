@@ -49,7 +49,7 @@ export default function App() {
             <Route path="/register" element={<Register />} />
             <Route element={<RequireAuth><AppShell /></RequireAuth>}>
               <Route path="/" element={<MemberHome><Dashboard /></MemberHome>} />
-              <Route path="/profile" element={<Profile />} />
+              <Route path="/profile/*" element={<Profile />} />
               <Route path="/network" element={<Network />} />
               <Route path="/genealogy" element={<Network />} />
               <Route path="/buy" element={<BuyProduct />} />

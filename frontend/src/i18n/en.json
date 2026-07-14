@@ -111,7 +111,8 @@
     "kycUploadHint": "Upload a clear photo of your PAN or Aadhaar. Required before buying — reviewed by AVG management.",
     "kycDocType": "Document type",
     "kycDocOther": "Other",
-    "kycDocuments": "Uploaded documents"
+    "kycDocuments": "Uploaded documents",
+    "kycDocDelete": "Remove document"
   },
   "uploader": {
     "add": "Add image",

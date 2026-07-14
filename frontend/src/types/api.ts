@@ -13,6 +13,12 @@ export interface Me {
   currentRankName: string
   role: 'member' | 'admin' | 'management'
   blocked?: boolean
+  // KYC & bank detail fields (persisted and returned for pre-fill)
+  pan?: string
+  aadhaarLast4?: string
+  bankAccountName?: string
+  bankAccountNumber?: string
+  bankIfsc?: string
 }
 
 export interface RegisterReq {

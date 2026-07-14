@@ -6,6 +6,7 @@ import {
 	objectExists,
 	presignGet,
 	PRODUCT_KEY_RE,
+	s3Configured,
 } from "../lib/s3.js";
 
 export interface ProductImage {
@@ -33,7 +34,7 @@ export async function imagesByProduct(
 	productIds: number[],
 ): Promise<Map<number, ProductImage[]>> {
 	const map = new Map<number, ProductImage[]>();
-	if (productIds.length === 0) return map;
+	if (productIds.length === 0 || !s3Configured()) return map;
 	const { rows } = await pool().query<{
 		id: string;
 		product_id: number;

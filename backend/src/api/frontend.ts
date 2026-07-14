@@ -64,9 +64,15 @@ export async function buildMe(memberId: string) {
 		role: string;
 		blocked: boolean;
 		sponsor_code: string | null;
+		pan: string | null;
+		aadhaar_last4: string | null;
+		bank_account_name: string | null;
+		bank_account_number: string | null;
+		bank_ifsc: string | null;
 	}>(
 		`SELECT m.member_code, m.name, m.phone, m.email, m.kyc_status, m.bank_status,
-            m.is_active, m.created_at, m.role, m.blocked, s.member_code AS sponsor_code
+            m.is_active, m.created_at, m.role, m.blocked, s.member_code AS sponsor_code,
+            m.pan, m.aadhaar_last4, m.bank_account_name, m.bank_account_number, m.bank_ifsc
      FROM members m LEFT JOIN members s ON s.id = m.sponsor_id
      WHERE m.id = $1`,
 		[memberId],
@@ -92,6 +98,11 @@ export async function buildMe(memberId: string) {
 		currentRankName: level > 0 ? RANK_NAMES[level] : "Member",
 		role: m.role as "member" | "admin" | "management",
 		blocked: m.blocked,
+		pan: m.pan ?? undefined,
+		aadhaarLast4: m.aadhaar_last4 ?? undefined,
+		bankAccountName: m.bank_account_name ?? undefined,
+		bankAccountNumber: m.bank_account_number ?? undefined,
+		bankIfsc: m.bank_ifsc ?? undefined,
 	};
 }
 
@@ -206,11 +217,41 @@ export async function frontendRoutes(app: FastifyInstance) {
 		return me;
 	});
 
+	const ProfileBody = z.object({
+		name: z.string().trim().min(2, "Name required").max(120),
+	});
+
+	app.put("/me/profile", auth, async (req, reply) => {
+		const body = ProfileBody.safeParse(req.body);
+		if (!body.success)
+			return reply.status(400).send({ error: body.error.flatten() });
+		const memberId = (req.user as Auth).sub;
+		await pool().query(`UPDATE members SET name = $2 WHERE id = $1`, [
+			memberId,
+			body.data.name,
+		]);
+		return reply.send(await buildMe(memberId));
+	});
+
+	const KycBody = z.object({
+		pan: z.string().regex(/^[A-Z]{5}[0-9]{4}[A-Z]$/, "Invalid PAN format"),
+		aadhaarLast4: z
+			.string()
+			.length(4)
+			.regex(/^\d{4}$/, "Must be 4 digits"),
+	});
+
 	app.put("/me/kyc", auth, async (req, reply) => {
+		const body = KycBody.safeParse(req.body);
+		if (!body.success)
+			return reply.status(400).send({ error: body.error.flatten() });
 		const memberId = (req.user as Auth).sub;
 		await pool().query(
-			`UPDATE members SET kyc_status = 'pending' WHERE id = $1 AND kyc_status <> 'verified'`,
-			[memberId],
+			`UPDATE members
+			    SET pan = $2, aadhaar_last4 = $3,
+			        kyc_status = CASE WHEN kyc_status = 'verified' THEN kyc_status ELSE 'pending' END
+			  WHERE id = $1`,
+			[memberId, body.data.pan, body.data.aadhaarLast4],
 		);
 		const me = await buildMe(memberId);
 		return reply.send(me);
@@ -298,11 +339,44 @@ export async function frontendRoutes(app: FastifyInstance) {
 		return listKycDocuments((req.user as Auth).sub);
 	});
 
+	// Delete a KYC document reference from the DB only (no S3 delete).
+	// Scoped to the JWT owner — a member cannot delete another member's document.
+	app.delete("/me/kyc/documents/:id", auth, async (req, reply) => {
+		const memberId = (req.user as Auth).sub;
+		const docId = (req.params as { id: string }).id;
+		const { rowCount } = await pool().query(
+			`DELETE FROM kyc_documents WHERE id = $1 AND member_id = $2`,
+			[docId, memberId],
+		);
+		if (!rowCount)
+			return reply
+				.status(404)
+				.send({ error: { code: "NOT_FOUND", message: "Document not found" } });
+		return reply.send(await listKycDocuments(memberId));
+	});
+
+	const BankBody = z.object({
+		accountName: z.string().min(2, "Name required"),
+		accountNumber: z.string().min(9, "Valid account number required"),
+		ifsc: z.string().regex(/^[A-Z]{4}0[A-Z0-9]{6}$/, "Invalid IFSC format"),
+	});
+
 	app.put("/me/bank", auth, async (req, reply) => {
+		const body = BankBody.safeParse(req.body);
+		if (!body.success)
+			return reply.status(400).send({ error: body.error.flatten() });
 		const memberId = (req.user as Auth).sub;
 		await pool().query(
-			`UPDATE members SET bank_status = 'pending' WHERE id = $1 AND bank_status <> 'verified'`,
-			[memberId],
+			`UPDATE members
+			    SET bank_account_name = $2, bank_account_number = $3, bank_ifsc = $4,
+			        bank_status = CASE WHEN bank_status = 'verified' THEN bank_status ELSE 'pending' END
+			  WHERE id = $1`,
+			[
+				memberId,
+				body.data.accountName,
+				body.data.accountNumber,
+				body.data.ifsc,
+			],
 		);
 		const me = await buildMe(memberId);
 		return reply.send(me);
@@ -346,7 +420,9 @@ export async function frontendRoutes(app: FastifyInstance) {
 			description: string;
 			base_price: string;
 		}>(
-			"SELECT id, name, description, base_price FROM products WHERE id=$1 AND active=TRUE",
+			// products.id is SMALLINT; without the cast the bind parameter is inferred
+			// as smallint and ids > 32767 raise 22003 instead of matching nothing.
+			"SELECT id, name, description, base_price FROM products WHERE id=$1::int AND active=TRUE",
 			[idNum],
 		);
 		if (!rows[0]) return reply.status(404).send({ error: "Not found" });

@@ -121,19 +121,175 @@ export async function adminRoutes(app: FastifyInstance) {
 	});
 
 	// ===== ranks =====
-	app.get("/ranks", auth, async (req) => {
-		const query = req.query as { status?: string };
+	// "approved" = verified but reward not yet handed over; "received" = fulfilled_at set.
+	const RANK_LIST_STATUSES = [
+		"pending",
+		"approved",
+		"received",
+		"rejected",
+	] as const;
+
+	app.get("/ranks", auth, async (req, reply) => {
+		const query = req.query as {
+			status?: string;
+			rankLevel?: string;
+			q?: string;
+			limit?: string;
+			page?: string;
+		};
 		const status = query.status ?? "pending";
+		if (
+			!RANK_LIST_STATUSES.includes(
+				status as (typeof RANK_LIST_STATUSES)[number],
+			)
+		) {
+			return reply.status(400).send({
+				error: "status must be one of: pending, approved, received, rejected",
+			});
+		}
+		const rankLevel =
+			query.rankLevel !== undefined ? Number(query.rankLevel) : undefined;
+		if (
+			rankLevel !== undefined &&
+			(!Number.isInteger(rankLevel) || rankLevel < 1 || rankLevel > 12)
+		) {
+			return reply
+				.status(400)
+				.send({ error: "rankLevel must be an integer between 1 and 12" });
+		}
+		const q = query.q ?? "";
+		const limit = Math.min(Math.max(1, Number(query.limit ?? "50")), 100);
+		const page = Math.max(1, Number(query.page ?? "1"));
+		const offset = (page - 1) * limit;
+
+		const params: unknown[] = [];
+		const conds: string[] = [];
+		if (status === "approved") {
+			conds.push(
+				"ra.verification_status = 'approved' AND ra.fulfilled_at IS NULL",
+			);
+		} else if (status === "received") {
+			conds.push(
+				"ra.verification_status = 'approved' AND ra.fulfilled_at IS NOT NULL",
+			);
+		} else {
+			params.push(status);
+			conds.push(`ra.verification_status = $${params.length}`);
+		}
+		if (rankLevel !== undefined) {
+			params.push(rankLevel);
+			conds.push(`ra.rank_level = $${params.length}`);
+		}
+		if (q) {
+			params.push(`%${q}%`);
+			conds.push(
+				`(m.member_code ILIKE $${params.length} OR m.name ILIKE $${params.length})`,
+			);
+		}
+		const where = `WHERE ${conds.join(" AND ")}`;
+
+		const { rows: countRows } = await pool().query<{ total: string }>(
+			`SELECT COUNT(*) AS total
+       FROM rank_achievements ra
+       JOIN members m ON m.id = ra.member_id
+       ${where}`,
+			params,
+		);
+		const total = Number(countRows[0].total);
+
+		const dataParams = [...params, limit, offset];
 		const { rows } = await pool().query(
 			`SELECT ra.id, ra.member_id, m.member_code, m.name, ra.rank_level,
               ra.achieved_at, ra.verification_status, ra.fulfilled_at, ra.fulfillment_notes
        FROM rank_achievements ra
        JOIN members m ON m.id = ra.member_id
-       WHERE ra.verification_status = $1
-       ORDER BY ra.achieved_at ASC`,
-			[status],
+       ${where}
+       ORDER BY ra.achieved_at ASC
+       LIMIT $${dataParams.length - 1} OFFSET $${dataParams.length}`,
+			dataParams,
 		);
-		return rows;
+		return { ranks: rows, total, page, limit };
+	});
+
+	app.get("/ranks/summary", auth, async () => {
+		const { rows } = await pool().query<{
+			rank_level: string;
+			pending: string;
+			approved: string;
+			received: string;
+			rejected: string;
+		}>(
+			`SELECT rank_level,
+              COUNT(*) FILTER (WHERE verification_status='pending')  AS pending,
+              COUNT(*) FILTER (WHERE verification_status='approved' AND fulfilled_at IS NULL)     AS approved,
+              COUNT(*) FILTER (WHERE verification_status='approved' AND fulfilled_at IS NOT NULL) AS received,
+              COUNT(*) FILTER (WHERE verification_status='rejected') AS rejected
+       FROM rank_achievements
+       GROUP BY rank_level
+       ORDER BY rank_level`,
+		);
+		return rows.map((r) => ({
+			rank_level: Number(r.rank_level),
+			pending: Number(r.pending),
+			approved: Number(r.approved),
+			received: Number(r.received),
+			rejected: Number(r.rejected),
+		}));
+	});
+
+	const MarkReceivedBody = z.object({
+		ids: z.array(z.string().regex(/^\d+$/)).min(1).max(100),
+		notes: z.string().max(2000).optional(),
+	});
+
+	// Reward hand-over is a management-only act, distinct from admin verification.
+	app.post("/ranks/mark-received", auth, async (req, reply) => {
+		const body = MarkReceivedBody.safeParse(req.body);
+		if (!body.success)
+			return reply.status(400).send({ error: body.error.flatten() });
+		const actor = req.user as { sub: string };
+		if (!(await isManagement(actor.sub)))
+			return reply.status(403).send({ error: "Management only" });
+
+		let updatedCount = 0;
+		await withTxn(async (c) => {
+			const { rows } = await c.query<{
+				id: string;
+				member_id: string;
+				rank_level: number;
+			}>(
+				`UPDATE rank_achievements
+           SET fulfilled_at = now(),
+               fulfillment_notes = COALESCE($1, fulfillment_notes)
+         WHERE id = ANY($2::bigint[])
+           AND verification_status = 'approved'
+           AND fulfilled_at IS NULL
+         RETURNING id, member_id, rank_level`,
+				[body.data.notes ?? null, body.data.ids],
+			);
+			updatedCount = rows.length;
+			for (const r of rows) {
+				await c.query(
+					`INSERT INTO admin_audit_log
+             (actor_id, action, target_type, target_id, before_state, after_state)
+           VALUES ($1,'rank_reward_received','rank_achievement',$2,NULL,$3)`,
+					[
+						actor.sub,
+						r.id,
+						{
+							member_id: String(r.member_id),
+							rank_level: Number(r.rank_level),
+							notes: body.data.notes ?? null,
+						},
+					],
+				);
+			}
+		});
+		return {
+			ok: true,
+			updated: updatedCount,
+			skipped: body.data.ids.length - updatedCount,
+		};
 	});
 
 	app.post("/ranks/:id/approve", auth, async (req, reply) => {
@@ -142,9 +298,11 @@ export async function adminRoutes(app: FastifyInstance) {
 		const actor = req.user as { sub: string };
 		let updated = false;
 		await withTxn(async (c) => {
+			// fulfilled_at stays NULL here — it is set later by /ranks/mark-received
+			// when management confirms the physical reward was handed over.
 			const { rowCount } = await c.query(
 				`UPDATE rank_achievements
-           SET verification_status = 'approved', fulfilled_at = now(), fulfillment_notes = $1
+           SET verification_status = 'approved', fulfillment_notes = $1
          WHERE id = $2 AND verification_status = 'pending'`,
 				[body?.notes ?? null, id],
 			);

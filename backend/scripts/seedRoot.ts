@@ -4,6 +4,9 @@ import { nextMemberCode } from '../src/lib/ids.js'
 import { ensureCutoffExists } from '../src/workers/cutoff.js'
 import 'dotenv/config'
 
+export const ROOT_SEED_EMAIL =
+  process.env.ROOT_SEED_EMAIL ?? 'agilanvasudevangbk7@gmail.com'
+
 export async function seedRoot(): Promise<void> {
   const rootPassword = process.env.ROOT_SEED_PASSWORD
   if (!rootPassword) {
@@ -35,10 +38,10 @@ export async function seedRoot(): Promise<void> {
           sponsor_id, parent_id, position,
           placement_path, placement_sides,
           is_active, activated_at, role)
-       VALUES ('TMP-ROOT','Root Admin','9999999999','root@avg.com',$1,
+       VALUES ('TMP-ROOT','Root Admin','9999999999',$2,$1,
                NULL,NULL,NULL,'{}','{}',TRUE,now(),'admin')
        RETURNING id`,
-      [passwordHash]
+      [passwordHash, ROOT_SEED_EMAIL]
     )
     const rootId   = BigInt(rows[0].id)
     const rootCode = nextMemberCode(rootId)
@@ -64,7 +67,7 @@ export async function seedRoot(): Promise<void> {
       [wRows[0].id, dRows[0].id]
     )
 
-    console.log(`Root member created: ${rootCode}`)
+    console.log(`Root member created: ${rootCode} (${ROOT_SEED_EMAIL})`)
   })
 
   await ensureCutoffExists()
