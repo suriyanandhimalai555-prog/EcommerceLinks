@@ -24,6 +24,7 @@ import {
 } from "../lib/s3.js";
 import { confirmOrder } from "../services/orderService.js";
 import { imagesByProduct } from "../services/productService.js";
+import { getSetting } from "../services/settings.js";
 
 // Display names the frontend expects (index 1..12)
 const RANK_NAMES: Record<number, string> = {
@@ -84,6 +85,7 @@ export async function buildMe(memberId: string) {
 		[memberId],
 	);
 	const level = rk[0]?.max ? parseInt(rk[0].max) : 0;
+	const kycOptional = await getSetting<boolean>("kyc_optional");
 	return {
 		memberCode: m.member_code,
 		name: m.name,
@@ -103,6 +105,9 @@ export async function buildMe(memberId: string) {
 		bankAccountName: m.bank_account_name ?? undefined,
 		bankAccountNumber: m.bank_account_number ?? undefined,
 		bankIfsc: m.bank_ifsc ?? undefined,
+		// Tells the frontend whether KYC is required before purchasing.
+		// Payout still always requires verified KYC+bank regardless of this flag.
+		kycMandatory: !kycOptional,
 	};
 }
 
@@ -451,18 +456,21 @@ export async function frontendRoutes(app: FastifyInstance) {
 				.send({ error: { code: "BAD_REQUEST", message: "Invalid body" } });
 		const memberId = (req.user as Auth).sub;
 
-		// KYC must be verified before any purchase can even be created.
-		const { rows: kycRows } = await pool().query<{ kyc_status: string }>(
-			"SELECT kyc_status FROM members WHERE id = $1",
-			[memberId],
-		);
-		if (kycRows[0]?.kyc_status !== "verified")
-			return reply.status(409).send({
-				error: {
-					code: "KYC_REQUIRED",
-					message: "KYC verification is required before purchase",
-				},
-			});
+		// KYC gate — skipped when management has enabled the kyc_optional toggle.
+		const kycOptionalFlag = await getSetting<boolean>("kyc_optional");
+		if (!kycOptionalFlag) {
+			const { rows: kycRows } = await pool().query<{ kyc_status: string }>(
+				"SELECT kyc_status FROM members WHERE id = $1",
+				[memberId],
+			);
+			if (kycRows[0]?.kyc_status !== "verified")
+				return reply.status(409).send({
+					error: {
+						code: "KYC_REQUIRED",
+						message: "KYC verification is required before purchase",
+					},
+				});
+		}
 
 		const { rows: pRows } = await pool().query<{ base_price: string }>(
 			"SELECT base_price FROM products WHERE id = $1 AND active = TRUE",

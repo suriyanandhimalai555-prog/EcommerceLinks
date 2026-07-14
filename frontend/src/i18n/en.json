@@ -23,7 +23,19 @@
     "adminPayouts": "Payouts",
     "adminSystem": "System Health",
     "adminAudit": "Audit Log",
+    "adminSettings": "Settings",
     "logout": "Logout"
+  },
+  "adminSettings": {
+    "title": "System Settings",
+    "subtitle": "Runtime controls for the AVG platform. Changes take effect immediately.",
+    "kycSection": "KYC Policy",
+    "kycToggleLabel": "Make KYC optional for purchases",
+    "kycToggleHint": "When ON, members can buy products without a verified KYC. KYC upload is still available.",
+    "currentStatus": "Current status:",
+    "statusOptional": "KYC optional",
+    "statusMandatory": "KYC mandatory",
+    "payoutNote": "Weekly payouts always require verified KYC + bank details, regardless of this toggle. This setting only affects the purchase gate."
   },
   "counters": {
     "active": "Active",

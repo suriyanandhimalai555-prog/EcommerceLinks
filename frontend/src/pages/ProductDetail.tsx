@@ -47,7 +47,8 @@ export default function ProductDetail() {
     retry: false,
   })
 
-  const kycRequired = kycBlocked || (me != null && me.kycStatus !== 'verified')
+  // kycMandatory defaults to true so old API responses still enforce the gate
+  const kycRequired = kycBlocked || (me != null && (me.kycMandatory ?? true) && me.kycStatus !== 'verified')
 
   const createOrder = useMutation({
     mutationFn: () => api.post('/orders', { productId: Number(pid) }),

@@ -19,6 +19,15 @@ export interface Me {
   bankAccountName?: string
   bankAccountNumber?: string
   bankIfsc?: string
+  /** Whether KYC is currently required before a purchase. Driven by the
+   *  management-controlled kyc_optional system setting (false = mandatory). */
+  kycMandatory?: boolean
+}
+
+// ---- system settings (management) ----
+export interface SystemSettings {
+  /** When true, KYC is optional for purchases (payout still requires verified KYC+bank). */
+  kycOptional: boolean
 }
 
 export interface RegisterReq {

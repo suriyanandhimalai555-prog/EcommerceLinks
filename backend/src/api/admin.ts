@@ -5,6 +5,7 @@ import { DateTime } from "luxon";
 import { z } from "zod";
 import { CFG } from "../config.js";
 import { pool, withTxn } from "../lib/db.js";
+import { getAllSettings, setSetting } from "../services/settings.js";
 import { toPaise } from "../lib/money.js";
 // DLQ replay is a sanctioned re-delivery of an already-published event — not a
 // new producer; consumers stay safe via processed_events idempotency.
@@ -1093,5 +1094,54 @@ export async function adminRoutes(app: FastifyInstance) {
 			afterState: r.after_state,
 			createdAt: r.created_at,
 		}));
+	});
+
+	// ===== System settings (feature flags) =====
+	// GET — both admin and management may read.
+	app.get("/settings", auth, async () => {
+		const raw = await getAllSettings();
+		return {
+			kycOptional: Boolean(raw["kyc_optional"]),
+		};
+	});
+
+	// PATCH — management only.
+	const SettingsBody = z.object({
+		kycOptional: z.boolean(),
+	});
+
+	app.patch("/settings", auth, async (req, reply) => {
+		const actor = req.user as { sub: string };
+		if (!(await isManagement(actor.sub)))
+			return reply.status(403).send({ error: "Management only" });
+
+		const body = SettingsBody.safeParse(req.body);
+		if (!body.success)
+			return reply.status(400).send({ error: body.error.flatten() });
+
+		const { before, after } = await withTxn(async (c) => {
+			const result = await setSetting(
+				c,
+				"kyc_optional",
+				body.data.kycOptional,
+				actor.sub,
+			);
+			await c.query(
+				`INSERT INTO admin_audit_log
+           (actor_id, action, target_type, before_state, after_state)
+         VALUES ($1, 'settings_change', 'system', $2, $3)`,
+				[
+					actor.sub,
+					{ kyc_optional: result.before },
+					{ kyc_optional: result.after },
+				],
+			);
+			return result;
+		});
+
+		return {
+			kycOptional: Boolean(after),
+			changed: before !== after,
+		};
 	});
 }

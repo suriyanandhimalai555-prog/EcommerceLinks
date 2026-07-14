@@ -21,7 +21,8 @@ export default function BuyProduct() {
     queryFn: () => api.get('/products').then((r) => r.data),
   })
 
-  const kycRequired = me != null && me.kycStatus !== 'verified'
+  // kycMandatory defaults to true so old API responses still enforce the gate
+  const kycRequired = me != null && (me.kycMandatory ?? true) && me.kycStatus !== 'verified'
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
