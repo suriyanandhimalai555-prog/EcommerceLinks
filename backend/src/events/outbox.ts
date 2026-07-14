@@ -27,7 +27,22 @@ function route(e: AvgEvent): RouteInfo {
 				aggregateType: "member",
 				aggregateId: BigInt(e.ancestor_id),
 			};
+		case "PairCompleted":
+			return {
+				topic: TOPICS.lifecycle.name,
+				partitionKey: String(e.member_id),
+				aggregateType: "member",
+				aggregateId: BigInt(e.member_id),
+			};
+		case "PairBonusAccrued":
+			return {
+				topic: TOPICS.ledger.name,
+				partitionKey: String(e.beneficiary_id),
+				aggregateType: "member",
+				aggregateId: BigInt(e.beneficiary_id),
+			};
 		case "PairMatched":
+		case "PendingBonusReleaseRequested":
 		case "DeferredSweepRequested":
 			return {
 				topic: TOPICS.ledger.name,

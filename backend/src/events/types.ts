@@ -49,6 +49,32 @@ export interface PairMatched extends Envelope {
 	amount_paise: number;
 }
 
+// Both direct referrals of member_id are active — one per member, ever.
+export interface PairCompleted extends Envelope {
+	event_type: "PairCompleted";
+	pair_id: number;
+	member_id: number;
+	left_member_id: number;
+	right_member_id: number;
+	amount_paise: number;
+}
+
+// One per beneficiary of a completed pair (the pair owner + every ancestor).
+export interface PairBonusAccrued extends Envelope {
+	event_type: "PairBonusAccrued";
+	beneficiary_id: number;
+	pair_id: number;
+	pair_member_id: number;
+	amount_paise: number;
+	source_event_id: string;
+}
+
+// Member just qualified — release their pending pair_accruals.
+export interface PendingBonusReleaseRequested extends Envelope {
+	event_type: "PendingBonusReleaseRequested";
+	member_id: number;
+}
+
 export interface DeferredSweepRequested extends Envelope {
 	event_type: "DeferredSweepRequested";
 	member_id: number;
@@ -103,6 +129,9 @@ export type AvgEvent =
 	| MemberQualified
 	| CounterIncrement
 	| PairMatched
+	| PairCompleted
+	| PairBonusAccrued
+	| PendingBonusReleaseRequested
 	| DeferredSweepRequested
 	| RankEvalRequested
 	| RankAchieved
