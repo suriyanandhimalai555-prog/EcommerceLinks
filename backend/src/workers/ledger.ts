@@ -79,6 +79,109 @@ export async function postLedgerTxn(
 	return true;
 }
 
+// Split a bonus into the amount that fits under the per-cutoff cap (wallet)
+// and the overage (deferred_bonus). Pure — unit-tested in test/unit/ledger.test.ts.
+export function splitAgainstCap(
+	bonusPaise: bigint,
+	alreadyEarnedPaise: bigint,
+	capPaise: bigint,
+): { walletAmt: bigint; defAmt: bigint } {
+	const headroom = capPaise - alreadyEarnedPaise;
+	const walletAmt =
+		bonusPaise < headroom ? bonusPaise : headroom > 0n ? headroom : 0n;
+	return { walletAmt, defAmt: bonusPaise - walletAmt };
+}
+
+// Credit a bonus to a member with per-cutoff cap enforcement: wallet up to the
+// cap, overage to deferred_bonus. Runs inside the caller's transaction.
+// Returns postLedgerTxn's result (false = idempotency-key hit, money already moved).
+export async function creditBonusWithCap(
+	c: pg.PoolClient,
+	memberId: bigint,
+	bonusPaise: bigint,
+	idempotencyKey: string,
+	referenceType: string,
+	referenceId: bigint | null,
+): Promise<boolean> {
+	// Get member's wallet + deferred accounts
+	const { rows: accs } = await c.query<{ id: string; kind: string }>(
+		`SELECT id, kind FROM accounts WHERE owner_id=$1 AND kind IN ('wallet','deferred_bonus')`,
+		[memberId],
+	);
+	const walletAccId = BigInt(accs.find((a) => a.kind === "wallet")!.id);
+	const deferredAccId = BigInt(
+		accs.find((a) => a.kind === "deferred_bonus")!.id,
+	);
+
+	// System bonus_expense account
+	const { rows: sysAcc } = await c.query<{ id: string }>(
+		`SELECT id FROM accounts WHERE owner_type='system' AND kind='bonus_expense'`,
+	);
+	const expenseAccId = BigInt(sysAcc[0].id);
+
+	// Get or create cutoff_earnings for open cutoff
+	const { rows: cutoffRows } = await c.query<{ id: string }>(
+		`SELECT id FROM cutoffs WHERE status='open' LIMIT 1`,
+	);
+	if (!cutoffRows[0]) throw new Error("No open cutoff window");
+	const cutoffId = BigInt(cutoffRows[0].id);
+
+	// Lock cutoff_earnings row FOR UPDATE (insert if missing)
+	await c.query(
+		`INSERT INTO cutoff_earnings (member_id, cutoff_id) VALUES ($1,$2)
+       ON CONFLICT DO NOTHING`,
+		[memberId, cutoffId],
+	);
+	const { rows: ceRows } = await c.query<{ earned: string }>(
+		`SELECT earned FROM cutoff_earnings WHERE member_id=$1 AND cutoff_id=$2 FOR UPDATE`,
+		[memberId, cutoffId],
+	);
+	const alreadyEarned = toPaise(ceRows[0].earned);
+	const { walletAmt, defAmt } = splitAgainstCap(
+		bonusPaise,
+		alreadyEarned,
+		BigInt(CFG.CUTOFF_CAP_PAISE),
+	);
+
+	const legs: LedgerLeg[] = [
+		{ accountId: expenseAccId, direction: "D", amountPaise: bonusPaise },
+	];
+	if (walletAmt > 0n)
+		legs.push({
+			accountId: walletAccId,
+			direction: "C",
+			amountPaise: walletAmt,
+		});
+	if (defAmt > 0n)
+		legs.push({
+			accountId: deferredAccId,
+			direction: "C",
+			amountPaise: defAmt,
+		});
+
+	// Phase 0.2: only update cutoff_earnings when the ledger txn is new.
+	// If postLedgerTxn returns false (idempotency hit) the earnings row has already
+	// been incremented by the original execution — updating again would double-count
+	// against the cap on XAUTOCLAIM re-delivery.
+	const posted = await postLedgerTxn(
+		c,
+		idempotencyKey,
+		referenceType,
+		referenceId,
+		legs,
+	);
+	if (posted) {
+		await c.query(
+			`UPDATE cutoff_earnings
+           SET earned   = earned   + $1,
+               deferred = deferred + $2
+         WHERE member_id=$3 AND cutoff_id=$4`,
+			[fromPaise(walletAmt), fromPaise(defAmt), memberId, cutoffId],
+		);
+	}
+	return posted;
+}
+
 export async function creditPairBonus(e: PairMatched): Promise<void> {
 	await withTxn(async (c) => {
 		// Idempotency check
@@ -88,88 +191,14 @@ export async function creditPairBonus(e: PairMatched): Promise<void> {
 		);
 		if (done.length > 0) return;
 
-		const memberId = BigInt(e.member_id);
-		const bonusPaise = BigInt(CFG.PAIR_BONUS_PAISE);
-
-		// Get member's wallet + deferred accounts
-		const { rows: accs } = await c.query<{ id: string; kind: string }>(
-			`SELECT id, kind FROM accounts WHERE owner_id=$1 AND kind IN ('wallet','deferred_bonus')`,
-			[memberId],
-		);
-		const walletAccId = BigInt(accs.find((a) => a.kind === "wallet")!.id);
-		const deferredAccId = BigInt(
-			accs.find((a) => a.kind === "deferred_bonus")!.id,
-		);
-
-		// System bonus_expense account
-		const { rows: sysAcc } = await c.query<{ id: string }>(
-			`SELECT id FROM accounts WHERE owner_type='system' AND kind='bonus_expense'`,
-		);
-		const expenseAccId = BigInt(sysAcc[0].id);
-
-		// Get or create cutoff_earnings for open cutoff
-		const { rows: cutoffRows } = await c.query<{ id: string }>(
-			`SELECT id FROM cutoffs WHERE status='open' LIMIT 1`,
-		);
-		if (!cutoffRows[0]) throw new Error("No open cutoff window");
-		const cutoffId = BigInt(cutoffRows[0].id);
-
-		// Lock cutoff_earnings row FOR UPDATE (insert if missing)
-		await c.query(
-			`INSERT INTO cutoff_earnings (member_id, cutoff_id) VALUES ($1,$2)
-       ON CONFLICT DO NOTHING`,
-			[memberId, cutoffId],
-		);
-		const { rows: ceRows } = await c.query<{ earned: string }>(
-			`SELECT earned FROM cutoff_earnings WHERE member_id=$1 AND cutoff_id=$2 FOR UPDATE`,
-			[memberId, cutoffId],
-		);
-		const alreadyEarned = toPaise(ceRows[0].earned);
-		const cap = BigInt(CFG.CUTOFF_CAP_PAISE);
-		const walletAmt =
-			bonusPaise < cap - alreadyEarned
-				? bonusPaise
-				: cap - alreadyEarned > 0n
-					? cap - alreadyEarned
-					: 0n;
-		const defAmt = bonusPaise - walletAmt;
-
-		const legs: LedgerLeg[] = [
-			{ accountId: expenseAccId, direction: "D", amountPaise: bonusPaise },
-		];
-		if (walletAmt > 0n)
-			legs.push({
-				accountId: walletAccId,
-				direction: "C",
-				amountPaise: walletAmt,
-			});
-		if (defAmt > 0n)
-			legs.push({
-				accountId: deferredAccId,
-				direction: "C",
-				amountPaise: defAmt,
-			});
-
-		// Phase 0.2: only update cutoff_earnings when the ledger txn is new.
-		// If postLedgerTxn returns false (idempotency hit) the earnings row has already
-		// been incremented by the original execution — updating again would double-count
-		// against the cap on XAUTOCLAIM re-delivery.
-		const posted = await postLedgerTxn(
+		await creditBonusWithCap(
 			c,
+			BigInt(e.member_id),
+			BigInt(CFG.PAIR_BONUS_PAISE),
 			`pair:${e.pair_id}`,
 			"pair",
 			BigInt(e.pair_id),
-			legs,
 		);
-		if (posted) {
-			await c.query(
-				`UPDATE cutoff_earnings
-           SET earned   = earned   + $1,
-               deferred = deferred + $2
-         WHERE member_id=$3 AND cutoff_id=$4`,
-				[fromPaise(walletAmt), fromPaise(defAmt), memberId, cutoffId],
-			);
-		}
 
 		await c.query(
 			"INSERT INTO processed_events (consumer_group, event_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
