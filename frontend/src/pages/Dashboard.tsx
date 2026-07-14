@@ -201,13 +201,13 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* Carry forward */}
+            {/* Pending bonus — accrued pairs awaiting qualification */}
             <div className="flex items-center justify-between py-2.5 border-b border-surface-line">
               <span className="text-sm text-ink-muted flex items-center gap-2">
-                <ArrowUpRight size={14} className="text-warning" /> Carry Forward
+                <ArrowUpRight size={14} className="text-warning" /> {t('dashboard.pendingBonus')}
               </span>
               <span className="text-sm font-semibold text-warning">
-                {d.carryForward.side}: {d.carryForward.excess} excess
+                {formatINR(d.pendingBonusPaise)}
               </span>
             </div>
 

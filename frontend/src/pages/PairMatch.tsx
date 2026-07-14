@@ -1,10 +1,11 @@
 import { useQuery, useInfiniteQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { GitMerge, Download, TrendingUp } from 'lucide-react'
+import { GitMerge, Download, TrendingUp, Clock } from 'lucide-react'
 import api from '../lib/api'
 import { formatINR, formatDateTime, orDash } from '../lib/format'
 import { StatCard } from '../components/ui/StatCard'
 import { SkeletonCard } from '../components/ui/Skeleton'
+import { Badge } from '../components/ui/Badge'
 import { DataTable, type Column } from '../components/ui/DataTable'
 import type { Pair, PairsRes, Dashboard as DashboardType } from '../types/api'
 
@@ -27,8 +28,8 @@ export default function PairMatch() {
   const items = pairsQ.data?.pages.flatMap(p => p.items) ?? []
 
   const exportCSV = () => {
-    const headers = ['Seq No', 'Left Member', 'Right Member', 'Bonus', 'Date']
-    const rows = items.map(r => [r.sequenceNo, r.leftMemberCode, r.rightMemberCode, formatINR(r.bonusPaise), formatDateTime(r.at)])
+    const headers = ['Pair At', 'Left Member', 'Right Member', 'Bonus', 'Status', 'Date']
+    const rows = items.map(r => [r.pairMemberCode, r.leftMemberCode, r.rightMemberCode, formatINR(r.bonusPaise), r.status, formatDateTime(r.at)])
     const csv = [headers, ...rows].map(r => r.join(',')).join('\n')
     const blob = new Blob([csv], { type: 'text/csv' })
     const url = URL.createObjectURL(blob)
@@ -38,10 +39,18 @@ export default function PairMatch() {
   }
 
   const cols: Column<Pair>[] = [
-    { key: 'seq', header: '#', render: r => <span className="font-mono text-xs font-bold text-ink-muted">#{r.sequenceNo}</span> },
+    { key: 'source', header: t('pairs.pairAt'), render: r => <span className="font-mono text-xs font-bold text-ink-muted">{r.pairMemberCode}</span> },
     { key: 'left', header: 'Left Member', render: r => <span className="font-mono text-xs font-semibold">{r.leftMemberCode}</span> },
     { key: 'right', header: 'Right Member', render: r => <span className="font-mono text-xs font-semibold">{r.rightMemberCode}</span> },
     { key: 'bonus', header: 'Bonus', align: 'right', render: r => <span className="font-bold text-success">{formatINR(r.bonusPaise)}</span> },
+    {
+      key: 'status', header: t('pairs.status'),
+      render: r => (
+        <Badge variant={r.status === 'released' ? 'success' : 'warning'} size="sm">
+          {t(r.status === 'released' ? 'pairs.released' : 'pairs.pending')}
+        </Badge>
+      ),
+    },
     { key: 'time', header: 'Matched At', render: r => <span className="text-xs text-ink-muted">{formatDateTime(r.at)}</span> },
   ]
 
@@ -50,7 +59,7 @@ export default function PairMatch() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-xl font-bold text-ink">Pair Match</h1>
-          <p className="text-sm text-ink-muted">Every ₹1,000 bonus earned by matching left + right</p>
+          <p className="text-sm text-ink-muted">{t('pairs.subtitle')}</p>
         </div>
         <button onClick={exportCSV} className="avg-btn-secondary self-start sm:self-auto">
           <Download size={14} /> Export CSV
@@ -66,12 +75,7 @@ export default function PairMatch() {
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <StatCard label="Total Pairs" value={orDash(dash?.counters.pairsMatched, String)} icon={<GitMerge />} tint="primary" />
           <StatCard label="Total Bonus" value={orDash(dash?.pairMatchIncomePaise, formatINR)} icon={<TrendingUp />} tint="success" />
-          <StatCard
-            label={`${t('counters.active')} L · R`}
-            value={dash ? `${dash.counters.leftActive} · ${dash.counters.rightActive}` : '—'}
-            icon={<GitMerge />}
-            tint="violet"
-          />
+          <StatCard label={t('pairs.pendingBonus')} value={orDash(dash?.pendingBonusPaise, formatINR)} icon={<Clock />} tint="violet" />
           <StatCard label="Today's Bonus" value={orDash(dash?.todayPairBonusPaise, formatINR)} icon={<TrendingUp />} tint="warning" />
         </div>
       )}
@@ -83,8 +87,8 @@ export default function PairMatch() {
             <GitMerge size={18} className="text-warning" />
           </div>
           <div>
-            <p className="text-sm font-semibold text-ink">Carry Forward: {dash.carryForward.side} side</p>
-            <p className="text-xs text-ink-muted">{dash.carryForward.excess} unmatched activations on the {dash.carryForward.side === 'L' ? 'left' : 'right'} side</p>
+            <p className="text-sm font-semibold text-ink">{t('pairs.legBalance')}: {dash.carryForward.side} side</p>
+            <p className="text-xs text-ink-muted">{t('pairs.legBalanceNote', { count: dash.carryForward.excess, side: dash.carryForward.side === 'L' ? 'left' : 'right' })}</p>
           </div>
         </div>
       )}
@@ -97,7 +101,7 @@ export default function PairMatch() {
         <DataTable
           columns={cols}
           data={items}
-          rowKey={r => String(r.sequenceNo)}
+          rowKey={r => r.pairMemberCode}
           onLoadMore={() => pairsQ.fetchNextPage()}
           hasMore={!!pairsQ.hasNextPage}
           emptyTitle="No pairs matched yet"

@@ -765,7 +765,7 @@ export async function frontendRoutes(app: FastifyInstance) {
 			counterRes,
 			walletRes,
 			deferredRes,
-			totalRes,
+			accrualRes,
 			todayRes,
 			seriesRes,
 			rankRes,
@@ -774,11 +774,10 @@ export async function frontendRoutes(app: FastifyInstance) {
 			pool().query<{
 				left_active: string;
 				right_active: string;
-				pairs_matched: string;
 				left_qualified: string;
 				right_qualified: string;
 			}>(
-				"SELECT left_active, right_active, pairs_matched, left_qualified, right_qualified FROM member_counters WHERE member_id = $1",
+				"SELECT left_active, right_active, left_qualified, right_qualified FROM member_counters WHERE member_id = $1",
 				[memberId],
 			),
 			pool().query<{ balance: string }>(
@@ -791,21 +790,29 @@ export async function frontendRoutes(app: FastifyInstance) {
          WHERE a.owner_id = $1 AND a.kind = 'deferred_bonus'`,
 				[memberId],
 			),
-			pool().query<{ total: string }>(
-				`SELECT COALESCE(SUM(bonus_amount),0) AS total FROM pairs WHERE member_id = $1`,
+			// Income = released accruals; pending = accrued but awaiting the
+			// member's own qualification. pairs_matched (deprecated) is replaced by
+			// the count of pairs completed anywhere in the member's subtree.
+			pool().query<{ released: string; pending: string; cnt: string }>(
+				`SELECT COALESCE(SUM(amount) FILTER (WHERE status='released'),0) AS released,
+                COALESCE(SUM(amount) FILTER (WHERE status='pending'),0)  AS pending,
+                COUNT(*) AS cnt
+         FROM pair_accruals WHERE beneficiary_id = $1`,
 				[memberId],
 			),
 			pool().query<{ total: string }>(
-				`SELECT COALESCE(SUM(bonus_amount),0) AS total FROM pairs
-         WHERE member_id = $1
-           AND to_char(created_at AT TIME ZONE 'Asia/Kolkata','YYYY-MM-DD')
+				`SELECT COALESCE(SUM(amount),0) AS total FROM pair_accruals
+         WHERE beneficiary_id = $1 AND status = 'released'
+           AND to_char(released_at AT TIME ZONE 'Asia/Kolkata','YYYY-MM-DD')
              = to_char(now() AT TIME ZONE 'Asia/Kolkata','YYYY-MM-DD')`,
 				[memberId],
 			),
 			pool().query<{ d: string; total: string }>(
-				`SELECT to_char(created_at AT TIME ZONE 'Asia/Kolkata','YYYY-MM-DD') AS d,
-                SUM(bonus_amount) AS total
-         FROM pairs WHERE member_id = $1 AND created_at > now() - interval '30 days'
+				`SELECT to_char(released_at AT TIME ZONE 'Asia/Kolkata','YYYY-MM-DD') AS d,
+                SUM(amount) AS total
+         FROM pair_accruals
+         WHERE beneficiary_id = $1 AND status = 'released'
+           AND released_at > now() - interval '30 days'
          GROUP BY 1 ORDER BY 1`,
 				[memberId],
 			),
@@ -819,13 +826,12 @@ export async function frontendRoutes(app: FastifyInstance) {
 		const c = counterRes.rows[0] ?? {
 			left_active: "0",
 			right_active: "0",
-			pairs_matched: "0",
 			left_qualified: "0",
 			right_qualified: "0",
 		};
 		const leftActive = parseInt(c.left_active);
 		const rightActive = parseInt(c.right_active);
-		const pairsMatched = parseInt(c.pairs_matched);
+		const pairsMatched = parseInt(accrualRes.rows[0]?.cnt ?? "0");
 		const leftQ = parseInt(c.left_qualified);
 		const rightQ = parseInt(c.right_qualified);
 
@@ -845,8 +851,11 @@ export async function frontendRoutes(app: FastifyInstance) {
 		const { items: recent } = recentLedger;
 
 		return {
-			totalIncomePaise: Number(toPaise(totalRes.rows[0]?.total ?? "0")),
-			pairMatchIncomePaise: Number(toPaise(totalRes.rows[0]?.total ?? "0")),
+			totalIncomePaise: Number(toPaise(accrualRes.rows[0]?.released ?? "0")),
+			pairMatchIncomePaise: Number(
+				toPaise(accrualRes.rows[0]?.released ?? "0"),
+			),
+			pendingBonusPaise: Number(toPaise(accrualRes.rows[0]?.pending ?? "0")),
 			walletBalancePaise: Number(toPaise(walletRes.rows[0]?.balance ?? "0")),
 			deferredBalancePaise: Number(
 				toPaise(deferredRes.rows[0]?.balance ?? "0"),
@@ -858,9 +867,11 @@ export async function frontendRoutes(app: FastifyInstance) {
 				rightQualified: rightQ,
 				pairsMatched,
 			},
+			// Display-only: which leg has more activations and by how much.
+			// (Income no longer depends on leg balance.)
 			carryForward: {
 				side: leftActive > rightActive ? "L" : "R",
-				excess: Math.max(leftActive, rightActive) - pairsMatched,
+				excess: Math.abs(leftActive - rightActive),
 			},
 			todayPairBonusPaise: Number(toPaise(todayRes.rows[0]?.total ?? "0")),
 			rank: {
@@ -890,38 +901,45 @@ export async function frontendRoutes(app: FastifyInstance) {
 	});
 
 	// ===== pairs =====
+	// The member's pair-bonus accrual history: one item per pair completed in
+	// their subtree (their own pair included), pending until they qualify.
 	app.get("/pairs", auth, async (req) => {
 		const memberId = (req.user as Auth).sub;
 		const query = req.query as { cursor?: string; limit?: string };
 		const limit = Math.min(100, parseInt(query.limit ?? "20", 10) || 20);
-		const cursorClause = query.cursor ? "AND p.id < $3" : "";
+		const cursorClause = query.cursor ? "AND pa.id < $3" : "";
 		const params: (string | number)[] = [memberId, limit];
 		if (query.cursor) params.push(parseInt(query.cursor));
 
 		const { rows } = await pool().query<{
 			id: string;
-			sequence_no: string;
-			bonus_amount: string;
-			created_at: string;
+			amount: string;
+			status: string;
+			accrued_at: string;
+			pair_code: string;
 			left_code: string;
 			right_code: string;
 		}>(
-			`SELECT p.id, p.sequence_no, p.bonus_amount, p.created_at,
+			`SELECT pa.id, pa.amount, pa.status, pa.accrued_at,
+              mp.member_code AS pair_code,
               ml.member_code AS left_code, mr.member_code AS right_code
-       FROM pairs p
+       FROM pair_accruals pa
+       JOIN pairs p ON p.id = pa.pair_id
+       JOIN members mp ON mp.id = p.member_id
        JOIN members ml ON ml.id = p.left_member_id
        JOIN members mr ON mr.id = p.right_member_id
-       WHERE p.member_id = $1 ${cursorClause}
-       ORDER BY p.id DESC LIMIT $2`,
+       WHERE pa.beneficiary_id = $1 ${cursorClause}
+       ORDER BY pa.id DESC LIMIT $2`,
 			params,
 		);
 		return {
 			items: rows.map((r) => ({
-				sequenceNo: parseInt(r.sequence_no),
+				pairMemberCode: r.pair_code,
 				leftMemberCode: r.left_code,
 				rightMemberCode: r.right_code,
-				bonusPaise: Number(toPaise(r.bonus_amount)),
-				at: r.created_at,
+				bonusPaise: Number(toPaise(r.amount)),
+				status: r.status as "pending" | "released",
+				at: r.accrued_at,
 			})),
 			nextCursor:
 				rows.length === limit ? String(rows[rows.length - 1].id) : null,

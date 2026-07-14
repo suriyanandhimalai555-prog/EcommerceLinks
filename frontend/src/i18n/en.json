@@ -54,7 +54,8 @@
     "pairSummary": "Pair Match Summary",
     "recentTransactions": "Recent Transactions",
     "rankStatus": "Rank & Status",
-    "referEarn": "Refer & Earn"
+    "referEarn": "Refer & Earn",
+    "pendingBonus": "Pending Bonus"
   },
   "auth": {
     "sessionExpired": "Your session has expired. Please log in again.",
@@ -177,5 +178,15 @@
     "tapToRefer": "Tap to refer",
     "copyLink": "Copy referral link",
     "copied": "Copied!"
+  },
+  "pairs": {
+    "subtitle": "₹1,000 for you and every upline on each completed pair — released once you qualify",
+    "pairAt": "Pair At",
+    "status": "Status",
+    "pending": "Pending",
+    "released": "Released",
+    "pendingBonus": "Pending Bonus",
+    "legBalance": "Leg Balance",
+    "legBalanceNote": "{{count}} more activations on the {{side}} side"
   }
 }

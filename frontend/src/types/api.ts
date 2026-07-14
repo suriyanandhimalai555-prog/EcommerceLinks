@@ -79,6 +79,7 @@ export interface DashboardCounters {
   rightActive: number
   leftQualified: number
   rightQualified: number
+  /** Pairs completed anywhere in the member's subtree (own pair included). */
   pairsMatched: number
 }
 
@@ -103,9 +104,12 @@ export interface DashboardTransaction {
 export interface Dashboard {
   totalIncomePaise: number
   pairMatchIncomePaise: number
+  /** Accrued pair bonuses held until the member qualifies (3-gen gate). */
+  pendingBonusPaise: number
   walletBalancePaise: number
   deferredBalancePaise: number
   counters: DashboardCounters
+  /** Display-only leg imbalance; income no longer depends on leg balance. */
   carryForward: { side: 'L' | 'R'; excess: number }
   todayPairBonusPaise: number
   rank: DashboardRank
@@ -149,11 +153,14 @@ export interface DirectsRes {
 }
 
 // ---- income ----
+// One pair-bonus accrual: a pair that completed at pairMemberCode somewhere in
+// the member's subtree. Pending until the member's own qualification.
 export interface Pair {
-  sequenceNo: number
+  pairMemberCode: string
   leftMemberCode: string
   rightMemberCode: string
   bonusPaise: number
+  status: 'pending' | 'released'
   at: string
 }
 
