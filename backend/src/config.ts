@@ -17,6 +17,17 @@ const AWS_BUCKET_NAME = env("AWS_BUCKET_NAME", "");
 const AWS_ACCESS_KEY_ID = env("AWS_ACCESS_KEY_ID", "");
 const AWS_SECRET_ACCESS_KEY = env("AWS_SECRET_ACCESS_KEY", "");
 
+// Email / SMTP — optional; features degrade gracefully when unset.
+const SMTP_HOST = env("SMTP_HOST", "");
+const SMTP_PORT = parseInt(env("SMTP_PORT", "587"), 10);
+const SMTP_USER = env("SMTP_USER", "");
+const SMTP_PASS = env("SMTP_PASS", "");
+const SMTP_SECURE = env("SMTP_SECURE", "false") === "true";
+const EMAIL_FROM = env(
+	"EMAIL_FROM",
+	"Agila Vetri Groups <support@agilavertiglobal.com>",
+);
+
 // Fail fast when insecure defaults are present in staging/production.
 // development + test: local dev and vitest are exempt.
 if (NODE_ENV !== "development" && NODE_ENV !== "test") {
@@ -70,6 +81,12 @@ export const CFG = {
 		"S3_PUBLIC_BASE_URL",
 		`https://${AWS_BUCKET_NAME}.s3.${AWS_REGION}.amazonaws.com`,
 	),
+	SMTP_HOST,
+	SMTP_PORT,
+	SMTP_USER,
+	SMTP_PASS,
+	SMTP_SECURE,
+	EMAIL_FROM,
 	// G-9: CORS allowlist (space-separated origins). In dev, localhost is allowed.
 	CORS_ORIGINS: env(
 		"CORS_ORIGINS",

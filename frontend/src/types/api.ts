@@ -28,6 +28,10 @@ export interface Me {
 export interface SystemSettings {
   /** When true, KYC is optional for purchases (payout still requires verified KYC+bank). */
   kycOptional: boolean
+  /** When true, a welcome email is sent to new members upon registration. */
+  welcomeEmailEnabled: boolean
+  /** When true, every login requires a 6-digit OTP sent to the member's email. */
+  loginOtpEnabled: boolean
 }
 
 export interface RegisterReq {

@@ -11,6 +11,8 @@ import { apiErrorMessage } from '../../lib/apiError'
 import { tokenStore } from '../../lib/auth'
 import { FormField } from '../../components/ui/FormField'
 import { EmptyState } from '../../components/ui/EmptyState'
+import { OtpStep } from '../../components/auth/OtpStep'
+import type { SessionPayload } from '../../components/auth/OtpStep'
 
 const schema = z.object({
   sponsorCode: z.string().min(3, 'Sponsor code required'),
@@ -32,6 +34,7 @@ export default function Register() {
   const queryClient = useQueryClient()
   const [searchParams] = useSearchParams()
   const [showPw, setShowPw] = useState(false)
+  const [otpEmail, setOtpEmail] = useState<string | null>(null)
   const sponsorParam = searchParams.get('sponsor') || ''
 
   const { register, handleSubmit, formState: { errors, isSubmitting }, setError } = useForm<FormData>({
@@ -40,6 +43,15 @@ export default function Register() {
       sponsorCode: sponsorParam,
     },
   })
+
+  /** Shared: store tokens and navigate after a successful login/OTP session. */
+  const handleSession = (session: SessionPayload) => {
+    tokenStore.setAccess(session.accessToken)
+    tokenStore.setRefresh(session.refreshToken)
+    tokenStore.setMe(session.member)
+    queryClient.clear()
+    navigate('/', { replace: true })
+  }
 
   const onSubmit = async (data: FormData) => {
     try {
@@ -50,12 +62,14 @@ export default function Register() {
         email: data.email,
         password: data.password,
       })
+      // Auto-login after signup.
       const loginRes = await api.post('/auth/login', { email: data.email, password: data.password })
-      tokenStore.setAccess(loginRes.data.accessToken)
-      tokenStore.setRefresh(loginRes.data.refreshToken)
-      tokenStore.setMe(loginRes.data.member)
-      queryClient.clear()
-      navigate('/', { replace: true })
+      if (loginRes.data.otpRequired) {
+        // OTP is enabled — show the verify step (email already known).
+        setOtpEmail(data.email)
+        return
+      }
+      handleSession(loginRes.data as SessionPayload)
     } catch (err) {
       setError('root', { message: apiErrorMessage(err, t, t('auth.registrationFailed')) })
     }
@@ -80,6 +94,28 @@ export default function Register() {
               Already a member?{' '}
               <Link to="/login" className="text-primary font-semibold hover:underline">{t('auth.login')}</Link>
             </p>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // OTP step — shown after successful registration + auto-login when OTP is enabled.
+  if (otpEmail) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-[#0E1526] via-surface-page to-[#131B33] flex items-center justify-center p-4">
+        <div className="w-full max-w-md">
+          <div className="text-center mb-6">
+            <img src="/AVGLOGO.jpeg" alt="AVG Logo" className="w-14 h-14 rounded-2xl object-cover mx-auto mb-3 shadow-glow" />
+            <h1 className="text-2xl font-bold text-ink">Agila Vetri Groups</h1>
+          </div>
+          <div className="avg-card p-8">
+            <h2 className="text-xl font-bold text-ink mb-6">{t('auth.login')}</h2>
+            <OtpStep
+              email={otpEmail}
+              onSuccess={handleSession}
+              onBack={() => setOtpEmail(null)}
+            />
           </div>
         </div>
       </div>

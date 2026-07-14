@@ -35,7 +35,17 @@
     "currentStatus": "Current status:",
     "statusOptional": "KYC optional",
     "statusMandatory": "KYC mandatory",
-    "payoutNote": "Weekly payouts always require verified KYC + bank details, regardless of this toggle. This setting only affects the purchase gate."
+    "payoutNote": "Weekly payouts always require verified KYC + bank details, regardless of this toggle. This setting only affects the purchase gate.",
+    "emailSection": "Email Notifications",
+    "welcomeEmailToggleLabel": "Send welcome email on signup",
+    "welcomeEmailToggleHint": "When ON, new members receive a welcome email with their Member ID and Sponsor ID upon registration.",
+    "welcomeEmailStatusOn": "Welcome email enabled",
+    "welcomeEmailStatusOff": "Welcome email disabled",
+    "otpSection": "Login Security",
+    "otpToggleLabel": "Require OTP on every login",
+    "otpToggleHint": "When ON, members must enter a 6-digit code sent to their email after entering their password.",
+    "otpStatusOn": "OTP login enabled",
+    "otpStatusOff": "OTP login disabled"
   },
   "counters": {
     "active": "Active",
@@ -84,7 +94,15 @@
     "confirmPassword": "Confirm Password",
     "termsAccept": "I agree to the Terms & Conditions",
     "invalidCredentials": "Invalid email or password",
-    "registrationFailed": "Registration failed. Please try again."
+    "registrationFailed": "Registration failed. Please try again.",
+    "otpSentNotice": "A 6-digit code has been sent to your email. Enter it below to continue.",
+    "otpLabel": "Verification Code",
+    "otpPlaceholder": "6-digit code",
+    "otpVerifyBtn": "Verify & Sign In",
+    "otpInvalid": "Invalid code. Please check and try again.",
+    "otpExpired": "Code has expired. Please log in again.",
+    "otpLocked": "Too many failed attempts. Please log in again to get a new code.",
+    "otpResend": "Back to Login"
   },
   "errors": {
     "network": "Cannot reach the server. Check your internet connection and try again.",

@@ -5,6 +5,7 @@
  * Keep the webhook here (orders.ts is no longer registered).
  */
 import { randomUUID, timingSafeEqual } from "crypto";
+import argon2 from "argon2";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { CFG } from "../config.js";
@@ -236,6 +237,52 @@ export async function frontendRoutes(app: FastifyInstance) {
 			body.data.name,
 		]);
 		return reply.send(await buildMe(memberId));
+	});
+
+	// ===== Change own password =====
+	const PasswordBody = z.object({
+		currentPassword: z.string().min(1, "Current password is required"),
+		newPassword: z.string().min(8, "New password must be at least 8 characters"),
+	});
+
+	app.put("/me/password", auth, async (req, reply) => {
+		const body = PasswordBody.safeParse(req.body);
+		if (!body.success)
+			return reply.status(400).send({ error: body.error.flatten() });
+
+		const memberId = (req.user as Auth).sub;
+		const { rows } = await pool().query<{ password_hash: string }>(
+			"SELECT password_hash FROM members WHERE id = $1",
+			[memberId],
+		);
+		if (!rows[0])
+			return reply
+				.status(404)
+				.send({ error: { code: "NOT_FOUND", message: "Member not found" } });
+
+		const valid = await argon2.verify(
+			rows[0].password_hash,
+			body.data.currentPassword,
+		);
+		if (!valid)
+			return reply
+				.status(401)
+				.send({ error: "Current password is incorrect" });
+
+		if (body.data.newPassword === body.data.currentPassword)
+			return reply
+				.status(400)
+				.send({ error: "New password must be different from the current one" });
+
+		// Hash outside any transaction — argon2 is deliberately slow.
+		const newHash = await argon2.hash(body.data.newPassword);
+
+		await pool().query(
+			"UPDATE members SET password_hash = $2 WHERE id = $1",
+			[memberId, newHash],
+		);
+
+		return reply.send({ ok: true });
 	});
 
 	const KycBody = z.object({

@@ -5,6 +5,16 @@ import { z } from "zod";
 import { CFG } from "../config.js";
 import { pool } from "../lib/db.js";
 import { findMemberByEmail, registerMember } from "../services/placement.js";
+import { getSetting } from "../services/settings.js";
+import {
+	sendMail,
+	welcomeEmailTemplate,
+	otpEmailTemplate,
+} from "../services/mailer.js";
+import {
+	generateAndStoreOtp,
+	verifyOtp,
+} from "../services/loginOtp.js";
 import { buildMe } from "./frontend.js";
 
 const RegisterBody = z.object({
@@ -18,6 +28,11 @@ const RegisterBody = z.object({
 const LoginBody = z.object({
 	email: z.string().email(),
 	password: z.string(),
+});
+
+const VerifyOtpBody = z.object({
+	email: z.string().email(),
+	otp: z.string().length(6),
 });
 
 const RefreshBody = z.object({
@@ -52,6 +67,27 @@ async function issueRefreshToken(memberId: string): Promise<string> {
 // Module-level reference so issueRefreshToken can use app.jwt after registration.
 let app_instance: FastifyInstance;
 
+/** Shared helper: build and return the full session response (access + refresh tokens + me). */
+async function issueSession(
+	app: FastifyInstance,
+	member: { id: string | bigint; member_code: string; name: string },
+	me: Awaited<ReturnType<typeof buildMe>>,
+) {
+	const payload = {
+		sub: member.id,
+		code: member.member_code,
+		name: member.name,
+	};
+	const accessToken = app.jwt.sign(payload, { expiresIn: CFG.JWT_ACCESS_TTL });
+	const refreshToken = await issueRefreshToken(String(member.id));
+	return {
+		accessToken,
+		refreshToken,
+		memberCode: member.member_code,
+		member: me,
+	};
+}
+
 export async function authRoutes(app: FastifyInstance) {
 	app_instance = app;
 
@@ -74,6 +110,33 @@ export async function authRoutes(app: FastifyInstance) {
 			// so every caller of the service shares the guard.
 			try {
 				const { memberId, memberCode } = await registerMember(body.data);
+
+				// Best-effort welcome email — never blocks the 201.
+				(async () => {
+					try {
+						const enabled = await getSetting<boolean>("welcome_email_enabled");
+						if (enabled) {
+							const today = new Date().toLocaleDateString("en-IN", {
+								day: "numeric",
+								month: "long",
+								year: "numeric",
+								timeZone: CFG.TZ,
+							});
+							await sendMail(
+								welcomeEmailTemplate({
+									name: body.data.name,
+									memberCode,
+									sponsorCode: body.data.sponsorCode,
+									date: today,
+									email: body.data.email,
+								}),
+							);
+						}
+					} catch (err) {
+						console.error("[register] welcome email error:", err);
+					}
+				})();
+
 				return reply
 					.status(201)
 					.send({ memberId: String(memberId), memberCode });
@@ -128,22 +191,74 @@ export async function authRoutes(app: FastifyInstance) {
 					},
 				});
 
-			const payload = {
-				sub: member.id,
-				code: member.member_code,
-				name: member.name,
-			};
-			const accessToken = app.jwt.sign(payload, {
-				expiresIn: CFG.JWT_ACCESS_TTL,
-			});
-			const refreshToken = await issueRefreshToken(String(member.id));
+			// Gate on OTP setting.
+			const otpEnabled = await getSetting<boolean>("login_otp_enabled");
+			if (otpEnabled) {
+				const code = await generateAndStoreOtp(String(member.id));
+				// Best-effort send — the code is authoritative in Redis even if email fails.
+				sendMail(
+					otpEmailTemplate({
+						name: member.name,
+						email: body.data.email,
+						code,
+					}),
+				).catch((err) =>
+					console.error("[login] OTP email error:", err),
+				);
+				return reply.send({ otpRequired: true });
+			}
 
-			return {
-				accessToken,
-				refreshToken,
-				memberCode: member.member_code,
-				member: me,
-			};
+			return reply.send(await issueSession(app, member, me));
+		},
+	);
+
+	// G-9: 10 OTP verify attempts per minute per IP
+	app.post(
+		"/login/verify-otp",
+		{
+			config: {
+				rateLimit: {
+					max: 10,
+					timeWindow: "1 minute",
+				},
+			},
+		},
+		async (req, reply) => {
+			const body = VerifyOtpBody.safeParse(req.body);
+			if (!body.success)
+				return reply.status(400).send({ error: body.error.flatten() });
+
+			const member = await findMemberByEmail(body.data.email);
+			if (!member)
+				return reply.status(401).send({ error: "Invalid credentials" });
+
+			const result = await verifyOtp(String(member.id), body.data.otp);
+			if (!result.ok) {
+				if (result.reason === "locked") {
+					return reply.status(429).send({
+						error: "Too many failed attempts. Please log in again to get a new code.",
+					});
+				}
+				if (result.reason === "expired") {
+					return reply.status(401).send({
+						error: "Code has expired. Please log in again.",
+					});
+				}
+				return reply.status(401).send({ error: "Invalid code." });
+			}
+
+			// Re-check blocked status — member could be suspended between OTP issue and verify.
+			const me = await buildMe(String(member.id));
+			if (!me) return reply.status(401).send({ error: "Invalid credentials" });
+			if (me.blocked)
+				return reply.status(403).send({
+					error: {
+						code: "ACCOUNT_BLOCKED",
+						message: "Account is blocked. Contact support.",
+					},
+				});
+
+			return reply.send(await issueSession(app, member, me));
 		},
 	);
 

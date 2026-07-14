@@ -12,6 +12,8 @@ import { pool } from "../lib/db.js";
 // Typed defaults — returned when the key row is absent (e.g. before migration runs).
 const DEFAULTS: Record<string, unknown> = {
 	kyc_optional: false,
+	welcome_email_enabled: false,
+	login_otp_enabled: false,
 };
 
 /** Read a single setting. Returns the stored JSONB value (already parsed by pg). */

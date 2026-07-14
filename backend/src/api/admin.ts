@@ -1102,12 +1102,17 @@ export async function adminRoutes(app: FastifyInstance) {
 		const raw = await getAllSettings();
 		return {
 			kycOptional: Boolean(raw["kyc_optional"]),
+			welcomeEmailEnabled: Boolean(raw["welcome_email_enabled"]),
+			loginOtpEnabled: Boolean(raw["login_otp_enabled"]),
 		};
 	});
 
 	// PATCH — management only.
+	// All fields are optional so callers can update a single toggle at a time.
 	const SettingsBody = z.object({
-		kycOptional: z.boolean(),
+		kycOptional: z.boolean().optional(),
+		welcomeEmailEnabled: z.boolean().optional(),
+		loginOtpEnabled: z.boolean().optional(),
 	});
 
 	app.patch("/settings", auth, async (req, reply) => {
@@ -1119,29 +1124,40 @@ export async function adminRoutes(app: FastifyInstance) {
 		if (!body.success)
 			return reply.status(400).send({ error: body.error.flatten() });
 
-		const { before, after } = await withTxn(async (c) => {
-			const result = await setSetting(
-				c,
-				"kyc_optional",
-				body.data.kycOptional,
-				actor.sub,
-			);
-			await c.query(
-				`INSERT INTO admin_audit_log
-           (actor_id, action, target_type, before_state, after_state)
-         VALUES ($1, 'settings_change', 'system', $2, $3)`,
-				[
-					actor.sub,
-					{ kyc_optional: result.before },
-					{ kyc_optional: result.after },
-				],
-			);
-			return result;
+		// Collect which fields were actually sent so we only write those.
+		const patches: Array<{ dbKey: string; value: boolean }> = [];
+		if (body.data.kycOptional !== undefined)
+			patches.push({ dbKey: "kyc_optional", value: body.data.kycOptional });
+		if (body.data.welcomeEmailEnabled !== undefined)
+			patches.push({ dbKey: "welcome_email_enabled", value: body.data.welcomeEmailEnabled });
+		if (body.data.loginOtpEnabled !== undefined)
+			patches.push({ dbKey: "login_otp_enabled", value: body.data.loginOtpEnabled });
+
+		if (patches.length === 0)
+			return reply.status(400).send({ error: "No settings fields provided" });
+
+		await withTxn(async (c) => {
+			for (const patch of patches) {
+				const result = await setSetting(c, patch.dbKey, patch.value, actor.sub);
+				await c.query(
+					`INSERT INTO admin_audit_log
+             (actor_id, action, target_type, before_state, after_state)
+           VALUES ($1, 'settings_change', 'system', $2, $3)`,
+					[
+						actor.sub,
+						{ [patch.dbKey]: result.before },
+						{ [patch.dbKey]: result.after },
+					],
+				);
+			}
 		});
 
+		// Re-read all settings to return a consistent snapshot.
+		const raw = await getAllSettings();
 		return {
-			kycOptional: Boolean(after),
-			changed: before !== after,
+			kycOptional: Boolean(raw["kyc_optional"]),
+			welcomeEmailEnabled: Boolean(raw["welcome_email_enabled"]),
+			loginOtpEnabled: Boolean(raw["login_otp_enabled"]),
 		};
 	});
 }
