@@ -27,9 +27,8 @@ export async function reconcile(): Promise<Alert[]> {
 		member_code: string;
 		left_active: string;
 		right_active: string;
-		pairs_matched: string;
 	}>(
-		`SELECT m.id, m.member_code, mc.left_active, mc.right_active, mc.pairs_matched
+		`SELECT m.id, m.member_code, mc.left_active, mc.right_active
      FROM members m
      JOIN member_counters mc ON mc.member_id = m.id
      WHERE m.is_active = TRUE
@@ -75,22 +74,60 @@ export async function reconcile(): Promise<Alert[]> {
 			});
 		}
 
-		// Recompute pairs_matched from COUNT(pairs)
-		const { rows: pRows } = await pool().query<{ cnt: string }>(
-			"SELECT COUNT(*) AS cnt FROM pairs WHERE member_id=$1",
-			[row.id],
-		);
-		const computedPairs = Number(pRows[0].cnt);
-		if (computedPairs !== Number(row.pairs_matched)) {
-			alerts.push({
-				type: "pairs_drift",
-				memberId: row.id,
-				memberCode: row.member_code,
-				field: "pairs_matched",
-				stored: row.pairs_matched,
-				computed: String(computedPairs),
-			});
-		}
+	}
+
+	// Every released accrual must have its ledger txn (pairbonus:{pair_id}:{beneficiary_id})
+	const { rows: orphanReleased } = await pool().query<{
+		id: string;
+		pair_id: string;
+		beneficiary_id: string;
+		member_code: string;
+	}>(
+		`SELECT pa.id, pa.pair_id, pa.beneficiary_id, m.member_code
+     FROM pair_accruals pa
+     JOIN members m ON m.id = pa.beneficiary_id
+     WHERE pa.status = 'released'
+       AND NOT EXISTS (
+         SELECT 1 FROM ledger_txns lt
+         WHERE lt.idempotency_key = 'pairbonus:' || pa.pair_id || ':' || pa.beneficiary_id
+       )
+     LIMIT 100`,
+	);
+	for (const row of orphanReleased) {
+		alerts.push({
+			type: "accrual_release_drift",
+			memberId: row.beneficiary_id,
+			memberCode: row.member_code,
+			field: "pair_accruals.status",
+			stored: "released",
+			computed: `no ledger_txn pairbonus:${row.pair_id}:${row.beneficiary_id}`,
+		});
+	}
+
+	// Pending accruals may only belong to unqualified beneficiaries.
+	// 1h grace: release flows through the ledger consumer asynchronously.
+	const { rows: stuckPending } = await pool().query<{
+		id: string;
+		beneficiary_id: string;
+		member_code: string;
+	}>(
+		`SELECT pa.id, pa.beneficiary_id, m.member_code
+     FROM pair_accruals pa
+     JOIN members m ON m.id = pa.beneficiary_id
+     WHERE pa.status = 'pending' AND m.is_qualified
+       AND pa.accrued_at < now() - interval '1 hour'
+       AND m.qualified_at < now() - interval '1 hour'
+     LIMIT 100`,
+	);
+	for (const row of stuckPending) {
+		alerts.push({
+			type: "accrual_pending_drift",
+			memberId: row.beneficiary_id,
+			memberCode: row.member_code,
+			field: "pair_accruals.status",
+			stored: "pending",
+			computed: "beneficiary is_qualified=TRUE — release missing",
+		});
 	}
 
 	// Sample 200 random wallet balances vs SUM(ledger)

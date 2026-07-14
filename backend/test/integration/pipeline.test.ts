@@ -11,7 +11,7 @@ import { registerMember } from '../../src/services/placement.js'
 import { confirmOrder } from '../../src/services/orderService.js'
 import { evaluateQualification } from '../../src/services/qualification.js'
 import { applyIncrements } from '../../src/workers/counterPair.js'
-import { creditPairBonus, sweepDeferred } from '../../src/workers/ledger.js'
+import { sweepDeferred } from '../../src/workers/ledger.js'
 import { evaluateRanks } from '../../src/workers/rank.js'
 import { ensureCutoffExists } from '../../src/workers/cutoff.js'
 import { buildBatch } from '../../src/workers/payout.js'
@@ -91,32 +91,78 @@ describe('T5 – Order webhook idempotency', () => {
   })
 })
 
-// T8: counter/pair arithmetic
-describe('T8 – Counter + pair mint', () => {
-  it('L a,b,c then R x,y → pairs (a,x),(b,y)', async () => {
-    const ancestorId = 999999999n + BigInt(Date.now() % 1000)
-
-    // Insert a fake ancestor counter row
-    await withTxn(async (c) => {
-      // Need a real member row for FK
-      // We'll test the arithmetic directly with a known member
+// T8: counters are maintained but no income mints here (since 020 the pair
+// income path is workers/pairComplete.ts + pair_accruals, not counter matching)
+describe('T8 – applyIncrements maintains counters, never mints pairs', () => {
+  it('L+R increments update counters and leg_activations; pairs stays empty', async () => {
+    const ts = Date.now().toString().slice(-7)
+    const { memberId: ancestorId, memberCode: ancestorCode } = await registerAnchor(`T8Anc${ts}`)
+    const { memberId: lId } = await registerMember({
+      sponsorCode: ancestorCode,
+      name: `T8L${ts}`, phone: `7041${ts}`, email: uniqueEmail(), password: 'Test@1234',
+    })
+    const { memberId: rId } = await registerMember({
+      sponsorCode: ancestorCode,
+      name: `T8R${ts}`, phone: `7042${ts}`, email: uniqueEmail(), password: 'Test@1234',
     })
 
-    // Verify arithmetic: given L=5, R=3, matched=3
-    // batch 2 right increments → R=5, newPairs = min(5,5)-3 = 2
-    const storedLeft  = 5n
-    const storedRight = 3n
-    const matched     = 3n
-    const newRight    = 2n
-    const newTotal    = storedLeft
-    const newPairs    = BigInt(Math.min(Number(storedLeft), Number(storedRight + newRight))) - matched
-    expect(newPairs).toBe(2n)
+    // Even a qualified ancestor gets no counter-matched pairs anymore
+    await pool().query('UPDATE members SET is_qualified=TRUE WHERE id=$1', [ancestorId])
+
+    await applyIncrements(ancestorId, [
+      {
+        event_id: randomUUID(), event_type: 'CounterIncrement',
+        occurred_at: new Date().toISOString(), schema_version: 1,
+        ancestor_id: Number(ancestorId), side: 'L', counter_type: 'active',
+        source_member_id: Number(lId), source_event_id: randomUUID(),
+      },
+      {
+        event_id: randomUUID(), event_type: 'CounterIncrement',
+        occurred_at: new Date().toISOString(), schema_version: 1,
+        ancestor_id: Number(ancestorId), side: 'R', counter_type: 'active',
+        source_member_id: Number(rId), source_event_id: randomUUID(),
+      },
+    ])
+
+    const { rows: cRows } = await pool().query<{ left_active: string; right_active: string; pairs_matched: string }>(
+      'SELECT left_active, right_active, pairs_matched FROM member_counters WHERE member_id=$1',
+      [ancestorId]
+    )
+    expect(cRows[0].left_active).toBe('1')
+    expect(cRows[0].right_active).toBe('1')
+    expect(cRows[0].pairs_matched).toBe('0')  // deprecated, frozen
+
+    const { rows: laRows } = await pool().query(
+      'SELECT side FROM leg_activations WHERE ancestor_id=$1', [ancestorId]
+    )
+    expect(laRows.length).toBe(2)
+
+    const { rows: pRows } = await pool().query(
+      'SELECT id FROM pairs WHERE member_id=$1', [ancestorId]
+    )
+    expect(pRows.length).toBe(0)
   })
 
   it('replayed increment is idempotent (processed_events)', async () => {
-    // This verifies the dedup path without needing full DB state
-    // Real verification requires a seeded member — integration test partial
-    expect(true).toBe(true)
+    const ts = (Date.now() + 7).toString().slice(-7)
+    const { memberId: ancestorId, memberCode: ancestorCode } = await registerAnchor(`T8IAnc${ts}`)
+    const { memberId: lId } = await registerMember({
+      sponsorCode: ancestorCode,
+      name: `T8IL${ts}`, phone: `7043${ts}`, email: uniqueEmail(), password: 'Test@1234',
+    })
+    const inc: CounterIncrement = {
+      event_id: randomUUID(), event_type: 'CounterIncrement',
+      occurred_at: new Date().toISOString(), schema_version: 1,
+      ancestor_id: Number(ancestorId), side: 'L', counter_type: 'active',
+      source_member_id: Number(lId), source_event_id: randomUUID(),
+    }
+    await applyIncrements(ancestorId, [inc])
+    await applyIncrements(ancestorId, [inc]) // replay — must be a no-op
+
+    const { rows: cRows } = await pool().query<{ left_active: string }>(
+      'SELECT left_active FROM member_counters WHERE member_id=$1', [ancestorId]
+    )
+    expect(cRows[0].left_active).toBe('1')
   })
 })
 
@@ -256,187 +302,6 @@ describe('T-CAP – referrals place directly under sponsor (L then R), 3rd is re
     expect(byId[String(bId)].parent_id).toBe(String(sponsorId))   // B directly under SPONSOR
     expect(byId[String(bId)].sponsor_id).toBe(String(sponsorId))
     expect(byId[String(bId)].position).toBe('R')
-  })
-})
-
-// T-G8-bonus: applyIncrements writes pairs.bonus_amount from CFG, not a hardcoded literal
-describe('T-G8-bonus – applyIncrements.pairs.bonus_amount comes from CFG.PAIR_BONUS_PAISE (G-8 regression guard)', () => {
-  it('pairs.bonus_amount = "1000.00" and PairMatched.amount_paise = CFG.PAIR_BONUS_PAISE', async () => {
-    const ts = Date.now().toString().slice(-7)
-
-    // Register an ancestor (gets a fresh member_counters row with 0/0/0)
-    const { memberId: ancestorId, memberCode: ancestorCode } = await registerAnchor(`BonAnc${ts}`)
-    // Register L and R members — their IDs are needed as source_member_id in CounterIncrement
-    // (and as FK targets in leg_activations). First referral fills L, second fills R.
-    const { memberId: lMemberId } = await registerMember({
-      sponsorCode: ancestorCode,
-      name: `BonL${ts}`, phone: `7031${ts}`, email: uniqueEmail(), password: 'Test@1234',
-    })
-    const { memberId: rMemberId } = await registerMember({
-      sponsorCode: ancestorCode,
-      name: `BonR${ts}`, phone: `7032${ts}`, email: uniqueEmail(), password: 'Test@1234',
-    })
-
-    // Build a matching L+R batch — one pair should be minted
-    const leftInc: CounterIncrement = {
-      event_id: randomUUID(),
-      event_type: 'CounterIncrement',
-      occurred_at: new Date().toISOString(),
-      schema_version: 1,
-      source_member_id: Number(lMemberId),
-      source_event_id: randomUUID(),
-      ancestor_id: Number(ancestorId),
-      counter_type: 'active',
-      side: 'L',
-    }
-    const rightInc: CounterIncrement = {
-      event_id: randomUUID(),
-      event_type: 'CounterIncrement',
-      occurred_at: new Date().toISOString(),
-      schema_version: 1,
-      source_member_id: Number(rMemberId),
-      source_event_id: randomUUID(),
-      ancestor_id: Number(ancestorId),
-      counter_type: 'active',
-      side: 'R',
-    }
-
-    // Phase 1.2: ancestor must be qualified for pairs to mint (BR-4/BR-6 gate)
-    await pool().query('UPDATE members SET is_qualified=TRUE WHERE id=$1', [ancestorId])
-
-    await applyIncrements(ancestorId, [leftInc, rightInc])
-
-    // Verify the pair was minted with the correct bonus_amount from CFG (not a hardcoded literal)
-    const { rows: pRows } = await pool().query<{ bonus_amount: string }>(
-      'SELECT bonus_amount FROM pairs WHERE member_id=$1 ORDER BY sequence_no',
-      [ancestorId]
-    )
-    expect(pRows.length).toBe(1)
-    expect(pRows[0].bonus_amount).toBe(fromPaise(BigInt(CFG.PAIR_BONUS_PAISE)))  // '1000.00'
-
-    // Verify the PairMatched outbox event carries amount_paise from CFG
-    const { rows: obRows } = await pool().query<{ payload: Record<string, unknown> }>(
-      `SELECT payload FROM events_outbox WHERE event_type='PairMatched' AND aggregate_id=$1`,
-      [ancestorId]
-    )
-    expect(obRows.length).toBeGreaterThanOrEqual(1)
-    // pg auto-parses JSONB columns — payload is already an object
-    const evt = obRows[0].payload
-    expect(evt.amount_paise).toBe(Number(CFG.PAIR_BONUS_PAISE))  // 100000
-  })
-})
-
-// T-qual-gate: unqualified ancestor mints zero pairs (BR-4/BR-6)
-describe('T-qual-gate – unqualified ancestor does not mint pairs', () => {
-  it('L+R increments with is_qualified=false → pairs table stays empty for ancestor', async () => {
-    const ts = Date.now().toString().slice(-7)
-    const { memberId: ancestorId, memberCode: ancestorCode } = await registerAnchor(`GateAnc${ts}`)
-    const { memberId: lId } = await registerMember({
-      sponsorCode: ancestorCode,
-      name: `GateL${ts}`, phone: `7041${ts}`, email: uniqueEmail(), password: 'Test@1234',
-    })
-    const { memberId: rId } = await registerMember({
-      sponsorCode: ancestorCode,
-      name: `GateR${ts}`, phone: `7042${ts}`, email: uniqueEmail(), password: 'Test@1234',
-    })
-
-    // ancestor is NOT qualified (is_qualified=false by default)
-    await applyIncrements(ancestorId, [
-      {
-        event_id: randomUUID(), event_type: 'CounterIncrement',
-        occurred_at: new Date().toISOString(), schema_version: 1,
-        ancestor_id: Number(ancestorId), side: 'L', counter_type: 'active',
-        source_member_id: Number(lId), source_event_id: randomUUID(),
-      },
-      {
-        event_id: randomUUID(), event_type: 'CounterIncrement',
-        occurred_at: new Date().toISOString(), schema_version: 1,
-        ancestor_id: Number(ancestorId), side: 'R', counter_type: 'active',
-        source_member_id: Number(rId), source_event_id: randomUUID(),
-      },
-    ])
-
-    const { rows: pRows } = await pool().query(
-      'SELECT id FROM pairs WHERE member_id=$1', [ancestorId]
-    )
-    expect(pRows.length).toBe(0)  // gate: no pairs minted while unqualified
-
-    // counters should still have been updated (backlog is in leg_activations)
-    const { rows: cRows } = await pool().query<{ left_active: string; right_active: string; pairs_matched: string }>(
-      'SELECT left_active, right_active, pairs_matched FROM member_counters WHERE member_id=$1',
-      [ancestorId]
-    )
-    expect(cRows[0].left_active).toBe('1')
-    expect(cRows[0].right_active).toBe('1')
-    expect(cRows[0].pairs_matched).toBe('0')
-  })
-})
-
-// T-backlog-mint: mint_check after qualification flushes backlog (D-3)
-describe('T-backlog-mint – mint_check after qualification mints accumulated backlog', () => {
-  it('qualify ancestor → send mint_check → backlog pair is minted', async () => {
-    const ts = (Date.now() + 1).toString().slice(-7)
-    const { memberId: ancestorId, memberCode: ancestorCode } = await registerAnchor(`BlAnc${ts}`)
-    const { memberId: lId } = await registerMember({
-      sponsorCode: ancestorCode,
-      name: `BlL${ts}`, phone: `7051${ts}`, email: uniqueEmail(), password: 'Test@1234',
-    })
-    const { memberId: rId } = await registerMember({
-      sponsorCode: ancestorCode,
-      name: `BlR${ts}`, phone: `7052${ts}`, email: uniqueEmail(), password: 'Test@1234',
-    })
-
-    const lEventId = randomUUID()
-    const rEventId = randomUUID()
-
-    // Accumulate backlog: L+R increments arrive while unqualified
-    await applyIncrements(ancestorId, [
-      {
-        event_id: lEventId, event_type: 'CounterIncrement',
-        occurred_at: new Date().toISOString(), schema_version: 1,
-        ancestor_id: Number(ancestorId), side: 'L', counter_type: 'active',
-        source_member_id: Number(lId), source_event_id: lEventId,
-      },
-      {
-        event_id: rEventId, event_type: 'CounterIncrement',
-        occurred_at: new Date().toISOString(), schema_version: 1,
-        ancestor_id: Number(ancestorId), side: 'R', counter_type: 'active',
-        source_member_id: Number(rId), source_event_id: rEventId,
-      },
-    ])
-
-    // Verify no pairs yet
-    const { rows: beforePairs } = await pool().query(
-      'SELECT id FROM pairs WHERE member_id=$1', [ancestorId]
-    )
-    expect(beforePairs.length).toBe(0)
-
-    // Qualify the ancestor (simulates evaluateQualification completing)
-    await pool().query('UPDATE members SET is_qualified=TRUE WHERE id=$1', [ancestorId])
-
-    // Send mint_check — synthetic increment that flushes the backlog
-    const mintCheckId = randomUUID()
-    await applyIncrements(ancestorId, [
-      {
-        event_id: mintCheckId, event_type: 'CounterIncrement',
-        occurred_at: new Date().toISOString(), schema_version: 1,
-        ancestor_id: Number(ancestorId), side: 'L', counter_type: 'mint_check',
-        source_member_id: Number(ancestorId), source_event_id: mintCheckId,
-      },
-    ])
-
-    // Backlog pair must now be minted
-    const { rows: afterPairs } = await pool().query<{ bonus_amount: string }>(
-      'SELECT bonus_amount FROM pairs WHERE member_id=$1', [ancestorId]
-    )
-    expect(afterPairs.length).toBe(1)
-    expect(afterPairs[0].bonus_amount).toBe(fromPaise(BigInt(CFG.PAIR_BONUS_PAISE)))
-
-    // pairs_matched should now be 1
-    const { rows: cRows } = await pool().query<{ pairs_matched: string }>(
-      'SELECT pairs_matched FROM member_counters WHERE member_id=$1', [ancestorId]
-    )
-    expect(cRows[0].pairs_matched).toBe('1')
   })
 })
 

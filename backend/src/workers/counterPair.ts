@@ -1,10 +1,8 @@
 import { randomUUID } from "crypto";
-import { CFG } from "../config.js";
 import { writeOutbox } from "../events/outbox.js";
 import { TOPICS } from "../events/topics.js";
 import type { CounterIncrement } from "../events/types.js";
 import { withTxn } from "../lib/db.js";
-import { fromPaise } from "../lib/money.js";
 import { startConsumer } from "../lib/streams.js";
 
 const GROUP = "avg-counter-pair";
@@ -34,25 +32,16 @@ export async function applyIncrements(
 		const { rows: cRows } = await c.query<{
 			left_active: string;
 			right_active: string;
-			pairs_matched: string;
 			left_qualified: string;
 			right_qualified: string;
 		}>(
-			"SELECT left_active, right_active, pairs_matched, left_qualified, right_qualified FROM member_counters WHERE member_id=$1 FOR UPDATE",
+			"SELECT left_active, right_active, left_qualified, right_qualified FROM member_counters WHERE member_id=$1 FOR UPDATE",
 			[ancestorId],
 		);
 		if (!cRows[0]) throw new Error(`No counters row for ${ancestorId}`);
 
-		// Phase 1.2: read qualification inside the txn (after the FOR UPDATE lock)
-		const { rows: qRows } = await c.query<{ is_qualified: boolean }>(
-			"SELECT is_qualified FROM members WHERE id=$1",
-			[ancestorId],
-		);
-		const isQualified = qRows[0]?.is_qualified ?? false;
-
 		let leftActive = BigInt(cRows[0].left_active);
 		let rightActive = BigInt(cRows[0].right_active);
-		let pairsMatched = BigInt(cRows[0].pairs_matched);
 		let leftQual = BigInt(cRows[0].left_qualified);
 		let rightQual = BigInt(cRows[0].right_qualified);
 		let qualChanged = false;
@@ -109,74 +98,19 @@ export async function applyIncrements(
 			}
 		}
 
-		// Mint new pairs (BR-3); gate on qualification (BR-4/BR-6).
-		// mint_check increments (D-3) pass through the loop above without changing counters
-		// and arrive here with isQualified=TRUE to flush any accumulated backlog.
-		const newPairs = isQualified
-			? BigInt(
-					Math.min(Number(leftActive), Number(rightActive)) -
-						Number(pairsMatched),
-				)
-			: 0n;
-
-		for (let k = 1n; k <= newPairs; k++) {
-			const seq = pairsMatched + k;
-
-			// Both leg_activations rows MUST exist
-			const { rows: la } = await c.query<{ member_id: string }>(
-				"SELECT member_id FROM leg_activations WHERE ancestor_id=$1 AND side=$2 AND seq=$3",
-				[ancestorId, "L", seq],
-			);
-			const { rows: ra } = await c.query<{ member_id: string }>(
-				"SELECT member_id FROM leg_activations WHERE ancestor_id=$1 AND side=$2 AND seq=$3",
-				[ancestorId, "R", seq],
-			);
-			if (!la[0] || !ra[0]) {
-				throw new Error(
-					`Missing leg_activation for ancestor=${ancestorId} seq=${seq} — data integrity error`,
-				);
-			}
-
-			const { rows: pairRows } = await c.query<{ id: string }>(
-				`INSERT INTO pairs (member_id, sequence_no, left_member_id, right_member_id, bonus_amount)
-         VALUES ($1,$2,$3,$4,$5)
-         ON CONFLICT (member_id, sequence_no) DO NOTHING
-         RETURNING id`,
-				[
-					ancestorId,
-					seq,
-					la[0].member_id,
-					ra[0].member_id,
-					fromPaise(BigInt(CFG.PAIR_BONUS_PAISE)),
-				],
-			);
-			if (pairRows[0]) {
-				await writeOutbox(c, {
-					event_id: randomUUID(),
-					event_type: "PairMatched",
-					occurred_at: new Date().toISOString(),
-					schema_version: 1,
-					pair_id: Number(pairRows[0].id),
-					member_id: Number(ancestorId),
-					sequence_no: Number(seq),
-					left_member_id: Number(la[0].member_id),
-					right_member_id: Number(ra[0].member_id),
-					amount_paise: Number(CFG.PAIR_BONUS_PAISE),
-				});
-			}
-		}
-
-		pairsMatched += newPairs;
-
+		// Income no longer mints here (since 020): pair completion is detected by
+		// workers/pairComplete.ts on the placement children, and money flows through
+		// pair_accruals in the ledger worker. Counters remain for display and ranks.
+		// pairs_matched is DEPRECATED — frozen at its current value (0 post-reset).
 		await c.query(
 			`UPDATE member_counters
-         SET left_active=$1, right_active=$2, pairs_matched=$3,
-             left_qualified=$4, right_qualified=$5, updated_at=now()
-       WHERE member_id=$6`,
-			[leftActive, rightActive, pairsMatched, leftQual, rightQual, ancestorId],
+         SET left_active=$1, right_active=$2,
+             left_qualified=$3, right_qualified=$4, updated_at=now()
+       WHERE member_id=$5`,
+			[leftActive, rightActive, leftQual, rightQual, ancestorId],
 		);
 
-		if (qualChanged || newPairs > 0n) {
+		if (qualChanged) {
 			await writeOutbox(c, {
 				event_id: randomUUID(),
 				event_type: "RankEvalRequested",

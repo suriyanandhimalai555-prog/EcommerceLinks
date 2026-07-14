@@ -1,22 +1,20 @@
 import { describe, it, expect } from 'vitest'
 
-describe('counterPair — pair minting logic (G-5)', () => {
-  // Pure JS equivalent of the newPairs calculation in applyIncrements.
-  function calcNewPairs(leftActive: bigint, rightActive: bigint, pairsMatched: bigint): bigint {
-    return BigInt(Math.min(Number(leftActive), Number(rightActive)) - Number(pairsMatched))
-  }
+describe('counterPair — counters only (income moved to pair_accruals in 020)', () => {
+  // Since migration 020, applyIncrements maintains left/right active + qualified
+  // counters and leg_activations only. Pair income is detected by
+  // workers/pairComplete.ts and paid via pair_accruals in the ledger worker.
 
-  it('mints the correct number of new pairs', () => {
-    expect(calcNewPairs(5n, 3n, 2n)).toBe(1n)
-    expect(calcNewPairs(4n, 4n, 0n)).toBe(4n)
-    expect(calcNewPairs(3n, 3n, 3n)).toBe(0n)
-    expect(calcNewPairs(10n, 2n, 2n)).toBe(0n)
-  })
-
-  it('never produces a negative pair count', () => {
-    // pairsMatched should never exceed min(left,right) thanks to the DB constraint,
-    // but guard the JS side too.
-    expect(calcNewPairs(2n, 2n, 2n)).toBe(0n)
+  it('active increments bump the counter by exactly one per event', () => {
+    // Pure equivalent of the L/R branch in applyIncrements.
+    let left = 0n
+    let right = 0n
+    for (const side of ['L', 'R', 'L'] as const) {
+      if (side === 'L') left++
+      else right++
+    }
+    expect(left).toBe(2n)
+    expect(right).toBe(1n)
   })
 
   // G-5 regression: right-leg rank achiever first insert must use right_count=1, not 0.

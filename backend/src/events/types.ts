@@ -33,20 +33,10 @@ export interface CounterIncrement extends Envelope {
 	event_type: "CounterIncrement";
 	ancestor_id: number;
 	side: "L" | "R";
-	counter_type: "active" | "qualified" | "rank_achiever" | "mint_check";
+	counter_type: "active" | "qualified" | "rank_achiever";
 	rank_level?: number;
 	source_member_id: number;
 	source_event_id: string;
-}
-
-export interface PairMatched extends Envelope {
-	event_type: "PairMatched";
-	pair_id: number;
-	member_id: number;
-	sequence_no: number;
-	left_member_id: number;
-	right_member_id: number;
-	amount_paise: number;
 }
 
 // Both direct referrals of member_id are active — one per member, ever.
@@ -128,7 +118,6 @@ export type AvgEvent =
 	| MemberActivated
 	| MemberQualified
 	| CounterIncrement
-	| PairMatched
 	| PairCompleted
 	| PairBonusAccrued
 	| PendingBonusReleaseRequested

@@ -41,7 +41,6 @@ function route(e: AvgEvent): RouteInfo {
 				aggregateType: "member",
 				aggregateId: BigInt(e.beneficiary_id),
 			};
-		case "PairMatched":
 		case "PendingBonusReleaseRequested":
 		case "DeferredSweepRequested":
 			return {

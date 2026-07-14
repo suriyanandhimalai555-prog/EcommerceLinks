@@ -1,11 +1,7 @@
 import type pg from "pg";
 import { CFG } from "../config.js";
 import { TOPICS } from "../events/topics.js";
-import type {
-	AvgEvent,
-	DeferredSweepRequested,
-	PairMatched,
-} from "../events/types.js";
+import type { AvgEvent, DeferredSweepRequested } from "../events/types.js";
 import { withTxn } from "../lib/db.js";
 import { txnUuid } from "../lib/ids.js";
 import { fromPaise, toPaise } from "../lib/money.js";
@@ -182,31 +178,6 @@ export async function creditBonusWithCap(
 	return posted;
 }
 
-export async function creditPairBonus(e: PairMatched): Promise<void> {
-	await withTxn(async (c) => {
-		// Idempotency check
-		const { rows: done } = await c.query(
-			"SELECT 1 FROM processed_events WHERE consumer_group=$1 AND event_id=$2",
-			[GROUP, e.event_id],
-		);
-		if (done.length > 0) return;
-
-		await creditBonusWithCap(
-			c,
-			BigInt(e.member_id),
-			BigInt(CFG.PAIR_BONUS_PAISE),
-			`pair:${e.pair_id}`,
-			"pair",
-			BigInt(e.pair_id),
-		);
-
-		await c.query(
-			"INSERT INTO processed_events (consumer_group, event_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
-			[GROUP, e.event_id],
-		);
-	});
-}
-
 export async function sweepDeferred(e: DeferredSweepRequested): Promise<void> {
 	await withTxn(async (c) => {
 		const { rows: done } = await c.query(
@@ -290,7 +261,6 @@ export async function run() {
 		mode: "message",
 		onMessage: async (value) => {
 			const e = JSON.parse(value) as AvgEvent;
-			if (e.event_type === "PairMatched") await creditPairBonus(e);
 			if (e.event_type === "DeferredSweepRequested") await sweepDeferred(e);
 		},
 	});
