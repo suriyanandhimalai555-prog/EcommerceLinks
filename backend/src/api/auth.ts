@@ -12,6 +12,7 @@ import {
 	otpEmailTemplate,
 } from "../services/mailer.js";
 import {
+	checkAndIncrOtpGenLimit,
 	generateAndStoreOtp,
 	verifyOtp,
 } from "../services/loginOtp.js";
@@ -69,7 +70,6 @@ let app_instance: FastifyInstance;
 
 /** Shared helper: build and return the full session response (access + refresh tokens + me). */
 async function issueSession(
-	app: FastifyInstance,
 	member: { id: string | bigint; member_code: string; name: string },
 	me: Awaited<ReturnType<typeof buildMe>>,
 ) {
@@ -78,7 +78,7 @@ async function issueSession(
 		code: member.member_code,
 		name: member.name,
 	};
-	const accessToken = app.jwt.sign(payload, { expiresIn: CFG.JWT_ACCESS_TTL });
+	const accessToken = app_instance.jwt.sign(payload, { expiresIn: CFG.JWT_ACCESS_TTL });
 	const refreshToken = await issueRefreshToken(String(member.id));
 	return {
 		accessToken,
@@ -194,6 +194,11 @@ export async function authRoutes(app: FastifyInstance) {
 			// Gate on OTP setting.
 			const otpEnabled = await getSetting<boolean>("login_otp_enabled");
 			if (otpEnabled) {
+				const allowed = await checkAndIncrOtpGenLimit(String(member.id));
+				if (!allowed)
+					return reply.status(429).send({
+						error: "Too many code requests. Try again in 15 minutes.",
+					});
 				const code = await generateAndStoreOtp(String(member.id));
 				// Best-effort send — the code is authoritative in Redis even if email fails.
 				sendMail(
@@ -208,7 +213,7 @@ export async function authRoutes(app: FastifyInstance) {
 				return reply.send({ otpRequired: true });
 			}
 
-			return reply.send(await issueSession(app, member, me));
+			return reply.send(await issueSession(member, me));
 		},
 	);
 
@@ -224,13 +229,28 @@ export async function authRoutes(app: FastifyInstance) {
 			},
 		},
 		async (req, reply) => {
+			// Reject if OTP login is currently disabled — prevents stale codes
+			// from being accepted after the feature is turned off.
+			const otpEnabled = await getSetting<boolean>("login_otp_enabled");
+			if (!otpEnabled)
+				return reply.status(404).send({ error: "OTP login is not enabled" });
+
 			const body = VerifyOtpBody.safeParse(req.body);
 			if (!body.success)
 				return reply.status(400).send({ error: body.error.flatten() });
 
-			const member = await findMemberByEmail(body.data.email);
-			if (!member)
+			// Minimal SELECT — no password_hash needed here (we're past credential check).
+			const { rows: memberRows } = await pool().query<{
+				id: string;
+				name: string;
+				member_code: string;
+			}>(
+				"SELECT id, name, member_code FROM members WHERE lower(email) = lower($1)",
+				[body.data.email],
+			);
+			if (!memberRows[0])
 				return reply.status(401).send({ error: "Invalid credentials" });
+			const member = memberRows[0];
 
 			const result = await verifyOtp(String(member.id), body.data.otp);
 			if (!result.ok) {
@@ -258,7 +278,7 @@ export async function authRoutes(app: FastifyInstance) {
 					},
 				});
 
-			return reply.send(await issueSession(app, member, me));
+			return reply.send(await issueSession(member, me));
 		},
 	);
 

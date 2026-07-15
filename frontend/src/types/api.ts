@@ -86,6 +86,19 @@ export interface OrderStatus {
   totalPaise: number
 }
 
+// ---- admin: pending orders ----
+export interface AdminOrder {
+  orderId: string
+  memberCode: string
+  memberName: string
+  productName: string
+  totalPaise: number
+  status: string
+  createdAt: string
+  paymentRef?: string
+  confirmedAt?: string
+}
+
 // ---- dashboard ----
 export interface DashboardCounters {
   leftActive: number

@@ -25,6 +25,7 @@ import {
 } from "../services/productService.js";
 import { postLedgerTxn } from "../workers/ledger.js";
 import { buildBatch } from "../workers/payout.js";
+import { confirmOrder } from "../services/orderService.js";
 
 export async function adminRoutes(app: FastifyInstance) {
 	const auth = { preHandler: [app.requireAdmin] };
@@ -1096,6 +1097,93 @@ export async function adminRoutes(app: FastifyInstance) {
 		}));
 	});
 
+	// ===== Orders (pending payment confirmation) =====
+
+	// GET /orders?status=created|confirmed  — list orders by status.
+	app.get("/orders", auth, async (req) => {
+		const { status = "created" } = req.query as { status?: string };
+		const { rows } = await pool().query<{
+			id: string;
+			member_code: string;
+			member_name: string;
+			product_name: string;
+			total_amount: string;
+			status: string;
+			created_at: string;
+			payment_ref: string | null;
+			confirmed_at: string | null;
+		}>(
+			`SELECT o.id, m.member_code, m.name AS member_name, p.name AS product_name,
+			        o.total_amount, o.status, o.created_at,
+			        o.payment_ref, o.confirmed_at
+			   FROM orders o
+			   JOIN members m  ON m.id  = o.member_id
+			   JOIN products p ON p.id  = o.product_id
+			  WHERE o.status = $1
+			  ORDER BY o.created_at DESC`,
+			[status],
+		);
+		return rows.map((r) => ({
+			orderId: r.id,
+			memberCode: r.member_code,
+			memberName: r.member_name,
+			productName: r.product_name,
+			totalPaise: Number(toPaise(r.total_amount)),
+			status: r.status,
+			createdAt: r.created_at,
+			paymentRef: r.payment_ref ?? undefined,
+			confirmedAt: r.confirmed_at ?? undefined,
+		}));
+	});
+
+	// POST /orders/:orderId/confirm-payment — admin manually confirms an offline payment.
+	const ConfirmPaymentBody = z.object({
+		paymentRef: z.string().min(1, "Payment reference is required"),
+	});
+
+	app.post("/orders/:orderId/confirm-payment", auth, async (req, reply) => {
+		const { orderId } = req.params as { orderId: string };
+		const actor = req.user as { sub: string };
+
+		const body = ConfirmPaymentBody.safeParse(req.body);
+		if (!body.success)
+			return reply.status(400).send({ error: body.error.flatten() });
+
+		// Load the order — we need idempotency_key to call confirmOrder.
+		const { rows } = await pool().query<{
+			idempotency_key: string;
+			status: string;
+			member_id: string;
+		}>(
+			"SELECT idempotency_key, status, member_id FROM orders WHERE id = $1",
+			[orderId],
+		);
+		if (!rows[0])
+			return reply.status(404).send({ error: "Order not found" });
+		if (rows[0].status !== "created")
+			return reply
+				.status(409)
+				.send({ error: "Order is already confirmed, failed, or refunded" });
+
+		// confirmOrder is idempotent and writes MemberActivated inside its own transaction.
+		await confirmOrder(rows[0].idempotency_key, BigInt(orderId), body.data.paymentRef);
+
+		// Audit trail — same pattern as /ranks/:id/approve.
+		await pool().query(
+			`INSERT INTO admin_audit_log
+			   (actor_id, action, target_type, target_id, before_state, after_state)
+			 VALUES ($1, 'order_confirm', 'order', $2, $3, $4)`,
+			[
+				actor.sub,
+				orderId,
+				{ status: rows[0].status },
+				{ status: "confirmed", paymentRef: body.data.paymentRef },
+			],
+		);
+
+		return { ok: true };
+	});
+
 	// ===== System settings (feature flags) =====
 	// GET — both admin and management may read.
 	app.get("/settings", auth, async () => {
@@ -1136,13 +1224,18 @@ export async function adminRoutes(app: FastifyInstance) {
 		if (patches.length === 0)
 			return reply.status(400).send({ error: "No settings fields provided" });
 
+		// Capture updated values and read the full snapshot inside the same
+		// transaction to avoid a stale-read race on the post-commit re-read.
+		const snapshot: Record<string, boolean> = {};
 		await withTxn(async (c) => {
 			for (const patch of patches) {
 				const result = await setSetting(c, patch.dbKey, patch.value, actor.sub);
+				snapshot[patch.dbKey] = Boolean(result.after);
+				// target_id is NULL for system-level settings changes (no member target).
 				await c.query(
 					`INSERT INTO admin_audit_log
-             (actor_id, action, target_type, before_state, after_state)
-           VALUES ($1, 'settings_change', 'system', $2, $3)`,
+             (actor_id, action, target_type, target_id, before_state, after_state)
+           VALUES ($1, 'settings_change', 'system', NULL, $2, $3)`,
 					[
 						actor.sub,
 						{ [patch.dbKey]: result.before },
@@ -1150,14 +1243,18 @@ export async function adminRoutes(app: FastifyInstance) {
 					],
 				);
 			}
+			// Read un-patched keys so the response is always complete.
+			const { rows } = await c.query<{ key: string; value: unknown }>(
+				"SELECT key, value FROM system_settings",
+			);
+			for (const row of rows) {
+				if (!(row.key in snapshot)) snapshot[row.key] = Boolean(row.value);
+			}
 		});
-
-		// Re-read all settings to return a consistent snapshot.
-		const raw = await getAllSettings();
 		return {
-			kycOptional: Boolean(raw["kyc_optional"]),
-			welcomeEmailEnabled: Boolean(raw["welcome_email_enabled"]),
-			loginOtpEnabled: Boolean(raw["login_otp_enabled"]),
+			kycOptional: snapshot["kyc_optional"] ?? false,
+			welcomeEmailEnabled: snapshot["welcome_email_enabled"] ?? false,
+			loginOtpEnabled: snapshot["login_otp_enabled"] ?? false,
 		};
 	});
 }

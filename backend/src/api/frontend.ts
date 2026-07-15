@@ -260,6 +260,13 @@ export async function frontendRoutes(app: FastifyInstance) {
 				.status(404)
 				.send({ error: { code: "NOT_FOUND", message: "Member not found" } });
 
+		// Same-password check BEFORE verify so a 400 never reveals whether
+		// the supplied currentPassword matched the stored hash.
+		if (body.data.newPassword === body.data.currentPassword)
+			return reply
+				.status(400)
+				.send({ error: "New password must be different from the current one" });
+
 		const valid = await argon2.verify(
 			rows[0].password_hash,
 			body.data.currentPassword,
@@ -269,17 +276,18 @@ export async function frontendRoutes(app: FastifyInstance) {
 				.status(401)
 				.send({ error: "Current password is incorrect" });
 
-		if (body.data.newPassword === body.data.currentPassword)
-			return reply
-				.status(400)
-				.send({ error: "New password must be different from the current one" });
-
 		// Hash outside any transaction — argon2 is deliberately slow.
 		const newHash = await argon2.hash(body.data.newPassword);
 
 		await pool().query(
 			"UPDATE members SET password_hash = $2 WHERE id = $1",
 			[memberId, newHash],
+		);
+
+		// Revoke all live refresh tokens so other-device sessions end immediately.
+		await pool().query(
+			"UPDATE refresh_tokens SET revoked_at = now() WHERE member_id = $1 AND revoked_at IS NULL",
+			[memberId],
 		);
 
 		return reply.send({ ok: true });
@@ -578,34 +586,6 @@ export async function frontendRoutes(app: FastifyInstance) {
 			totalPaise: Number(toPaise(rows[0].total_amount)),
 		};
 	});
-
-	// Dev-only route: only registered in development; not present in staging/production at all.
-	if (CFG.NODE_ENV === "development") {
-		app.post("/dev/simulate-payment", auth, async (req, reply) => {
-			const body = z
-				.object({ orderId: z.union([z.string(), z.number()]) })
-				.safeParse(req.body);
-			if (!body.success)
-				return reply.status(400).send({
-					error: { code: "BAD_REQUEST", message: "orderId required" },
-				});
-			const orderId = String(body.data.orderId);
-			const { rows } = await pool().query<{ idempotency_key: string }>(
-				"SELECT idempotency_key FROM orders WHERE id = $1",
-				[orderId],
-			);
-			if (!rows[0])
-				return reply
-					.status(404)
-					.send({ error: { code: "NOT_FOUND", message: "Order not found" } });
-			await confirmOrder(
-				rows[0].idempotency_key,
-				BigInt(orderId),
-				`dev-sim-${orderId}`,
-			);
-			return { success: true };
-		});
-	}
 
 	// Payment gateway webhook
 	const WebhookBody = z.object({

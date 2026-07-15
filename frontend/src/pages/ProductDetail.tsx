@@ -3,20 +3,12 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { isAxiosError } from 'axios'
 import { useTranslation } from 'react-i18next'
-import { ArrowLeft, CheckCircle2, Loader2, ShieldAlert, ShoppingBag } from 'lucide-react'
+import { ArrowLeft, CheckCircle2, Clock, Loader2, ShieldAlert, ShoppingBag } from 'lucide-react'
 import api from '../lib/api'
 import { formatINR } from '../lib/format'
 import { ImageGallery } from '../components/ui/ImageGallery'
 import { EmptyState } from '../components/ui/EmptyState'
-import type { Me, Product } from '../types/api'
-
-const PAYMENT_METHODS = [
-  { id: 'upi', label: 'UPI' },
-  { id: 'phonepe', label: 'PhonePe' },
-  { id: 'gpay', label: 'GPay' },
-  { id: 'card', label: 'Card' },
-  { id: 'netbanking', label: 'NetBanking' },
-]
+import type { Me, OrderStatus, Product } from '../types/api'
 
 export default function ProductDetail() {
   const { t } = useTranslation()
@@ -24,10 +16,8 @@ export default function ProductDetail() {
   const navigate = useNavigate()
   const qc = useQueryClient()
 
-  const [paymentMethod, setPaymentMethod] = useState('upi')
   const [terms, setTerms] = useState(false)
   const [orderId, setOrderId] = useState<string | null>(null)
-  const [orderStatus, setOrderStatus] = useState<string | null>(null)
   const [kycBlocked, setKycBlocked] = useState(false)
 
   const { data: me } = useQuery<Me>({
@@ -47,6 +37,14 @@ export default function ProductDetail() {
     retry: false,
   })
 
+  // Poll the order status after creation — flips to confirmed once admin confirms payment.
+  const { data: orderStatus } = useQuery<OrderStatus>({
+    queryKey: ['order-status', orderId],
+    queryFn: () => api.get(`/orders/${orderId}`).then((r) => r.data),
+    enabled: !!orderId,
+    refetchInterval: 10_000, // check every 10 seconds
+  })
+
   // kycMandatory defaults to true so old API responses still enforce the gate
   const kycRequired = kycBlocked || (me != null && (me.kycMandatory ?? true) && me.kycStatus !== 'verified')
 
@@ -54,7 +52,6 @@ export default function ProductDetail() {
     mutationFn: () => api.post('/orders', { productId: Number(pid) }),
     onSuccess: (res) => {
       setOrderId(res.data.orderId)
-      setOrderStatus('created')
     },
     onError: (err) => {
       if (isAxiosError(err) && err.response?.data?.error?.code === 'KYC_REQUIRED')
@@ -62,15 +59,8 @@ export default function ProductDetail() {
     },
   })
 
-  const simulatePay = useMutation({
-    mutationFn: () => api.post('/dev/simulate-payment', { orderId }),
-    onSuccess: () => {
-      setOrderStatus('confirmed')
-      qc.invalidateQueries()
-    },
-  })
-
-  if (orderStatus === 'confirmed') {
+  // ── Success screen (admin confirmed payment) ─────────────────────────────
+  if (orderStatus?.status === 'confirmed') {
     return (
       <div className="max-w-lg mx-auto py-16 text-center animate-fade-in">
         <div className="w-20 h-20 bg-success-50 rounded-full flex items-center justify-center mx-auto mb-6">
@@ -85,33 +75,50 @@ export default function ProductDetail() {
     )
   }
 
+  // ── Awaiting payment screen (order placed, pending admin confirmation) ────
   if (orderId) {
     return (
-      <div className="max-w-lg mx-auto py-16 text-center animate-fade-in">
-        <div className="avg-card p-8">
-          <div className="w-16 h-16 bg-primary-50 rounded-full flex items-center justify-center mx-auto mb-4">
-            <ShoppingBag size={28} className="text-primary" />
+      <div className="max-w-lg mx-auto py-16 animate-fade-in">
+        <div className="avg-card p-8 space-y-6">
+          <div className="text-center">
+            <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-4">
+              <ShoppingBag size={28} className="text-primary" />
+            </div>
+            <h2 className="text-xl font-bold text-ink">{t('buy.awaitingPaymentTitle')}</h2>
           </div>
-          <h2 className="text-xl font-bold text-ink mb-2">{t('buy.orderCreated')}</h2>
-          <p className="text-sm text-ink-muted mb-2">
-            {t('buy.orderIdLabel')}: <span className="font-mono font-semibold">{orderId}</span>
+
+          {/* Order summary */}
+          <div className="bg-white/5 rounded-xl p-4 space-y-2">
+            <div className="flex justify-between text-sm">
+              <span className="text-ink-muted">{t('buy.orderIdLabel')}</span>
+              <span className="font-mono font-semibold text-ink">{orderId}</span>
+            </div>
+            <div className="flex justify-between text-sm">
+              <span className="text-ink-muted">{t('buy.amount')}</span>
+              <span className="font-bold text-primary">{product && formatINR(product.totalPaise)}</span>
+            </div>
+          </div>
+
+          {/* Instructions */}
+          <p className="text-sm text-ink-muted leading-relaxed">
+            {t('buy.awaitingPaymentInstructions')}
           </p>
-          <p className="text-sm text-ink-muted mb-6">
-            {t('buy.amount')}: <strong>{product && formatINR(product.totalPaise)}</strong>
+
+          <p className="text-xs text-ink-muted bg-warning/10 border border-warning/20 rounded-lg p-3">
+            {t('buy.awaitingPaymentContact')}
           </p>
-          <button
-            onClick={() => simulatePay.mutate()}
-            disabled={simulatePay.isPending}
-            className="avg-btn-primary w-full py-3"
-          >
-            {simulatePay.isPending ? <Loader2 size={16} className="animate-spin inline mr-2" /> : null}
-            {t('buy.simulatePay')}
-          </button>
+
+          {/* Live polling indicator */}
+          <div className="flex items-center gap-2 text-xs text-ink-muted justify-center">
+            <Clock size={13} className="animate-pulse" />
+            {t('buy.awaitingPaymentPending')}
+          </div>
         </div>
       </div>
     )
   }
 
+  // ── Loading skeleton ──────────────────────────────────────────────────────
   if (isPending) {
     return (
       <div className="max-w-5xl mx-auto space-y-6 animate-pulse">
@@ -126,7 +133,6 @@ export default function ProductDetail() {
           <div className="avg-card p-5 space-y-4">
             <div className="h-4 bg-white/10 rounded w-1/2" />
             <div className="h-10 bg-white/5 rounded" />
-            <div className="h-10 bg-white/5 rounded" />
             <div className="h-12 bg-white/10 rounded" />
           </div>
         </div>
@@ -134,6 +140,7 @@ export default function ProductDetail() {
     )
   }
 
+  // ── Not found ─────────────────────────────────────────────────────────────
   if (isError || !product) {
     return (
       <div className="max-w-lg mx-auto py-16">
@@ -151,6 +158,7 @@ export default function ProductDetail() {
     )
   }
 
+  // ── Product detail + buy form ─────────────────────────────────────────────
   return (
     <div className="max-w-5xl mx-auto space-y-6">
       <Link to="/buy" className="inline-flex items-center gap-1.5 text-sm text-ink-muted hover:text-ink transition-colors">
@@ -202,26 +210,6 @@ export default function ProductDetail() {
             <div className="flex justify-between text-base font-bold border-t border-surface-line pt-2">
               <span className="text-ink">{t('buy.total')}</span>
               <span className="text-primary">{formatINR(product.totalPaise)}</span>
-            </div>
-          </div>
-
-          {/* Payment method */}
-          <div>
-            <p className="text-xs font-semibold text-ink-muted uppercase tracking-wider mb-2">{t('buy.paymentMethod')}</p>
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-3 xl:grid-cols-5 gap-2">
-              {PAYMENT_METHODS.map((m) => (
-                <button
-                  key={m.id}
-                  onClick={() => setPaymentMethod(m.id)}
-                  className={`border rounded-lg px-2 py-2 text-xs font-medium transition-all cursor-pointer ${
-                    paymentMethod === m.id
-                      ? 'border-primary bg-primary-50 text-primary'
-                      : 'border-surface-line hover:border-[#39415E] text-ink-muted'
-                  }`}
-                >
-                  {m.label}
-                </button>
-              ))}
             </div>
           </div>
 

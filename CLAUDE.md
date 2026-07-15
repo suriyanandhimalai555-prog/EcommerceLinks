@@ -26,6 +26,15 @@ Monorepo: `backend/` (Fastify + Postgres + Redis Streams, event-driven MLM engin
 
 ## Commands
 
+**Two Railway Postgres databases and two Redis instances — dev copies are fully isolated:**
+
+| | Postgres | Redis |
+|---|---|---|
+| **Production** | `hayabusa.proxy.rlwy.net:53263` | `hopper.proxy.rlwy.net:53241` |
+| **Development copy** | `tokaido.proxy.rlwy.net:20053` | `tokaido.proxy.rlwy.net:35599` |
+
+Local `backend/.env` must always point `DATABASE_URL` and `REDIS_URL` at the **development copy** rows. Never use the production hosts locally. The dev copies are safe for seeding, simulating, and running workers against.
+
 Backend (run from `backend/`). Local infra: Postgres 16 + Redis 7 (native install — no Docker required).
 
 ```bash
@@ -97,3 +106,4 @@ There is no CI or deploy pipeline **yet**. Building CI (GitHub Actions gating `m
 - **All amounts crossing the API boundary are integer paise** with `…Paise` field names. Do not introduce rupee floats in JSON.
 - **Auth-required routes** must use the `app.authenticate` preHandler; `/admin/*` routes must use `app.requireAdmin` (live DB role lookup, accepts `admin` and `management`) and write `admin_audit_log` for every mutation.
 - Don't commit `.vite/`, `backend/out/`, or `.env` files.
+- **Never write to the production database from local dev.** Local `backend/.env` must always point `DATABASE_URL` at the **development copy** (`tokaido.proxy.rlwy.net:20053`), never at the production host (`hayabusa.proxy.rlwy.net:53263`). `npm run seed`, `npm run simulate`, and ad-hoc SQL are fine against the dev copy; forbidden against production.

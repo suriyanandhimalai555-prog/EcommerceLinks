@@ -13,10 +13,12 @@ import { PayoutsTab } from './PayoutsTab'
 import { SystemTab } from './SystemTab'
 import { AuditTab } from './AuditTab'
 import { SettingsTab } from './SettingsTab'
+import { OrdersTab } from './OrdersTab'
 
 const sections = [
   { path: '/admin', label: 'Overview', end: true },
   { path: '/admin/members', label: 'Members', end: false },
+  { path: '/admin/orders', label: 'Orders', end: false },
   { path: '/admin/ranks', label: 'Ranks', end: false },
   { path: '/admin/payouts', label: 'Payouts', end: false },
   { path: '/admin/system', label: 'System', end: false },
@@ -62,6 +64,7 @@ export default function AdminConsole() {
       <Routes>
         <Route index element={<OverviewTab />} />
         <Route path="members" element={<MembersTab />} />
+        <Route path="orders" element={<OrdersTab />} />
         {/* Product CRUD, KYC approvals, and system settings are management-only (backend enforces regardless) */}
         {isManagement(me) && <Route path="products" element={<ProductsTab />} />}
         {isManagement(me) && <Route path="kyc" element={<KycTab />} />}

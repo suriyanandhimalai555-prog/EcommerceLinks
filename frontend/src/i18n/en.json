@@ -24,6 +24,7 @@
     "adminSystem": "System Health",
     "adminAudit": "Audit Log",
     "adminSettings": "Settings",
+    "adminOrders": "Orders",
     "logout": "Logout"
   },
   "adminSettings": {
@@ -132,7 +133,10 @@
     "goToDashboard": "Go to Dashboard",
     "notFoundTitle": "Product not found",
     "notFoundDesc": "This product is not available.",
-    "simulatePay": "Simulate Payment (Dev)",
+    "awaitingPaymentTitle": "Complete Your Payment",
+    "awaitingPaymentInstructions": "Transfer the exact amount via UPI or bank transfer and quote your Order ID in the remarks. Your account will be activated once our team verifies and confirms the payment.",
+    "awaitingPaymentPending": "Waiting for payment confirmation…",
+    "awaitingPaymentContact": "Contact us on WhatsApp or call our support team and share your Order ID to speed up confirmation.",
     "alreadyActive": "Additional purchase — does not create a second activation.",
     "kycRequired": "KYC verification is required before you can buy. Upload your document and wait for approval.",
     "kycRequiredCta": "Complete KYC"
@@ -190,6 +194,29 @@
     "members": {
       "noDocsWarning": "No KYC documents uploaded yet — verify only if documents were checked another way.",
       "kycReadOnly": "KYC decisions are made by management on the KYC Approvals page."
+    },
+    "orders": {
+      "title": "Pending Orders",
+      "subtitle": "Members who have placed an order and are awaiting offline payment confirmation.",
+      "confirmBtn": "Confirm Payment",
+      "confirmTitle": "Confirm offline payment",
+      "confirmHint": "Enter the UPI transaction ID or bank reference that the member shared.",
+      "paymentRefLabel": "Payment Reference",
+      "paymentRefPlaceholder": "e.g. UPI txn ref / bank transfer ID",
+      "paymentRefRequired": "Payment reference is required",
+      "confirmSubmit": "Confirm & Activate",
+      "emptyTitle": "No pending orders",
+      "emptyDesc": "All orders have been confirmed or are yet to be placed.",
+      "colMember": "Member",
+      "colProduct": "Product",
+      "colAmount": "Amount",
+      "colDate": "Placed On",
+      "colPaymentRef": "Payment Reference",
+      "colConfirmedAt": "Confirmed On",
+      "filterPending": "Awaiting Payment",
+      "filterConfirmed": "Payment History",
+      "confirmedEmptyTitle": "No confirmed orders yet",
+      "confirmedEmptyDesc": "Confirmed orders will appear here after payment is verified."
     }
   },
   "payout": {
