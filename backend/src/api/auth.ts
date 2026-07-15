@@ -191,9 +191,9 @@ export async function authRoutes(app: FastifyInstance) {
 					},
 				});
 
-			// Gate on OTP setting.
+			// Management accounts bypass OTP — they are internal staff, not members.
 			const otpEnabled = await getSetting<boolean>("login_otp_enabled");
-			if (otpEnabled) {
+			if (otpEnabled && me.role !== "management") {
 				const allowed = await checkAndIncrOtpGenLimit(String(member.id));
 				if (!allowed)
 					return reply.status(429).send({
