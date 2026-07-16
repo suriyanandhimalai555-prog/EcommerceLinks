@@ -454,7 +454,9 @@ export async function adminRoutes(app: FastifyInstance) {
 	// ===== member update (name/email/phone only — BR-11) =====
 	const PatchMemberBody = z.object({
 		name: z.string().min(1).optional(),
-		email: z.string().email().nullable().optional(),
+		// email must not be nullable — column is NOT NULL since migration 016.
+		// Stored and queried lowercase; we normalise here so login always works.
+		email: z.string().trim().email().optional(),
 		phone: z.string().min(10).optional(),
 	});
 
@@ -467,39 +469,63 @@ export async function adminRoutes(app: FastifyInstance) {
 		const actor = req.user as { sub: string };
 		const d = body.data;
 
+		// Always store emails lowercase so findMemberByEmail (login) can match them.
+		const newEmail = d.email?.trim().toLowerCase();
+
 		const setClauses: string[] = [];
 		const values: unknown[] = [];
 		if (d.name !== undefined) setClauses.push(`name=$${values.push(d.name)}`);
-		if (d.email !== undefined)
-			setClauses.push(`email=$${values.push(d.email)}`);
+		if (newEmail !== undefined)
+			setClauses.push(`email=$${values.push(newEmail)}`);
 		if (d.phone !== undefined)
 			setClauses.push(`phone=$${values.push(d.phone)}`);
 
 		if (setClauses.length === 0)
 			return reply.status(400).send({ error: "No fields to update" });
 
-		await withTxn(async (c) => {
-			const { rows: before } = await c.query<{
-				name: string;
-				email: string | null;
-				phone: string;
-			}>("SELECT name, email, phone FROM members WHERE id=$1 FOR UPDATE", [id]);
-			if (!before[0])
-				throw Object.assign(new Error("Member not found"), { statusCode: 404 });
+		try {
+			await withTxn(async (c) => {
+				const { rows: before } = await c.query<{
+					name: string;
+					email: string | null;
+					phone: string;
+				}>("SELECT name, email, phone FROM members WHERE id=$1 FOR UPDATE", [id]);
+				if (!before[0])
+					throw Object.assign(new Error("Member not found"), { statusCode: 404 });
 
-			values.push(id);
-			await c.query(
-				`UPDATE members SET ${setClauses.join(", ")} WHERE id=$${values.length}`,
-				values,
-			);
+				// Email changes are management-only — an appointed admin may still edit
+				// name and phone, but only the management master account may change a
+				// member's login email.
+				if (newEmail !== undefined && newEmail !== before[0].email) {
+					if (!(await isManagement(actor.sub)))
+						throw Object.assign(
+							new Error("Only management can change a member's email"),
+							{ statusCode: 403 },
+						);
+				}
 
-			await c.query(
-				`INSERT INTO admin_audit_log
+				values.push(id);
+				await c.query(
+					`UPDATE members SET ${setClauses.join(", ")} WHERE id=$${values.length}`,
+					values,
+				);
+
+				await c.query(
+					`INSERT INTO admin_audit_log
            (actor_id, action, target_type, target_id, before_state, after_state)
          VALUES ($1,'patch_member','member',$2,$3,$4)`,
-				[actor.sub, id, before[0], d],
-			);
-		});
+					[actor.sub, id, before[0], { ...d, email: newEmail }],
+				);
+			});
+		} catch (err: unknown) {
+			const e = err as { statusCode?: number; message?: string; code?: string; constraint?: string };
+			// Duplicate email — surface as 409 rather than a raw 500.
+			if (e.code === "23505" && e.constraint === "members_email_key")
+				return reply.status(409).send({ error: "Email already in use by another member" });
+			if (e.statusCode === 404) return reply.status(404).send({ error: e.message });
+			if (e.statusCode === 403) return reply.status(403).send({ error: e.message });
+			throw err;
+		}
 		return { ok: true };
 	});
 
@@ -1099,9 +1125,9 @@ export async function adminRoutes(app: FastifyInstance) {
 
 	// ===== Orders (pending payment confirmation) =====
 
-	// GET /orders?status=created|confirmed  — list orders by status.
+	// GET /orders?status=created|paid|confirmed  — list orders by status.
 	app.get("/orders", auth, async (req) => {
-		const { status = "created" } = req.query as { status?: string };
+		const { status = "paid" } = req.query as { status?: string };
 		const { rows } = await pool().query<{
 			id: string;
 			member_code: string;
@@ -1112,28 +1138,40 @@ export async function adminRoutes(app: FastifyInstance) {
 			created_at: string;
 			payment_ref: string | null;
 			confirmed_at: string | null;
+			proof_keys: string[] | null;
 		}>(
 			`SELECT o.id, m.member_code, m.name AS member_name, p.name AS product_name,
 			        o.total_amount, o.status, o.created_at,
-			        o.payment_ref, o.confirmed_at
+			        o.payment_ref, o.confirmed_at,
+			        array_agg(opp.s3_key ORDER BY opp.uploaded_at)
+			          FILTER (WHERE opp.s3_key IS NOT NULL) AS proof_keys
 			   FROM orders o
 			   JOIN members m  ON m.id  = o.member_id
 			   JOIN products p ON p.id  = o.product_id
+			   LEFT JOIN order_payment_proofs opp ON opp.order_id = o.id
 			  WHERE o.status = $1
+			  GROUP BY o.id, m.member_code, m.name, p.name
 			  ORDER BY o.created_at DESC`,
 			[status],
 		);
-		return rows.map((r) => ({
-			orderId: r.id,
-			memberCode: r.member_code,
-			memberName: r.member_name,
-			productName: r.product_name,
-			totalPaise: Number(toPaise(r.total_amount)),
-			status: r.status,
-			createdAt: r.created_at,
-			paymentRef: r.payment_ref ?? undefined,
-			confirmedAt: r.confirmed_at ?? undefined,
-		}));
+		return Promise.all(
+			rows.map(async (r) => {
+				const keys = r.proof_keys ?? [];
+				const paymentProofUrls = await Promise.all(keys.map((k) => presignGet(k)));
+				return {
+					orderId: r.id,
+					memberCode: r.member_code,
+					memberName: r.member_name,
+					productName: r.product_name,
+					totalPaise: Number(toPaise(r.total_amount)),
+					status: r.status,
+					createdAt: r.created_at,
+					paymentRef: r.payment_ref ?? undefined,
+					confirmedAt: r.confirmed_at ?? undefined,
+					paymentProofUrls: paymentProofUrls.length > 0 ? paymentProofUrls : undefined,
+				};
+			}),
+		);
 	});
 
 	// POST /orders/:orderId/confirm-payment — admin manually confirms an offline payment.
@@ -1144,6 +1182,12 @@ export async function adminRoutes(app: FastifyInstance) {
 	app.post("/orders/:orderId/confirm-payment", auth, async (req, reply) => {
 		const { orderId } = req.params as { orderId: string };
 		const actor = req.user as { sub: string };
+
+		// Payment approval is management-only — it directly activates a member's plan.
+		if (!(await isManagement(actor.sub)))
+			return reply
+				.status(403)
+				.send({ error: "Only management can approve payments" });
 
 		const body = ConfirmPaymentBody.safeParse(req.body);
 		if (!body.success)
@@ -1160,10 +1204,15 @@ export async function adminRoutes(app: FastifyInstance) {
 		);
 		if (!rows[0])
 			return reply.status(404).send({ error: "Order not found" });
-		if (rows[0].status !== "created")
-			return reply
-				.status(409)
-				.send({ error: "Order is already confirmed, failed, or refunded" });
+		// Require the member to have uploaded a payment proof first (status='paid').
+		// Confirming a 'created' order (no proof) is blocked.
+		if (rows[0].status !== "paid")
+			return reply.status(409).send({
+				error:
+					rows[0].status === "created"
+						? "Order has no uploaded payment proof yet"
+						: "Order is already confirmed, failed, or refunded",
+			});
 
 		// confirmOrder is idempotent and writes MemberActivated inside its own transaction.
 		await confirmOrder(rows[0].idempotency_key, BigInt(orderId), body.data.paymentRef);
@@ -1180,6 +1229,61 @@ export async function adminRoutes(app: FastifyInstance) {
 				{ status: "confirmed", paymentRef: body.data.paymentRef },
 			],
 		);
+
+		return { ok: true };
+	});
+
+	// POST /orders/:orderId/reject-payment — management rejects a payment proof so the member can re-upload.
+	const RejectPaymentBody = z.object({
+		reason: z.string().trim().max(500).optional(),
+	});
+
+	app.post("/orders/:orderId/reject-payment", auth, async (req, reply) => {
+		const { orderId } = req.params as { orderId: string };
+		const actor = req.user as { sub: string };
+
+		if (!(await isManagement(actor.sub)))
+			return reply
+				.status(403)
+				.send({ error: "Only management can reject payments" });
+
+		const body = RejectPaymentBody.safeParse(req.body);
+		if (!body.success)
+			return reply.status(400).send({ error: body.error.flatten() });
+
+		const { rows } = await pool().query<{ status: string }>(
+			"SELECT status FROM orders WHERE id = $1",
+			[orderId],
+		);
+		if (!rows[0])
+			return reply.status(404).send({ error: "Order not found" });
+		if (rows[0].status !== "paid")
+			return reply
+				.status(409)
+				.send({ error: "Only orders awaiting review (paid) can be rejected" });
+
+		await withTxn(async (c) => {
+			// Clear old proofs so the member uploads fresh screenshots on re-submission.
+			await c.query(
+				"DELETE FROM order_payment_proofs WHERE order_id = $1",
+				[orderId],
+			);
+			await c.query(
+				`UPDATE orders SET status = 'rejected', rejection_reason = $2 WHERE id = $1`,
+				[orderId, body.data.reason ?? null],
+			);
+			await c.query(
+				`INSERT INTO admin_audit_log
+				   (actor_id, action, target_type, target_id, before_state, after_state)
+				 VALUES ($1, 'order_reject', 'order', $2, $3, $4)`,
+				[
+					actor.sub,
+					orderId,
+					{ status: "paid" },
+					{ status: "rejected", reason: body.data.reason ?? null },
+				],
+			);
+		});
 
 		return { ok: true };
 	});

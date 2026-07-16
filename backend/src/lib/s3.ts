@@ -73,6 +73,12 @@ export function kycKeyRe(memberId: string): RegExp {
 	);
 }
 
+export function paymentProofKeyRe(memberId: string): RegExp {
+	return new RegExp(
+		`^payment-proofs-img/${memberId}/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.(jpg|png|webp)$`,
+	);
+}
+
 export async function presignUpload(
 	key: string,
 	contentType: string,

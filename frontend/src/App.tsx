@@ -23,6 +23,7 @@ const DirectMembers = lazy(() => import('./pages/DirectMembers'))
 const Notifications = lazy(() => import('./pages/Notifications'))
 const Support = lazy(() => import('./pages/Support'))
 const Settings = lazy(() => import('./pages/Settings'))
+const MyOrders = lazy(() => import('./pages/MyOrders'))
 const AdminConsole = lazy(() => import('./pages/admin/AdminConsole'))
 
 const qc = new QueryClient({
@@ -54,6 +55,7 @@ export default function App() {
               <Route path="/genealogy" element={<Network />} />
               <Route path="/buy" element={<BuyProduct />} />
               <Route path="/buy/:id" element={<ProductDetail />} />
+              <Route path="/my-orders" element={<MyOrders />} />
               <Route path="/pairs" element={<PairMatch />} />
               <Route path="/wallet" element={<Wallet />} />
               <Route path="/payouts" element={<PayoutHistory />} />

@@ -66,12 +66,16 @@ export function MembersTab() {
   const saveContact = useMutation({
     mutationFn: () => api.patch(`/admin/members/${selected!.id}`, {
       name: contact.name,
-      email: contact.email === '' ? null : contact.email,
+      // Always send lowercase — mirrors backend normalisation; never send null (column is NOT NULL).
+      email: contact.email.trim().toLowerCase(),
       phone: contact.phone,
     }),
     onSuccess: () => refresh('Contact details saved'),
     onError: fail,
   })
+
+  // Basic email shape check — mirrors the Zod schema on the backend (x@y.z minimum).
+  const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contact.email.trim())
   const setBank = useMutation({
     mutationFn: (status: 'verified' | 'pending') => api.post(`/admin/members/${selected!.id}/bank`, { status }),
     onSuccess: (_, status) => refresh(`Bank marked ${status}`),
@@ -192,7 +196,11 @@ export function MembersTab() {
                 <FormField label="Email" value={contact.email} onChange={(e) => setContact({ ...contact, email: e.target.value })} />
                 <FormField label="Phone" value={contact.phone} onChange={(e) => setContact({ ...contact, phone: e.target.value })} />
               </div>
-              <button onClick={() => saveContact.mutate()} disabled={saveContact.isPending} className="avg-btn-secondary py-2 text-xs">
+              <button
+                onClick={() => saveContact.mutate()}
+                disabled={saveContact.isPending || !emailValid || !contact.name.trim()}
+                className="avg-btn-secondary py-2 text-xs"
+              >
                 {saveContact.isPending ? <Loader2 size={12} className="animate-spin" /> : null} Save contact
               </button>
             </section>

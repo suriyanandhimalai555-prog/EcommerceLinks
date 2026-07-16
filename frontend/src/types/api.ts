@@ -79,11 +79,22 @@ export interface Order {
   status: 'created'
 }
 
-export interface OrderStatus {
+export interface MyOrder {
   orderId: string
-  status: 'created' | 'paid' | 'confirmed'
+  productId: number
   productName: string
   totalPaise: number
+  status: 'created' | 'paid' | 'confirmed' | 'rejected' | 'failed' | 'refunded'
+  createdAt: string
+  rejectionReason?: string
+}
+
+export interface OrderStatus {
+  orderId: string
+  status: 'created' | 'paid' | 'confirmed' | 'rejected'
+  productName: string
+  totalPaise: number
+  rejectionReason?: string
 }
 
 // ---- admin: pending orders ----
@@ -97,6 +108,8 @@ export interface AdminOrder {
   createdAt: string
   paymentRef?: string
   confirmedAt?: string
+  /** Short-lived presigned GET URLs for uploaded payment-proof screenshots (status=paid only). */
+  paymentProofUrls?: string[]
 }
 
 // ---- dashboard ----

@@ -17,6 +17,7 @@ import {
 	buildKey,
 	IMAGE_CONTENT_TYPES,
 	kycKeyRe,
+	paymentProofKeyRe,
 	MAX_UPLOAD_BYTES,
 	objectExists,
 	presignGet,
@@ -415,6 +416,100 @@ export async function frontendRoutes(app: FastifyInstance) {
 		return reply.send(await listKycDocuments(memberId));
 	});
 
+	// ===== Payment-proof upload (S3 payment-proofs-img/{memberId}/ — private prefix) =====
+	const PaymentProofPresignBody = z.object({
+		contentType: z.enum(IMAGE_CONTENT_TYPES),
+		sizeBytes: z.number().int().positive().max(MAX_UPLOAD_BYTES),
+	});
+
+	app.post(
+		"/me/orders/:orderId/payment-proof/presign",
+		auth,
+		async (req, reply) => {
+			const body = PaymentProofPresignBody.safeParse(req.body);
+			if (!body.success)
+				return reply.status(400).send({ error: body.error.flatten() });
+			if (!s3Configured())
+				return reply.status(503).send({ error: "S3_NOT_CONFIGURED" });
+
+			const memberId = (req.user as Auth).sub;
+			const { orderId } = req.params as { orderId: string };
+
+			// Verify the order belongs to this member and is still open.
+			const { rows } = await pool().query<{ status: string }>(
+				"SELECT status FROM orders WHERE id = $1 AND member_id = $2",
+				[orderId, memberId],
+			);
+			if (!rows[0])
+				return reply.status(404).send({ error: "Order not found" });
+			if (!["created", "paid", "rejected"].includes(rows[0].status))
+				return reply
+					.status(409)
+					.send({ error: "Order is already confirmed or closed" });
+
+			// Key is minted from JWT identity — member cannot write outside their own folder.
+			const key = buildKey(
+				`payment-proofs-img/${memberId}`,
+				body.data.contentType,
+			);
+			return presignUpload(key, body.data.contentType);
+		},
+	);
+
+	const PaymentProofBody = z.object({ key: z.string() });
+
+	app.post("/me/orders/:orderId/payment-proof", auth, async (req, reply) => {
+		const body = PaymentProofBody.safeParse(req.body);
+		if (!body.success)
+			return reply.status(400).send({ error: body.error.flatten() });
+
+		const memberId = (req.user as Auth).sub;
+		const { orderId } = req.params as { orderId: string };
+
+		// Validate the key belongs to this member's payment-proofs folder.
+		if (!paymentProofKeyRe(memberId).test(body.data.key))
+			return reply
+				.status(400)
+				.send({ error: { code: "BAD_REQUEST", message: "Invalid key" } });
+
+		// Confirm the object actually landed in S3 before recording it.
+		if (!(await objectExists(body.data.key)))
+			return reply.status(400).send({
+				error: { code: "BAD_REQUEST", message: "Upload not found in storage" },
+			});
+
+		// Verify the order is still open before recording the proof.
+		const { rows: orderRows } = await pool().query<{ status: string }>(
+			"SELECT status FROM orders WHERE id = $1 AND member_id = $2",
+			[orderId, memberId],
+		);
+		if (!orderRows[0])
+			return reply
+				.status(404)
+				.send({ error: "Order not found or already confirmed" });
+		if (!["created", "paid", "rejected"].includes(orderRows[0].status))
+			return reply
+				.status(409)
+				.send({ error: "Order is already confirmed or closed" });
+
+		// Insert proof into the proofs table (idempotent: same key twice is a no-op).
+		await pool().query(
+			`INSERT INTO order_payment_proofs (order_id, s3_key)
+			 VALUES ($1, $2)
+			 ON CONFLICT (s3_key) DO NOTHING`,
+			[orderId, body.data.key],
+		);
+
+		// Flip order to 'paid'. Also clears rejection_reason when re-submitting after rejection.
+		await pool().query(
+			`UPDATE orders SET status = 'paid', rejection_reason = NULL
+			  WHERE id = $1 AND member_id = $2 AND status IN ('created', 'rejected')`,
+			[orderId, memberId],
+		);
+
+		return reply.send({ ok: true });
+	});
+
 	const BankBody = z.object({
 		accountName: z.string().min(2, "Name required"),
 		accountNumber: z.string().min(9, "Valid account number required"),
@@ -527,6 +622,27 @@ export async function frontendRoutes(app: FastifyInstance) {
 				});
 		}
 
+		// Return the existing open order if one already exists for this member+product.
+		// Prevents duplicate orders from double-clicks or repeated visits.
+		const { rows: openRows } = await pool().query<{
+			id: string;
+			total_amount: string;
+			status: string;
+		}>(
+			`SELECT id, total_amount, status FROM orders
+			  WHERE member_id = $1 AND product_id = $2
+			    AND status IN ('created', 'paid', 'rejected')
+			  ORDER BY created_at DESC LIMIT 1`,
+			[memberId, body.data.productId],
+		);
+		if (openRows[0]) {
+			return reply.status(200).send({
+				orderId: openRows[0].id,
+				totalPaise: Number(toPaise(openRows[0].total_amount)),
+				status: openRows[0].status,
+			});
+		}
+
 		const { rows: pRows } = await pool().query<{ base_price: string }>(
 			"SELECT base_price FROM products WHERE id = $1 AND active = TRUE",
 			[body.data.productId],
@@ -561,6 +677,37 @@ export async function frontendRoutes(app: FastifyInstance) {
 		});
 	});
 
+	// GET /me/orders — full order history for the logged-in member.
+	app.get("/me/orders", auth, async (req) => {
+		const memberId = (req.user as Auth).sub;
+		const { rows } = await pool().query<{
+			id: string;
+			product_id: number;
+			product_name: string;
+			total_amount: string;
+			status: string;
+			created_at: string;
+			rejection_reason: string | null;
+		}>(
+			`SELECT o.id, o.product_id, p.name AS product_name,
+			        o.total_amount, o.status, o.created_at, o.rejection_reason
+			   FROM orders o
+			   JOIN products p ON p.id = o.product_id
+			  WHERE o.member_id = $1
+			  ORDER BY o.created_at DESC`,
+			[memberId],
+		);
+		return rows.map((r) => ({
+			orderId: r.id,
+			productId: r.product_id,
+			productName: r.product_name,
+			totalPaise: Number(toPaise(r.total_amount)),
+			status: r.status,
+			createdAt: r.created_at,
+			rejectionReason: r.rejection_reason ?? undefined,
+		}));
+	});
+
 	app.get("/orders/:orderId", auth, async (req, reply) => {
 		const { orderId } = req.params as { orderId: string };
 		const memberId = (req.user as Auth).sub;
@@ -569,8 +716,9 @@ export async function frontendRoutes(app: FastifyInstance) {
 			status: string;
 			total_amount: string;
 			name: string;
+			rejection_reason: string | null;
 		}>(
-			`SELECT o.id, o.status, o.total_amount, p.name
+			`SELECT o.id, o.status, o.total_amount, p.name, o.rejection_reason
        FROM orders o JOIN products p ON p.id = o.product_id
        WHERE o.id = $1 AND o.member_id = $2`,
 			[orderId, memberId],
@@ -584,6 +732,7 @@ export async function frontendRoutes(app: FastifyInstance) {
 			status: rows[0].status,
 			productName: rows[0].name,
 			totalPaise: Number(toPaise(rows[0].total_amount)),
+			rejectionReason: rows[0].rejection_reason ?? undefined,
 		};
 	});
 
