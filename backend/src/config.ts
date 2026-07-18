@@ -25,7 +25,7 @@ const SMTP_PASS = env("SMTP_PASS", "");
 const SMTP_SECURE = env("SMTP_SECURE", "false") === "true";
 const EMAIL_FROM = env(
 	"EMAIL_FROM",
-	"Agila Vetri Groups <support@agilavertiglobal.com>",
+	"Agila Vetri Groups <support@agilavetriglobal.com>",
 );
 
 // Fail fast when insecure defaults are present in staging/production.

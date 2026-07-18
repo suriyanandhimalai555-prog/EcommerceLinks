@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { CheckCircle2, Loader2, XCircle } from 'lucide-react'
 import api from '../../lib/api'
@@ -8,6 +8,8 @@ import { DataTable, type Column } from '../../components/ui/DataTable'
 import { Badge } from '../../components/ui/Badge'
 import { Modal } from '../../components/ui/Modal'
 import type { AdminOrder } from '../../types/api'
+
+const PAGE = 50
 
 type Filter = 'paid' | 'created' | 'confirmed'
 
@@ -31,10 +33,21 @@ export function OrdersTab() {
   const [rejectTarget, setRejectTarget] = useState<AdminOrder | null>(null)
   const [rejectReason, setRejectReason] = useState('')
 
-  const { data: orders, isPending } = useQuery<AdminOrder[]>({
+  const {
+    data,
+    isPending,
+    isFetchingNextPage,
+    hasNextPage,
+    fetchNextPage,
+  } = useInfiniteQuery<AdminOrder[]>({
     queryKey: ['admin', 'orders', filter],
-    queryFn: () => api.get(`/admin/orders?status=${filter}`).then((r) => r.data),
+    queryFn: ({ pageParam }) =>
+      api.get(`/admin/orders?status=${filter}&limit=${PAGE}&offset=${pageParam}`).then((r) => r.data),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage, allPages) =>
+      lastPage.length === PAGE ? allPages.length * PAGE : undefined,
   })
+  const orders = data?.pages.flat() ?? []
 
   const confirm = useMutation({
     mutationFn: (order: AdminOrder) =>
@@ -280,11 +293,14 @@ export function OrdersTab() {
 
         <DataTable
           columns={activeColumns}
-          data={orders ?? []}
+          data={orders}
           loading={isPending}
           rowKey={(r) => r.orderId}
           emptyTitle={emptyTitle}
           emptyDescription={emptyDesc}
+          hasMore={hasNextPage}
+          onLoadMore={() => fetchNextPage()}
+          loadingMore={isFetchingNextPage}
         />
       </div>
 

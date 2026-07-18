@@ -104,7 +104,7 @@ Welcome aboard, and wishing you great success!
 Best Regards,
 Agila Vetri Groups
 Creating Millionaires | Creating Leaders | Creating Success
-📧 support@agilavertiglobal.com
+📧 support@agilavetriglobal.com
 `.trim();
 
 	const html = `
@@ -197,7 +197,7 @@ Creating Millionaires | Creating Leaders | Creating Success
             <td style="background:#0a0f1e;padding:24px 40px;text-align:center;border-top:1px solid #1e293b;">
               <p style="margin:0 0 6px;font-size:14px;font-weight:700;color:#60a5fa;">Agila Vetri Groups</p>
               <p style="margin:0 0 6px;font-size:12px;color:#475569;">Creating Millionaires | Creating Leaders | Creating Success</p>
-              <p style="margin:0;font-size:12px;color:#475569;">📧 support@agilavertiglobal.com</p>
+              <p style="margin:0;font-size:12px;color:#475569;">📧 support@agilavetriglobal.com</p>
             </td>
           </tr>
 
@@ -228,7 +228,7 @@ Your one-time login code is: ${p.code}
 
 This code is valid for 5 minutes. Do not share it with anyone.
 
-If you did not request this code, please contact us immediately at support@agilavertiglobal.com.
+If you did not request this code, please contact us immediately at support@agilavetriglobal.com.
 
 Best Regards,
 Agila Vetri Groups
@@ -271,7 +271,7 @@ Agila Vetri Groups
 
               <p style="margin:0;font-size:13px;color:#475569;line-height:1.6;">
                 Do not share this code with anyone. If you did not request this,
-                please contact <a href="mailto:support@agilavertiglobal.com" style="color:#60a5fa;">support@agilavertiglobal.com</a> immediately.
+                please contact <a href="mailto:support@agilavetriglobal.com" style="color:#60a5fa;">support@agilavetriglobal.com</a> immediately.
               </p>
             </td>
           </tr>
@@ -279,7 +279,7 @@ Agila Vetri Groups
           <!-- Footer -->
           <tr>
             <td style="background:#0a0f1e;padding:20px 40px;text-align:center;border-top:1px solid #1e293b;">
-              <p style="margin:0;font-size:12px;color:#475569;">Agila Vetri Groups · 📧 support@agilavertiglobal.com</p>
+              <p style="margin:0;font-size:12px;color:#475569;">Agila Vetri Groups · 📧 support@agilavetriglobal.com</p>
             </td>
           </tr>
 

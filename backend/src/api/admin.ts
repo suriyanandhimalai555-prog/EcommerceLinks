@@ -1125,9 +1125,16 @@ export async function adminRoutes(app: FastifyInstance) {
 
 	// ===== Orders (pending payment confirmation) =====
 
-	// GET /orders?status=created|paid|confirmed  — list orders by status.
+	// GET /orders?status=created|paid|confirmed&limit=50&offset=0  — list orders by status.
 	app.get("/orders", auth, async (req) => {
-		const { status = "paid" } = req.query as { status?: string };
+		const query = req.query as {
+			status?: string;
+			limit?: string;
+			offset?: string;
+		};
+		const status = query.status ?? "paid";
+		const limit = Math.min(Number(query.limit ?? "50"), 200);
+		const offset = Number(query.offset ?? "0");
 		const { rows } = await pool().query<{
 			id: string;
 			member_code: string;
@@ -1151,8 +1158,9 @@ export async function adminRoutes(app: FastifyInstance) {
 			   LEFT JOIN order_payment_proofs opp ON opp.order_id = o.id
 			  WHERE o.status = $1
 			  GROUP BY o.id, m.member_code, m.name, p.name
-			  ORDER BY o.created_at DESC`,
-			[status],
+			  ORDER BY o.created_at DESC
+			  LIMIT $2 OFFSET $3`,
+			[status, limit, offset],
 		);
 		return Promise.all(
 			rows.map(async (r) => {
