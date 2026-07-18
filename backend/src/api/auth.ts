@@ -65,6 +65,47 @@ async function issueRefreshToken(memberId: string): Promise<string> {
 	);
 }
 
+/**
+ * Send the welcome email exactly once per member, when their signup flow
+ * completes: immediately at registration when OTP login is off, or after the
+ * first successful OTP verify when it is on. The UPDATE … RETURNING claim on
+ * welcome_sent_at makes concurrent callers safe; the send stays best-effort.
+ */
+async function sendWelcomeIfPending(memberId: string): Promise<void> {
+	const { rows } = await pool().query<{
+		name: string;
+		email: string | null;
+		member_code: string;
+		created_at: Date;
+		sponsor_code: string | null;
+	}>(
+		`UPDATE members m SET welcome_sent_at = now()
+     WHERE m.id = $1 AND m.welcome_sent_at IS NULL
+     RETURNING m.name, m.email, m.member_code, m.created_at,
+       (SELECT s.member_code FROM members s WHERE s.id = m.sponsor_id) AS sponsor_code`,
+		[memberId],
+	);
+	const row = rows[0];
+	if (!row || !row.email) return; // already sent, or no email on file
+	const enabled = await getSetting<boolean>("welcome_email_enabled");
+	if (!enabled) return;
+	const date = row.created_at.toLocaleDateString("en-IN", {
+		day: "numeric",
+		month: "long",
+		year: "numeric",
+		timeZone: CFG.TZ,
+	});
+	await sendMail(
+		welcomeEmailTemplate({
+			name: row.name,
+			memberCode: row.member_code,
+			sponsorCode: row.sponsor_code ?? "",
+			date,
+			email: row.email,
+		}),
+	);
+}
+
 // Module-level reference so issueRefreshToken can use app.jwt after registration.
 let app_instance: FastifyInstance;
 
@@ -111,31 +152,16 @@ export async function authRoutes(app: FastifyInstance) {
 			try {
 				const { memberId, memberCode } = await registerMember(body.data);
 
-				// Best-effort welcome email — never blocks the 201.
+				// Welcome email follows the signup flow: with OTP login on, signup
+				// completes at the first OTP verify (the frontend's auto-login sends
+				// the OTP email now), so the welcome email waits until then. With
+				// OTP off it goes out right here. Best-effort — never blocks the 201.
 				(async () => {
-					try {
-						const enabled = await getSetting<boolean>("welcome_email_enabled");
-						if (enabled) {
-							const today = new Date().toLocaleDateString("en-IN", {
-								day: "numeric",
-								month: "long",
-								year: "numeric",
-								timeZone: CFG.TZ,
-							});
-							await sendMail(
-								welcomeEmailTemplate({
-									name: body.data.name,
-									memberCode,
-									sponsorCode: body.data.sponsorCode,
-									date: today,
-									email: body.data.email,
-								}),
-							);
-						}
-					} catch (err) {
-						console.error("[register] welcome email error:", err);
-					}
-				})();
+					const otpEnabled = await getSetting<boolean>("login_otp_enabled");
+					if (!otpEnabled) await sendWelcomeIfPending(String(memberId));
+				})().catch((err) =>
+					console.error("[register] welcome email error:", err),
+				);
 
 				return reply
 					.status(201)
@@ -213,6 +239,12 @@ export async function authRoutes(app: FastifyInstance) {
 				return reply.send({ otpRequired: true });
 			}
 
+			// Covers members who registered while OTP login was on (welcome
+			// deferred) but first log in after it was turned off — no-op otherwise.
+			sendWelcomeIfPending(String(member.id)).catch((err) =>
+				console.error("[login] welcome email error:", err),
+			);
+
 			return reply.send(await issueSession(member, me));
 		},
 	);
@@ -277,6 +309,12 @@ export async function authRoutes(app: FastifyInstance) {
 						message: "Account is blocked. Contact support.",
 					},
 				});
+
+			// First successful OTP verify completes signup — send the deferred
+			// welcome email (no-op once sent).
+			sendWelcomeIfPending(String(member.id)).catch((err) =>
+				console.error("[verify-otp] welcome email error:", err),
+			);
 
 			return reply.send(await issueSession(member, me));
 		},
