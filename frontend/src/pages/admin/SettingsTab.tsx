@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { ShieldCheck, Mail, Lock, AlertCircle, Loader2 } from 'lucide-react'
+import { ShieldCheck, Mail, Lock, LockOpen, AlertCircle, Loader2 } from 'lucide-react'
 import api from '../../lib/api'
 import type { SystemSettings } from '../../types/api'
 
@@ -91,12 +91,15 @@ export function SettingsTab() {
           {isPending ? (
             <Loader2 size={20} className="animate-spin text-ink-muted shrink-0" />
           ) : (
-            <ToggleSwitch
-              checked={kycOptional}
-              onChange={(v) => update.mutate({ kycOptional: v })}
-              disabled={update.isPending}
-              label={t('adminSettings.kycToggleLabel')}
-            />
+            <div className="flex items-center gap-2 shrink-0">
+              {update.isPending && <Loader2 size={14} className="animate-spin text-ink-muted" />}
+              <ToggleSwitch
+                checked={kycOptional}
+                onChange={(v) => update.mutate({ kycOptional: v })}
+                disabled={update.isPending}
+                label={t('adminSettings.kycToggleLabel')}
+              />
+            </div>
           )}
         </div>
 
@@ -127,12 +130,15 @@ export function SettingsTab() {
           {isPending ? (
             <Loader2 size={20} className="animate-spin text-ink-muted shrink-0" />
           ) : (
-            <ToggleSwitch
-              checked={welcomeEmailEnabled}
-              onChange={(v) => update.mutate({ welcomeEmailEnabled: v })}
-              disabled={update.isPending}
-              label={t('adminSettings.welcomeEmailToggleLabel')}
-            />
+            <div className="flex items-center gap-2 shrink-0">
+              {update.isPending && <Loader2 size={14} className="animate-spin text-ink-muted" />}
+              <ToggleSwitch
+                checked={welcomeEmailEnabled}
+                onChange={(v) => update.mutate({ welcomeEmailEnabled: v })}
+                disabled={update.isPending}
+                label={t('adminSettings.welcomeEmailToggleLabel')}
+              />
+            </div>
           )}
         </div>
 
@@ -148,38 +154,98 @@ export function SettingsTab() {
         )}
       </div>
 
-      {/* ── OTP login toggle card ── */}
-      <div className="avg-card p-5 space-y-4">
-        <div className="flex items-center gap-2">
-          <Lock size={16} className="text-primary" />
-          <h3 className="text-sm font-semibold text-ink">{t('adminSettings.otpSection')}</h3>
+      {/* ── OTP login control panel ── */}
+      <div
+        className="rounded-2xl p-5 space-y-4 transition-all duration-300"
+        style={{
+          background: 'var(--color-surface-card, #141927)',
+          border: loginOtpEnabled
+            ? '1px solid rgba(52,211,153,0.35)'
+            : '1px solid rgba(248,113,113,0.35)',
+          boxShadow: loginOtpEnabled
+            ? '0 0 24px rgba(52,211,153,0.07)'
+            : '0 0 24px rgba(248,113,113,0.07)',
+        }}
+      >
+        {/* Header row */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div
+              className="p-2 rounded-xl transition-colors duration-300"
+              style={{ background: loginOtpEnabled ? 'rgba(52,211,153,0.12)' : 'rgba(248,113,113,0.12)' }}
+            >
+              {loginOtpEnabled
+                ? <Lock size={16} style={{ color: '#34D399' }} />
+                : <LockOpen size={16} style={{ color: '#F87171' }} />}
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold text-ink">{t('adminSettings.otpSection')}</h3>
+              <p className="text-xs text-ink-muted">System-wide login verification</p>
+            </div>
+          </div>
+          {/* Live status pill */}
+          <span
+            className="text-[11px] font-bold tracking-widest px-3 py-1 rounded-full uppercase transition-all duration-300"
+            style={loginOtpEnabled
+              ? { background: 'rgba(52,211,153,0.12)', color: '#34D399' }
+              : { background: 'rgba(248,113,113,0.12)', color: '#F87171' }}
+          >
+            {loginOtpEnabled ? '● Active' : '● Bypassed'}
+          </span>
         </div>
 
-        <div className="flex items-center justify-between gap-4">
+        {/* Control panel body */}
+        <div
+          className="rounded-xl p-4 space-y-4"
+          style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}
+        >
           <div className="space-y-0.5">
             <p className="text-sm text-ink">{t('adminSettings.otpToggleLabel')}</p>
             <p className="text-xs text-ink-muted">{t('adminSettings.otpToggleHint')}</p>
           </div>
+
+          {/* ON / OFF segmented control */}
           {isPending ? (
-            <Loader2 size={20} className="animate-spin text-ink-muted shrink-0" />
+            <Loader2 size={18} className="animate-spin text-ink-muted" />
           ) : (
-            <ToggleSwitch
-              checked={loginOtpEnabled}
-              onChange={(v) => update.mutate({ loginOtpEnabled: v })}
-              disabled={update.isPending}
-              label={t('adminSettings.otpToggleLabel')}
-            />
+            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1 w-fit rounded-lg p-1" style={{ background: 'rgba(255,255,255,0.05)' }}>
+              <button
+                onClick={() => update.mutate({ loginOtpEnabled: true })}
+                disabled={update.isPending || loginOtpEnabled}
+                className="px-5 py-1.5 text-xs font-bold rounded-md transition-all duration-200 cursor-pointer disabled:cursor-default"
+                style={loginOtpEnabled
+                  ? { background: '#34D399', color: '#0B0E16', boxShadow: '0 0 10px rgba(52,211,153,0.45)' }
+                  : { color: '#98A2B8' }}
+              >
+                ON
+              </button>
+              <button
+                onClick={() => update.mutate({ loginOtpEnabled: false })}
+                disabled={update.isPending || !loginOtpEnabled}
+                className="px-5 py-1.5 text-xs font-bold rounded-md transition-all duration-200 cursor-pointer disabled:cursor-default"
+                style={!loginOtpEnabled
+                  ? { background: '#F87171', color: '#0B0E16', boxShadow: '0 0 10px rgba(248,113,113,0.45)' }
+                  : { color: '#98A2B8' }}
+              >
+                OFF
+              </button>
+            </div>
+            {update.isPending && <Loader2 size={16} className="animate-spin text-ink-muted" />}
+            </div>
           )}
         </div>
 
-        {!isPending && (
-          <div className="flex items-center gap-2 pt-1 border-t border-white/5">
-            <span className="text-xs text-ink-muted">{t('adminSettings.currentStatus')}</span>
-            <StatusBadge
-              on={loginOtpEnabled}
-              labelOn={t('adminSettings.otpStatusOn')}
-              labelOff={t('adminSettings.otpStatusOff')}
-            />
+        {/* Security warning when OTP is off */}
+        {!loginOtpEnabled && !isPending && (
+          <div
+            className="flex items-start gap-2.5 rounded-xl p-3"
+            style={{ background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.2)' }}
+          >
+            <AlertCircle size={14} className="shrink-0 mt-0.5" style={{ color: '#F87171' }} />
+            <p className="text-xs" style={{ color: 'rgba(248,113,113,0.9)' }}>
+              All member logins currently bypass email verification. Enable OTP to protect account access.
+            </p>
           </div>
         )}
       </div>

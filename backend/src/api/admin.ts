@@ -419,11 +419,15 @@ export async function adminRoutes(app: FastifyInstance) {
 			blocked: boolean;
 			created_at: string;
 			has_documents: boolean;
+			sponsor_code: string | null;
+			sponsor_name: string | null;
 		}>(
 			`SELECT m.id, m.member_code, m.name, m.phone, m.email,
 			        m.is_active, m.is_qualified, m.role, m.kyc_status, m.bank_status, m.blocked, m.created_at,
-			        (SELECT COUNT(*) > 0 FROM kyc_documents kd WHERE kd.member_id = m.id) AS has_documents
+			        (SELECT COUNT(*) > 0 FROM kyc_documents kd WHERE kd.member_id = m.id) AS has_documents,
+			        sp.member_code AS sponsor_code, sp.name AS sponsor_name
 			 FROM members m
+			 LEFT JOIN members sp ON sp.id = m.sponsor_id
 			 ${where}
 			 ORDER BY m.created_at DESC
 			 LIMIT $${dataParams.length - 1} OFFSET $${dataParams.length}`,
@@ -444,6 +448,8 @@ export async function adminRoutes(app: FastifyInstance) {
 				blocked: m.blocked,
 				createdAt: m.created_at,
 				hasDocuments: m.has_documents,
+				sponsorCode: m.sponsor_code,
+				sponsorName: m.sponsor_name,
 			})),
 			total,
 			page,

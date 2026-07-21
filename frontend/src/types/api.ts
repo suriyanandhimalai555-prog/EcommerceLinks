@@ -191,6 +191,26 @@ export interface DirectsRes {
   nextCursor: string | null
 }
 
+// One member of the caller's placement subtree (GET /network/downline).
+export interface DownlineMember {
+  memberCode: string
+  name: string
+  /** Placement-tree depth below the caller (1 = direct placement child). */
+  level: number
+  /** Which of the caller's legs this member sits under. */
+  leg: 'L' | 'R'
+  isActive: boolean
+  isQualified: boolean
+  joinedAt: string
+}
+
+export interface DownlinePage {
+  items: DownlineMember[]
+  total: number
+  page: number
+  limit: number
+}
+
 // ---- income ----
 // One pair-bonus accrual: a pair that completed at pairMemberCode somewhere in
 // the member's subtree. Pending until the member's own qualification.
@@ -302,6 +322,9 @@ export interface AdminMemberRow {
   blocked: boolean
   createdAt: string
   hasDocuments: boolean
+  /** Sponsor (who referred this member). Null for the tree root and management. */
+  sponsorCode: string | null
+  sponsorName: string | null
 }
 
 export interface AdminMembersPage {

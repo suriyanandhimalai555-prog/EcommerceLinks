@@ -14,10 +14,13 @@ import type { TreeNode } from '../../types/api'
  * rootCode='me' is the sentinel that hits the caller's own tree root and
  * reuses the initial ['tree','me',depth] cache entry.
  */
-export function useTreeDrilldown(depth: number) {
+export function useTreeDrilldown(baseDepth = 3) {
   const queryClient = useQueryClient()
   const [rootCode, setRootCode] = useState('me')
   const [stack, setStack] = useState<string[]>([])
+  // Depth grows as the user zooms out (see BinaryTree). It resets to baseDepth
+  // whenever the root changes so each subtree starts shallow again.
+  const [depth, setDepth] = useState(baseDepth)
 
   const query = useQuery<TreeNode>({
     queryKey: ['tree', rootCode, depth],
@@ -29,6 +32,7 @@ export function useTreeDrilldown(depth: number) {
   const drillTo = (code: string) => {
     if (code === rootCode) return
     setStack((s) => [...s, rootCode])
+    setDepth(baseDepth)
     setRootCode(code)
   }
 
@@ -38,22 +42,29 @@ export function useTreeDrilldown(depth: number) {
       // The cached tree for `prev` may predate recent activations (global
       // staleTime keeps it "fresh" for 60s) — mark it stale so navigating
       // back triggers a background refetch while the cache renders instantly.
-      queryClient.invalidateQueries({ queryKey: ['tree', prev, depth] })
+      queryClient.invalidateQueries({ queryKey: ['tree', prev, baseDepth] })
+      setDepth(baseDepth)
       setRootCode(prev)
       return s.slice(0, -1)
     })
   }
 
   const backToMe = () => {
-    queryClient.invalidateQueries({ queryKey: ['tree', 'me', depth] })
+    queryClient.invalidateQueries({ queryKey: ['tree', 'me', baseDepth] })
+    setDepth(baseDepth)
     setStack([])
     setRootCode('me')
   }
+
+  // Load one more level of the current subtree, capped at the backend's max (6).
+  const requestDeeper = () => setDepth((d) => Math.min(6, d + 1))
 
   return {
     root: query.data,
     isLoading: query.isLoading,
     isFetching: query.isFetching,
+    depth,
+    requestDeeper,
     drillTo,
     back,
     backToMe,

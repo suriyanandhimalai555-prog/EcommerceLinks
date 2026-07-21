@@ -109,6 +109,15 @@ export function MembersTab() {
   const columns: Column<AdminMemberRow>[] = [
     { key: 'code', header: 'Code', render: (r) => <span className="font-mono text-xs font-semibold text-ink">{r.memberCode}</span> },
     { key: 'name', header: 'Name', render: (r) => <span className="text-sm font-medium text-ink">{r.name}</span> },
+    {
+      key: 'sponsor', header: 'Sponsor',
+      render: (r) => r.sponsorCode
+        ? <div className="leading-tight">
+            <div className="font-mono text-xs font-semibold text-ink">{r.sponsorCode}</div>
+            <div className="text-xs text-ink-muted">{r.sponsorName}</div>
+          </div>
+        : <span className="text-xs text-ink-muted">—</span>,
+    },
     { key: 'phone', header: 'Phone', render: (r) => <span className="text-xs text-ink-muted">{r.phone}</span> },
     {
       key: 'role', header: 'Role',
@@ -187,6 +196,14 @@ export function MembersTab() {
                 {msg.text}
               </div>
             )}
+
+            {/* Referred by */}
+            <div className="flex items-center justify-between rounded-lg bg-white/5 px-3 py-2">
+              <span className="text-xs font-semibold text-ink-muted uppercase tracking-wider">Referred by</span>
+              {selected.sponsorCode
+                ? <span className="text-sm text-ink"><span className="font-mono font-semibold">{selected.sponsorCode}</span> — {selected.sponsorName}</span>
+                : <span className="text-sm text-ink-muted">—</span>}
+            </div>
 
             {/* Contact */}
             <section className="space-y-3">

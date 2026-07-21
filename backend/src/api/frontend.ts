@@ -779,7 +779,7 @@ export async function frontendRoutes(app: FastifyInstance) {
 	app.get("/network/tree", auth, async (req, reply) => {
 		const user = req.user as Auth;
 		const query = req.query as { depth?: string; root?: string };
-		const depth = Math.min(4, parseInt(query.depth ?? "3", 10) || 3);
+		const depth = Math.min(6, parseInt(query.depth ?? "3", 10) || 3);
 		const rootParam =
 			query.root === "me" || !query.root ? user.sub : query.root;
 
@@ -938,6 +938,64 @@ export async function frontendRoutes(app: FastifyInstance) {
 				joinedAt: r.created_at,
 			})),
 			nextCursor: null,
+		};
+	});
+
+	// All members in the caller's PLACEMENT subtree, level-ordered, searchable.
+	app.get("/network/downline", auth, async (req) => {
+		const memberId = (req.user as Auth).sub;
+		const query = req.query as { q?: string; page?: string; limit?: string };
+		const q = (query.q ?? "").trim();
+		const limit = Math.min(Math.max(1, Number(query.limit ?? "20") || 20), 100);
+		const page = Math.max(1, Number(query.page ?? "1") || 1);
+		const offset = (page - 1) * limit;
+
+		const where = `WHERE m.placement_path @> ARRAY[$1::bigint]
+        AND ($2 = '' OR m.name ILIKE $3 OR m.member_code ILIKE $3)`;
+		const baseParams = [memberId, q, `%${q}%`];
+
+		const [countRes, dataRes] = await Promise.all([
+			pool().query<{ total: string }>(
+				`SELECT COUNT(*) AS total FROM members m ${where}`,
+				baseParams,
+			),
+			pool().query<{
+				member_code: string;
+				name: string;
+				level: number;
+				leg: string | null;
+				is_active: boolean;
+				is_qualified: boolean;
+				created_at: string;
+			}>(
+				// ORDER BY cardinality(placement_path) equals level order (constant
+				// offset per caller) without a per-row subquery in the sort.
+				`SELECT m.member_code, m.name,
+                cardinality(m.placement_path)
+                  - (SELECT cardinality(placement_path) FROM members WHERE id = $1::bigint) AS level,
+                m.placement_sides[array_position(m.placement_path, $1::bigint)] AS leg,
+                m.is_active, m.is_qualified, m.created_at
+         FROM members m
+         ${where}
+         ORDER BY cardinality(m.placement_path) ASC, m.created_at ASC
+         LIMIT $4 OFFSET $5`,
+				[...baseParams, limit, offset],
+			),
+		]);
+
+		return {
+			items: dataRes.rows.map((r) => ({
+				memberCode: r.member_code,
+				name: r.name,
+				level: r.level,
+				leg: (r.leg ?? "L") as "L" | "R",
+				isActive: r.is_active,
+				isQualified: r.is_qualified,
+				joinedAt: r.created_at,
+			})),
+			total: Number(countRes.rows[0]?.total ?? 0),
+			page,
+			limit,
 		};
 	});
 
