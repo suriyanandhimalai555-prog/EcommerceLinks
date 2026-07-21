@@ -1448,10 +1448,21 @@ export async function adminRoutes(app: FastifyInstance) {
 
 		// Create or reuse an open order for this member+product (KYC gate bypassed
 		// — management is confirming an offline payment, not gating purchase access).
-		const { orderId, idempotencyKey } = await createOrder(
+		const { orderId, idempotencyKey, status: orderStatus } = await createOrder(
 			body.data.memberId,
 			body.data.productId,
 		);
+
+		// A prior rejected order cannot be confirmed directly (confirmOrder guards
+		// status IN ('created','paid')).  Management recording an offline payment is
+		// an explicit override: promote it to 'paid' so confirmOrder can proceed.
+		if (orderStatus === "rejected") {
+			await pool().query(
+				`UPDATE orders SET status = 'paid', rejection_reason = NULL
+				  WHERE id = $1 AND status = 'rejected'`,
+				[orderId],
+			);
+		}
 
 		// Validate and record optional proof keys before confirming.
 		if (body.data.proofKeys?.length) {

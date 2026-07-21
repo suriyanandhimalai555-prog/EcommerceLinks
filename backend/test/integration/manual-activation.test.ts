@@ -172,6 +172,71 @@ describe('POST /admin/orders/on-behalf', () => {
     expect(Number(outboxAfter.rows[0].cnt)).toBe(cntBefore)
   })
 
+  it('activates a member whose previous order was rejected (rejected → paid → confirmed)', async () => {
+    if (!mgmtToken) return
+
+    // Register a fresh member so this test is independent.
+    const { registerMember } = await import('../../src/services/placement.js')
+    const { memberId: rejMemberId, memberCode: rejMemberCode } = await registerMember({
+      sponsorCode: (await registerAnchor('RejAnchor')).memberCode,
+      name: 'RejectionTestMember',
+      phone: uniquePhone(),
+      email: uniqueEmail('rej'),
+      password: PASSWORD,
+    })
+
+    // Seed a rejected order for this member directly in the DB.
+    const { rows: seedRows } = await pool().query<{ id: string }>(
+      `INSERT INTO orders (member_id, product_id, base_amount, gst_amount, total_amount, idempotency_key, status)
+         VALUES ($1, $2, 10000.00, 1800.00, 11800.00, gen_random_uuid(), 'rejected')
+       RETURNING id`,
+      [rejMemberId, PRODUCT_ID],
+    )
+    const rejOrderId = seedRows[0].id
+
+    // Before: member is inactive, order is rejected.
+    const before = await pool().query<{ is_active: boolean }>(
+      'SELECT is_active FROM members WHERE id = $1',
+      [rejMemberId],
+    )
+    expect(before.rows[0]?.is_active).toBe(false)
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/admin/orders/on-behalf',
+      headers: { authorization: `Bearer ${mgmtToken}` },
+      payload: {
+        memberId: String(rejMemberId),
+        productId: PRODUCT_ID,
+        paymentRef: 'UTR-INTEG-REJ-001',
+      },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body) as { ok: boolean; orderId: string; activated: boolean }
+    expect(body.ok).toBe(true)
+    // Must reuse the existing rejected order.
+    expect(body.orderId).toBe(rejOrderId)
+    // Must have activated the member despite the order having been rejected before.
+    expect(body.activated).toBe(true)
+
+    const after = await pool().query<{ is_active: boolean; status: string }>(
+      `SELECT m.is_active, o.status
+         FROM members m
+         JOIN orders o ON o.id = $2
+        WHERE m.id = $1`,
+      [rejMemberId, rejOrderId],
+    )
+    expect(after.rows[0]?.is_active).toBe(true)
+    expect(after.rows[0]?.status).toBe('confirmed')
+
+    const outbox = await pool().query<{ event_type: string }>(
+      `SELECT event_type FROM events_outbox
+         WHERE (payload->>'member_id')::bigint = $1 AND event_type = 'MemberActivated'`,
+      [Number(rejMemberId)],
+    )
+    expect(outbox.rows.length).toBeGreaterThanOrEqual(1)
+  })
+
   it('returns 409 when trying to activate a management account', async () => {
     if (!mgmtToken) return
     const mgmt = await getManagementAccount()
