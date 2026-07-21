@@ -26,6 +26,7 @@
     "adminAudit": "Audit Log",
     "adminSettings": "Control Center",
     "adminOrders": "Orders",
+    "adminRecordPayment": "Record Payment",
     "logout": "Logout"
   },
   "adminSettings": {
@@ -208,6 +209,24 @@
     "members": {
       "noDocsWarning": "No KYC documents uploaded yet — verify only if documents were checked another way.",
       "kycReadOnly": "KYC decisions are made by management on the KYC Approvals page."
+    },
+    "recordPayment": {
+      "title": "Record Payment",
+      "subtitle": "Manually activate a member by recording their payment on their behalf. The member will be activated and flow through the normal pair & qualification pipeline.",
+      "step1": "Select Member",
+      "searchPlaceholder": "Search by name, code, or phone…",
+      "noResults": "No members found",
+      "alreadyActiveWarning": "This member is already active. Recording another payment will not re-activate them, but the order and payment reference will still be logged.",
+      "step2": "Select Product",
+      "step3": "Payment Details",
+      "proofLabel": "Payment Proof (optional)",
+      "proofHint": "Upload a screenshot of the bank transfer confirmation. Optional — the payment reference below is required.",
+      "paymentRefLabel": "Bank UTR / Reference",
+      "paymentRefPlaceholder": "e.g. UTR number from bank transfer",
+      "submit": "Confirm & Activate",
+      "successActivated": "Member Activated!",
+      "successAlreadyActive": "Payment Recorded",
+      "recordAnother": "Record Another Payment"
     },
     "orders": {
       "title": "Orders",

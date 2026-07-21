@@ -417,6 +417,15 @@ export interface KycDocument {
   url: string
 }
 
+// ---- management: on-behalf payment ----
+export interface OnBehalfRes {
+  ok: boolean
+  /** The order that was created or reused. */
+  orderId: string
+  /** True when this call was the one that set the member's is_active to TRUE. */
+  activated: boolean
+}
+
 // ---- error ----
 export interface ApiError {
   error: { code: string; message: string }

@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import {
   LayoutDashboard, User, Network, ShoppingBag, GitMerge, Wallet,
   Clock, Users, BarChart2, Trophy, TicketCheck, Bell,
-  Settings, LogOut, X, ShieldCheck, Banknote, Activity, ScrollText, SlidersHorizontal, ClipboardList, Package,
+  Settings, LogOut, X, ShieldCheck, Banknote, Activity, ScrollText, SlidersHorizontal, ClipboardList, Package, HandCoins,
 } from 'lucide-react'
 import api from '../../lib/api'
 import { isManagement } from '../../lib/roles'
@@ -41,6 +41,7 @@ const managementNavItems = [
   { key: 'adminSystem', icon: Activity, path: '/admin/system', end: false },
   { key: 'adminAudit', icon: ScrollText, path: '/admin/audit', end: false },
   { key: 'adminSettings', icon: SlidersHorizontal, path: '/admin/settings', end: false },
+  { key: 'adminRecordPayment', icon: HandCoins, path: '/admin/record-payment', end: false },
   { key: 'settings', icon: Settings, path: '/settings', end: false },
 ]
 

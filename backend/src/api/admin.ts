@@ -13,6 +13,8 @@ import {
 	buildKey,
 	IMAGE_CONTENT_TYPES,
 	MAX_UPLOAD_BYTES,
+	objectExists,
+	paymentProofKeyRe,
 	presignGet,
 	presignUpload,
 	s3Configured,
@@ -25,7 +27,7 @@ import {
 } from "../services/productService.js";
 import { postLedgerTxn } from "../workers/ledger.js";
 import { buildBatch } from "../workers/payout.js";
-import { confirmOrder } from "../services/orderService.js";
+import { confirmOrder, createOrder } from "../services/orderService.js";
 
 export async function adminRoutes(app: FastifyInstance) {
 	const auth = { preHandler: [app.requireAdmin] };
@@ -1374,5 +1376,123 @@ export async function adminRoutes(app: FastifyInstance) {
 			welcomeEmailEnabled: snapshot["welcome_email_enabled"] ?? false,
 			loginOtpEnabled: snapshot["login_otp_enabled"] ?? false,
 		};
+	});
+
+	// ===== Management: record payment on behalf of an existing member =====
+	// These two endpoints let management manually activate a member (e.g. an
+	// employee whose payment was received outside the normal member-driven flow).
+	// They reuse confirmOrder() so the pipeline (MemberActivated → counters →
+	// pairs → qualification) fires exactly as it would for a normal purchase.
+
+	const OnBehalfPresignBody = z.object({
+		memberId: z.string().min(1),
+		contentType: z.enum(IMAGE_CONTENT_TYPES),
+		sizeBytes: z.number().int().positive().max(MAX_UPLOAD_BYTES),
+	});
+
+	// POST /admin/orders/on-behalf/presign — mint a presigned POST URL for a
+	// payment-proof image to be uploaded to the target member's S3 folder.
+	app.post("/orders/on-behalf/presign", auth, async (req, reply) => {
+		const body = OnBehalfPresignBody.safeParse(req.body);
+		if (!body.success)
+			return reply.status(400).send({ error: body.error.flatten() });
+		const actor = req.user as { sub: string };
+		if (!(await isManagement(actor.sub)))
+			return reply.status(403).send({ error: "Management only" });
+		if (!s3Configured())
+			return reply.status(503).send({ error: "S3_NOT_CONFIGURED" });
+
+		const { rows } = await pool().query<{ id: string }>(
+			"SELECT id FROM members WHERE id = $1 AND role <> 'management'",
+			[body.data.memberId],
+		);
+		if (!rows[0])
+			return reply.status(404).send({ error: "Member not found" });
+
+		const key = buildKey(
+			`payment-proofs-img/${body.data.memberId}`,
+			body.data.contentType,
+		);
+		return presignUpload(key, body.data.contentType);
+	});
+
+	const OnBehalfBody = z.object({
+		memberId: z.string().min(1),
+		productId: z.number().int().positive(),
+		proofKeys: z.array(z.string()).optional(),
+		paymentRef: z.string().min(1, "Payment reference is required"),
+	});
+
+	// POST /admin/orders/on-behalf — create or reuse an order for the target
+	// member, attach optional proof keys, and confirm it (activating them if
+	// it is their first confirmed order).
+	app.post("/orders/on-behalf", auth, async (req, reply) => {
+		const body = OnBehalfBody.safeParse(req.body);
+		if (!body.success)
+			return reply.status(400).send({ error: body.error.flatten() });
+		const actor = req.user as { sub: string };
+		if (!(await isManagement(actor.sub)))
+			return reply.status(403).send({ error: "Management only" });
+
+		// Resolve target member — must exist and must not be another management account.
+		const { rows: mRows } = await pool().query<{ id: string; role: string }>(
+			"SELECT id, role FROM members WHERE id = $1",
+			[body.data.memberId],
+		);
+		if (!mRows[0])
+			return reply.status(404).send({ error: "Member not found" });
+		if (mRows[0].role === "management")
+			return reply
+				.status(409)
+				.send({ error: "Cannot record payment for management account" });
+
+		// Create or reuse an open order for this member+product (KYC gate bypassed
+		// — management is confirming an offline payment, not gating purchase access).
+		const { orderId, idempotencyKey } = await createOrder(
+			body.data.memberId,
+			body.data.productId,
+		);
+
+		// Validate and record optional proof keys before confirming.
+		if (body.data.proofKeys?.length) {
+			for (const key of body.data.proofKeys) {
+				if (!paymentProofKeyRe(body.data.memberId).test(key))
+					return reply
+						.status(400)
+						.send({ error: `Invalid proof key: ${key}` });
+				if (!(await objectExists(key)))
+					return reply
+						.status(400)
+						.send({ error: `Proof not found in storage: ${key}` });
+				await pool().query(
+					`INSERT INTO order_payment_proofs (order_id, s3_key)
+					 VALUES ($1, $2) ON CONFLICT (s3_key) DO NOTHING`,
+					[orderId, key],
+				);
+			}
+		}
+
+		// confirmOrder is idempotent and emits MemberActivated inside its own
+		// transaction when this is the member's first confirmed order.
+		const { activated } = await confirmOrder(
+			idempotencyKey,
+			BigInt(orderId),
+			body.data.paymentRef,
+		);
+
+		// Audit trail — mirrors the order_confirm pattern at /orders/:id/confirm-payment.
+		await pool().query(
+			`INSERT INTO admin_audit_log
+			   (actor_id, action, target_type, target_id, before_state, after_state)
+			 VALUES ($1, 'manual_activation', 'member', $2, $3, $4)`,
+			[
+				actor.sub,
+				body.data.memberId,
+				{ is_active: !activated },
+				{ is_active: true, orderId, paymentRef: body.data.paymentRef, activated },
+			],
+		);
+
+		return { ok: true, orderId, activated };
 	});
 }

@@ -24,7 +24,7 @@ import {
 	presignUpload,
 	s3Configured,
 } from "../lib/s3.js";
-import { confirmOrder } from "../services/orderService.js";
+import { confirmOrder, createOrder } from "../services/orderService.js";
 import { imagesByProduct } from "../services/productService.js";
 import { getSetting } from "../services/settings.js";
 
@@ -622,59 +622,21 @@ export async function frontendRoutes(app: FastifyInstance) {
 				});
 		}
 
-		// Return the existing open order if one already exists for this member+product.
-		// Prevents duplicate orders from double-clicks or repeated visits.
-		const { rows: openRows } = await pool().query<{
-			id: string;
-			total_amount: string;
-			status: string;
-		}>(
-			`SELECT id, total_amount, status FROM orders
-			  WHERE member_id = $1 AND product_id = $2
-			    AND status IN ('created', 'paid', 'rejected')
-			  ORDER BY created_at DESC LIMIT 1`,
-			[memberId, body.data.productId],
-		);
-		if (openRows[0]) {
-			return reply.status(200).send({
-				orderId: openRows[0].id,
-				totalPaise: Number(toPaise(openRows[0].total_amount)),
-				status: openRows[0].status,
+		// Dedupe + pricing extracted into createOrder (see services/orderService.ts).
+		// Note: idempotencyKey deliberately NOT returned to the member (see GAPS G-2).
+		try {
+			const result = await createOrder(memberId, body.data.productId);
+			return reply.status(result.wasNew ? 201 : 200).send({
+				orderId: result.orderId,
+				totalPaise: Number(result.totalPaise),
+				status: result.status,
 			});
-		}
-
-		const { rows: pRows } = await pool().query<{ base_price: string }>(
-			"SELECT base_price FROM products WHERE id = $1 AND active = TRUE",
-			[body.data.productId],
-		);
-		if (!pRows[0])
+		} catch (e: unknown) {
+			const err = e as Error & { statusCode?: number };
 			return reply
-				.status(404)
-				.send({ error: { code: "NOT_FOUND", message: "Product not found" } });
-
-		const basePaise = toPaise(pRows[0].base_price);
-		const gstPaise = pct(basePaise, CFG.GST_PCT);
-		const totalPaise = basePaise + gstPaise;
-		const idempotencyKey = randomUUID();
-
-		const { rows } = await pool().query<{ id: string }>(
-			`INSERT INTO orders (member_id, product_id, base_amount, gst_amount, total_amount, idempotency_key)
-       VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
-			[
-				memberId,
-				body.data.productId,
-				fromPaise(basePaise),
-				fromPaise(gstPaise),
-				fromPaise(totalPaise),
-				idempotencyKey,
-			],
-		);
-		// Note: idempotencyKey deliberately NOT returned (see GAPS G-2)
-		return reply.status(201).send({
-			orderId: rows[0].id,
-			totalPaise: Number(totalPaise),
-			status: "created",
-		});
+				.status(err.statusCode ?? 500)
+				.send({ error: { code: "ERROR", message: err.message } });
+		}
 	});
 
 	// GET /me/orders — full order history for the logged-in member.

@@ -14,6 +14,7 @@ import { SystemTab } from './SystemTab'
 import { AuditTab } from './AuditTab'
 import { SettingsTab } from './SettingsTab'
 import { OrdersTab } from './OrdersTab'
+import { RecordPaymentTab } from './RecordPaymentTab'
 
 const sections = [
   { path: '/admin', label: 'Overview', end: true },
@@ -69,6 +70,7 @@ export default function AdminConsole() {
         {isManagement(me) && <Route path="products" element={<ProductsTab />} />}
         {isManagement(me) && <Route path="kyc" element={<KycTab />} />}
         {isManagement(me) && <Route path="settings" element={<SettingsTab />} />}
+        {isManagement(me) && <Route path="record-payment" element={<RecordPaymentTab />} />}
         <Route path="ranks" element={<RanksTab />} />
         <Route path="payouts" element={<PayoutsTab />} />
         <Route path="system" element={<SystemTab />} />
