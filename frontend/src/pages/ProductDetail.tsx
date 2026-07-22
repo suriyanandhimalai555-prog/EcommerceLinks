@@ -332,10 +332,6 @@ export default function ProductDetail() {
               <span className="text-ink-muted">{t('buy.basePrice')}</span>
               <span className="text-ink">{formatINR(product.basePricePaise)}</span>
             </div>
-            <div className="flex justify-between text-sm">
-              <span className="text-ink-muted">{t('buy.gst')}</span>
-              <span className="text-ink">{formatINR(product.gstPaise)}</span>
-            </div>
             <div className="flex justify-between text-base font-bold border-t border-surface-line pt-2">
               <span className="text-ink">{t('buy.total')}</span>
               <span className="text-primary">{formatINR(product.totalPaise)}</span>

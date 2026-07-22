@@ -11,7 +11,7 @@ import { z } from "zod";
 import { CFG } from "../config.js";
 import { QUALIFIED_THRESHOLDS } from "../domain/ranks.js";
 import { pool } from "../lib/db.js";
-import { fromPaise, pct, toPaise } from "../lib/money.js";
+import { fromPaise, toPaise } from "../lib/money.js";
 import { redis } from "../lib/redis.js";
 import {
 	buildKey,
@@ -550,14 +550,13 @@ export async function frontendRoutes(app: FastifyInstance) {
 		const images = await imagesByProduct(rows.map((p) => Number(p.id)));
 		return rows.map((p) => {
 			const base = toPaise(p.base_price);
-			const gst = pct(base, CFG.GST_PCT);
 			return {
 				id: Number(p.id),
 				name: p.name,
 				description: p.description,
 				basePricePaise: Number(base),
-				gstPaise: Number(gst),
-				totalPaise: Number(base + gst),
+				gstPaise: 0,
+				totalPaise: Number(base),
 				badges: PRODUCT_BADGES[Number(p.id)] ?? [],
 				images: images.get(Number(p.id)) ?? [],
 			};
@@ -584,14 +583,13 @@ export async function frontendRoutes(app: FastifyInstance) {
 		const images = await imagesByProduct([idNum]);
 		const p = rows[0];
 		const base = toPaise(p.base_price);
-		const gst = pct(base, CFG.GST_PCT);
 		return {
 			id: Number(p.id),
 			name: p.name,
 			description: p.description,
 			basePricePaise: Number(base),
-			gstPaise: Number(gst),
-			totalPaise: Number(base + gst),
+			gstPaise: 0,
+			totalPaise: Number(base),
 			badges: PRODUCT_BADGES[Number(p.id)] ?? [],
 			images: images.get(Number(p.id)) ?? [],
 		};

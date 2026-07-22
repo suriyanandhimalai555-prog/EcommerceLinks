@@ -1,8 +1,7 @@
 import { randomUUID } from "crypto";
-import { CFG } from "../config.js";
 import { writeOutbox } from "../events/outbox.js";
 import { pool, withTxn } from "../lib/db.js";
-import { fromPaise, pct, toPaise } from "../lib/money.js";
+import { fromPaise, toPaise } from "../lib/money.js";
 
 /**
  * confirmOrder — confirm a payment gateway callback and, if this is the member's
@@ -67,7 +66,7 @@ export async function confirmOrder(
 /**
  * createOrder — find or create an open order for the given member + product.
  *
- * Encapsulates the pricing (GST calc via lib/money pct) and the dedupe logic
+ * Encapsulates the pricing and the dedupe logic
  * (returns an existing order in status 'created'/'paid'/'rejected' rather than
  * inserting a duplicate). Callers that need to enforce the KYC gate should do
  * so before calling this function.
@@ -118,8 +117,10 @@ export async function createOrder(
 	}
 
 	const basePaise = toPaise(pRows[0].base_price);
-	const gstPaise = pct(basePaise, CFG.GST_PCT);
-	const totalPaise = basePaise + gstPaise;
+	// GST removed: members pay the flat base price. gst_amount stays in the
+	// schema (NOT NULL column) and is written as 0 to preserve historical rows.
+	const gstPaise = 0n;
+	const totalPaise = basePaise;
 	const idempotencyKey = randomUUID();
 
 	let rows: { id: string }[];

@@ -98,10 +98,6 @@ export default function BuyProduct() {
                   <span className="text-ink-muted">Base Price</span>
                   <span className="font-medium text-ink">{formatINR(p.basePricePaise)}</span>
                 </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-ink-muted">GST (18%)</span>
-                  <span className="font-medium text-ink">{formatINR(p.gstPaise)}</span>
-                </div>
                 <div className="flex justify-between text-base font-bold pt-1 border-t border-surface-line">
                   <span className="text-ink">Total</span>
                   <span className="text-primary">{formatINR(p.totalPaise)}</span>
