@@ -64,6 +64,9 @@ export const CFG = {
 	GST_PCT: parseInt(env("GST_PCT", "18"), 10),
 	TDS_PCT: parseInt(env("TDS_PCT", "5"), 10),
 	MIN_PAYOUT_PAISE: parseInt(env("MIN_PAYOUT_PAISE", "50000"), 10),
+	// Max levels below the root that /network/tree returns in one view (root = level 0).
+	// The frontend caps its request/zoom-out to the same value (see frontend tree constants).
+	MAX_TREE_DEPTH: parseInt(env("MAX_TREE_DEPTH", "12"), 10),
 	TZ: env("TZ", "Asia/Kolkata"),
 	DATABASE_URL,
 	JWT_SECRET,

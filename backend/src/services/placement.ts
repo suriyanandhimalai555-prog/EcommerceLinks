@@ -165,14 +165,9 @@ export async function registerMember(
 			) {
 				continue;
 			}
-			// G-10: duplicate phone or email → 409 instead of 500
-			if (pg.code === "23505" && pg.constraint === "members_phone_key") {
-				const e = new Error("Phone number already registered") as Error & {
-					statusCode: number;
-				};
-				e.statusCode = 409;
-				throw e;
-			}
+			// G-10: duplicate email → 409 instead of 500. Phone is intentionally
+			// non-unique (families/groups share a contact number; login is email-only),
+			// so there is no members_phone_key violation to map — see migration 029.
 			if (pg.code === "23505" && pg.constraint === "members_email_key") {
 				const e = new Error("Email address already registered") as Error & {
 					statusCode: number;

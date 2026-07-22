@@ -5,6 +5,7 @@ import { ZoomIn, ZoomOut, Maximize2, Expand, Minimize2, ChevronLeft, UserPlus, L
 import { useTranslation } from 'react-i18next'
 import type { TreeNode } from '../../types/api'
 import { computeLayout, type LayoutNode } from './useTreeLayout'
+import { MAX_TREE_DEPTH } from './constants'
 
 const NODE_W = 150
 const NODE_H = 64
@@ -259,14 +260,15 @@ export function BinaryTree({
     return () => el.removeEventListener('wheel', onWheel)
   }, [isFullscreen, containerSize])
 
-  // Scale at which the whole tree fits the canvas — the reset target. Depth 6
-  // on a phone needs ~0.03, so it is dynamic.
+  // Scale at which the whole tree fits the canvas — the reset target. A deep
+  // tree (up to MAX_TREE_DEPTH levels) on a phone can need well below 0.03, so it
+  // is dynamic with a low floor to keep "fit" able to show the whole tree.
   const fitScale = containerSize
-    ? Math.max(0.03, Math.min(containerSize.w / svgW, containerSize.h / (svgH + SVG_TOP_PAD), 1))
+    ? Math.max(0.01, Math.min(containerSize.w / svgW, containerSize.h / (svgH + SVG_TOP_PAD), 1))
     : 1
   // Floor sits 30% below fit so the auto-depth trigger (fit * MARGIN) is always
-  // physically reachable at every depth < 6.
-  const minScale = Math.max(0.02, fitScale * 0.7)
+  // physically reachable at every depth < MAX_TREE_DEPTH.
+  const minScale = Math.max(0.008, fitScale * 0.7)
   const MARGIN = 0.92
 
   // Canvas height: flex-1 in fullscreen (fills the overlay), fixed otherwise.
@@ -304,7 +306,7 @@ export function BinaryTree({
         clearTimeout(settleTimer.current)
         const scale = state.scale
         settleTimer.current = setTimeout(() => {
-          if (isFetching || depth >= 6) return
+          if (isFetching || depth >= MAX_TREE_DEPTH) return
           if (requestedDepthRef.current !== depth) return // a bump already in flight
           if (scale < fitScale * MARGIN) {
             requestedDepthRef.current = depth + 1

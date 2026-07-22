@@ -166,7 +166,7 @@ describe('GET /network/downline', () => {
   })
 })
 
-describe('GET /network/tree depth cap (raised to 6)', () => {
+describe('GET /network/tree depth cap (raised to 12)', () => {
   interface Node {
     memberCode: string; left: Node | null; right: Node | null
     [k: string]: unknown
@@ -187,7 +187,7 @@ describe('GET /network/tree depth cap (raised to 6)', () => {
     return JSON.parse(res.body) as Node
   }
 
-  it('depth=6 includes level 6 and excludes level 7', async () => {
+  it('an explicit depth=6 request still returns exactly levels 0..6', async () => {
     const tree = await getTree(6)
     expect(findDepth(tree, G.memberCode)).toBe(5)
     expect(findDepth(tree, H.memberCode)).toBe(6)
@@ -203,9 +203,12 @@ describe('GET /network/tree depth cap (raised to 6)', () => {
     )
   })
 
-  it('depth beyond the cap behaves as 6', async () => {
+  // The cap was raised past 6: a level-7 node that used to be clamped away now
+  // shows. (The fixture only reaches level 7, so this proves cap > 6, not the
+  // exact 12 boundary — the cap is a config value, not a money invariant.)
+  it('depth beyond the fixture returns level 7 (cap raised past 6)', async () => {
     const tree = await getTree(99)
     expect(findDepth(tree, H.memberCode)).toBe(6)
-    expect(findDepth(tree, I.memberCode)).toBeNull()
+    expect(findDepth(tree, I.memberCode)).toBe(7)
   })
 })

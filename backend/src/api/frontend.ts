@@ -739,7 +739,10 @@ export async function frontendRoutes(app: FastifyInstance) {
 	app.get("/network/tree", auth, async (req, reply) => {
 		const user = req.user as Auth;
 		const query = req.query as { depth?: string; root?: string };
-		const depth = Math.min(6, parseInt(query.depth ?? "3", 10) || 3);
+		const depth = Math.min(
+			CFG.MAX_TREE_DEPTH,
+			parseInt(query.depth ?? "3", 10) || 3,
+		);
 		const rootParam =
 			query.root === "me" || !query.root ? user.sub : query.root;
 

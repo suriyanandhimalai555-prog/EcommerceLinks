@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import api from '../../lib/api'
 import type { TreeNode } from '../../types/api'
+import { MAX_TREE_DEPTH } from './constants'
 
 /**
  * Drives server-side drill-down for the binary genealogy tree.
@@ -56,8 +57,8 @@ export function useTreeDrilldown(baseDepth = 3) {
     setRootCode('me')
   }
 
-  // Load one more level of the current subtree, capped at the backend's max (6).
-  const requestDeeper = () => setDepth((d) => Math.min(6, d + 1))
+  // Load one more level of the current subtree, capped at the backend's max.
+  const requestDeeper = () => setDepth((d) => Math.min(MAX_TREE_DEPTH, d + 1))
 
   return {
     root: query.data,
