@@ -187,7 +187,16 @@
       "nameRequired": "Product name is required",
       "priceInvalid": "Enter a valid price in rupees",
       "emptyTitle": "No products yet",
-      "emptyDesc": "Add your first product to show it on the Buy Product page"
+      "emptyDesc": "Add your first product to show it on the Buy Product page",
+      "tabActive": "Active ({{count}})",
+      "tabInactive": "Inactive ({{count}})",
+      "emptyTitleInactive": "No inactive products",
+      "emptyDescInactive": "All your products are currently active",
+      "delete": "Delete",
+      "deleteConfirmTitle": "Delete product?",
+      "deleteConfirmBody": "This will permanently remove \"{{name}}\" and all its images. This cannot be undone.",
+      "deleteCannotHasOrders": "Cannot delete — this product has existing orders. Deactivate it instead to hide it from the Buy page.",
+      "deleteError": "Delete failed. Please try again."
     },
     "kyc": {
       "title": "KYC Approvals",

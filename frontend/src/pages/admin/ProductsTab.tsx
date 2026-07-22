@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Loader2, Package, Pencil, Plus } from 'lucide-react'
+import { Loader2, Package, Pencil, Plus, Trash2, AlertTriangle } from 'lucide-react'
 import api from '../../lib/api'
 import { formatINR, rupeesToPaise } from '../../lib/format'
 import { DataTable, type Column } from '../../components/ui/DataTable'
@@ -9,6 +9,7 @@ import { Badge } from '../../components/ui/Badge'
 import { Modal } from '../../components/ui/Modal'
 import { FormField } from '../../components/ui/FormField'
 import { ImageUploader, type UploadedImage } from '../../components/ui/ImageUploader'
+import { Tabs, TabList, TabTrigger, TabContent } from '../../components/ui/Tabs'
 import type { AdminProduct, PresignRes } from '../../types/api'
 
 interface FormState {
@@ -41,14 +42,26 @@ function getPresign(file: File): Promise<PresignRes> {
 export function ProductsTab() {
   const { t } = useTranslation()
   const qc = useQueryClient()
+
+  // ── edit form ────────────────────────────────────────────────────────────
   const [form, setForm] = useState<FormState | null>(null)
   const [formError, setFormError] = useState('')
+
+  // ── delete confirm ───────────────────────────────────────────────────────
+  const [deleteTarget, setDeleteTarget] = useState<AdminProduct | null>(null)
+  // hasOrders: permanent block (409 — button stays hidden); deleteError: any error message shown
+  const [hasOrders, setHasOrders] = useState(false)
+  const [deleteError, setDeleteError] = useState('')
 
   const { data: products, isPending } = useQuery<AdminProduct[]>({
     queryKey: ['admin-products'],
     queryFn: () => api.get('/admin/products').then((r) => r.data),
   })
 
+  const activeProducts = (products ?? []).filter((p) => p.active)
+  const inactiveProducts = (products ?? []).filter((p) => !p.active)
+
+  // ── save (create / update) ───────────────────────────────────────────────
   const save = useMutation({
     mutationFn: (f: FormState) => {
       const payload = {
@@ -70,6 +83,31 @@ export function ProductsTab() {
     onError: () => setFormError(t('errors.server')),
   })
 
+  // ── delete ───────────────────────────────────────────────────────────────
+  const del = useMutation({
+    mutationFn: (id: number) => api.delete(`/admin/products/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin-products'] })
+      qc.invalidateQueries({ queryKey: ['products'] })
+      setDeleteTarget(null)
+      setHasOrders(false)
+      setDeleteError('')
+    },
+    onError: (e: unknown) => {
+      const err = e as { response?: { status?: number; data?: { error?: string } }; message?: string }
+      if (err.response?.status === 409) {
+        // Permanent block: product has orders — hide confirm button, show deactivate guidance
+        setHasOrders(true)
+        setDeleteError(t('admin.products.deleteCannotHasOrders'))
+      } else {
+        // Transient error: keep button live so the user can retry
+        setHasOrders(false)
+        const raw = err.response?.data?.error
+        setDeleteError(raw ?? t('admin.products.deleteError'))
+      }
+    },
+  })
+
   function openEdit(p: AdminProduct) {
     setFormError('')
     setForm({
@@ -80,6 +118,20 @@ export function ProductsTab() {
       active: p.active,
       images: p.images.map((img) => ({ key: img.key, previewUrl: img.url })),
     })
+  }
+
+  function openDelete(p: AdminProduct) {
+    del.reset()
+    setHasOrders(false)
+    setDeleteError('')
+    setDeleteTarget(p)
+  }
+
+  function closeDelete() {
+    del.reset()
+    setHasOrders(false)
+    setDeleteError('')
+    setDeleteTarget(null)
   }
 
   function submit() {
@@ -117,9 +169,17 @@ export function ProductsTab() {
     {
       key: 'actions', header: '', align: 'right',
       render: (p) => (
-        <button onClick={() => openEdit(p)} className="avg-btn-secondary py-1.5 px-3 text-xs">
-          <Pencil size={12} /> {t('admin.products.edit')}
-        </button>
+        <div className="flex items-center gap-2 justify-end">
+          <button onClick={() => openEdit(p)} className="avg-btn-secondary py-1.5 px-3 text-xs">
+            <Pencil size={12} /> {t('admin.products.edit')}
+          </button>
+          <button
+            onClick={() => openDelete(p)}
+            className="flex items-center gap-1 py-1.5 px-3 text-xs rounded-lg border border-danger/30 bg-danger/5 text-danger hover:bg-danger/15 transition-colors"
+          >
+            <Trash2 size={12} /> {t('admin.products.delete')}
+          </button>
+        </div>
       ),
     },
   ]
@@ -135,15 +195,43 @@ export function ProductsTab() {
           <Plus size={13} /> {t('admin.products.add')}
         </button>
       </div>
-      <DataTable
-        columns={columns}
-        data={products ?? []}
-        loading={isPending}
-        rowKey={(p) => String(p.id)}
-        emptyTitle={t('admin.products.emptyTitle')}
-        emptyDescription={t('admin.products.emptyDesc')}
-      />
 
+      <div className="px-5 pt-4">
+        <Tabs defaultValue="active">
+          <TabList>
+            <TabTrigger value="active">
+              {t('admin.products.tabActive', { count: activeProducts.length })}
+            </TabTrigger>
+            <TabTrigger value="inactive">
+              {t('admin.products.tabInactive', { count: inactiveProducts.length })}
+            </TabTrigger>
+          </TabList>
+
+          <TabContent value="active">
+            <DataTable
+              columns={columns}
+              data={activeProducts}
+              loading={isPending}
+              rowKey={(p) => String(p.id)}
+              emptyTitle={t('admin.products.emptyTitle')}
+              emptyDescription={t('admin.products.emptyDesc')}
+            />
+          </TabContent>
+
+          <TabContent value="inactive">
+            <DataTable
+              columns={columns}
+              data={inactiveProducts}
+              loading={isPending}
+              rowKey={(p) => String(p.id)}
+              emptyTitle={t('admin.products.emptyTitleInactive')}
+              emptyDescription={t('admin.products.emptyDescInactive')}
+            />
+          </TabContent>
+        </Tabs>
+      </div>
+
+      {/* ── Edit / Create modal ─────────────────────────────────────────── */}
       <Modal
         open={!!form}
         onClose={() => setForm(null)}
@@ -196,6 +284,53 @@ export function ProductsTab() {
               {save.isPending ? <Loader2 size={15} className="animate-spin" /> : null}
               {t('admin.products.save')}
             </button>
+          </div>
+        )}
+      </Modal>
+
+      {/* ── Delete confirm modal ────────────────────────────────────────── */}
+      <Modal
+        open={!!deleteTarget}
+        onClose={closeDelete}
+        title={t('admin.products.deleteConfirmTitle')}
+        size="sm"
+      >
+        {deleteTarget && (
+          <div className="space-y-4">
+            <p className="text-sm text-ink-muted">
+              {t('admin.products.deleteConfirmBody', { name: deleteTarget.name })}
+            </p>
+
+            {/* Warning: amber = permanent block (has orders); red = transient, retry possible */}
+            {deleteError && (
+              <div
+                className={`flex items-start gap-2.5 rounded-xl p-3 border ${
+                  hasOrders
+                    ? 'bg-warning/8 border-warning/20'
+                    : 'bg-danger/10 border-danger/30'
+                }`}
+              >
+                <AlertTriangle size={13} className={`shrink-0 mt-0.5 ${hasOrders ? 'text-warning' : 'text-danger'}`} />
+                <p className={`text-xs ${hasOrders ? 'text-warning/90' : 'text-danger'}`}>{deleteError}</p>
+              </div>
+            )}
+
+            <div className="flex gap-3">
+              <button onClick={closeDelete} className="flex-1 avg-btn-secondary py-2">
+                {t('common.cancel')}
+              </button>
+              {/* Hide confirm only when the product genuinely cannot be deleted (409). Transient errors keep the button live. */}
+              {!hasOrders && (
+                <button
+                  onClick={() => del.mutate(deleteTarget.id)}
+                  disabled={del.isPending}
+                  className="flex-1 flex items-center justify-center gap-2 py-2 rounded-xl bg-danger text-white text-sm font-semibold hover:bg-danger/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {del.isPending && <Loader2 size={13} className="animate-spin" />}
+                  {t('admin.products.delete')}
+                </button>
+              )}
+            </div>
           </div>
         )}
       </Modal>

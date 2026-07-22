@@ -149,6 +149,70 @@ export async function createProduct(
 	});
 }
 
+/**
+ * deleteProduct — hard-deletes a product that has no orders.
+ *
+ * Management guard: if any order references this product the deletion is blocked
+ * with a 409 so the caller can deactivate it instead (active=false) and preserve
+ * order/income history.  product_images rows cascade via the FK; their S3 objects
+ * are cleaned up after the transaction commits (same pattern as updateProduct).
+ */
+export async function deleteProduct(
+	actorId: string,
+	id: number,
+): Promise<void> {
+	const removedKeys: string[] = [];
+
+	await withTxn(async (c) => {
+		// Lock the row first so concurrent requests don't race.
+		const { rows: before } = await c.query<{
+			name: string;
+			description: string;
+			base_price: string;
+			active: boolean;
+		}>(
+			"SELECT name, description, base_price, active FROM products WHERE id=$1 FOR UPDATE",
+			[id],
+		);
+		if (!before[0]) throw httpError("Product not found", 404);
+
+		// Block if any order references this product — includes rejected orders because
+		// the FK constraint on orders.product_id enforces this at the DB level regardless,
+		// and rejected orders are not dead (members can resubmit proof on them).
+		const { rows: orderCount } = await c.query<{ cnt: string }>(
+			"SELECT COUNT(*) AS cnt FROM orders WHERE product_id = $1",
+			[id],
+		);
+		if (Number(orderCount[0].cnt) > 0) {
+			throw httpError(
+				`Product has ${orderCount[0].cnt} order(s) — deactivate it instead`,
+				409,
+			);
+		}
+
+		// Collect image keys for post-commit S3 cleanup.
+		const { rows: imgRows } = await c.query<{ s3_key: string }>(
+			"SELECT s3_key FROM product_images WHERE product_id=$1",
+			[id],
+		);
+		for (const r of imgRows) removedKeys.push(r.s3_key);
+
+		// The DELETE cascades product_images rows.
+		await c.query("DELETE FROM products WHERE id=$1", [id]);
+
+		await writeAudit(c, actorId, "delete_product", String(id), {
+			name: before[0].name,
+			description: before[0].description,
+			basePricePaise: Number(toPaise(before[0].base_price)),
+			active: before[0].active,
+		}, null);
+	});
+
+	// S3 deletes outside the txn — losing them is recoverable (orphaned files,
+	// not lost money), but committing after a failed S3 call would be non-atomic.
+	for (const key of removedKeys) await deleteObject(key);
+}
+
 export async function updateProduct(
 	actorId: string,
 	id: number,

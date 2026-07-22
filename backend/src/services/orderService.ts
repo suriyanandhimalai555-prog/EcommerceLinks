@@ -122,17 +122,29 @@ export async function createOrder(
 	const totalPaise = basePaise + gstPaise;
 	const idempotencyKey = randomUUID();
 
-	const { rows } = await pool().query<{ id: string }>(
-		`INSERT INTO orders (member_id, product_id, base_amount, gst_amount, total_amount, idempotency_key)
-     VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
-		[
-			memberId,
-			productId,
-			fromPaise(basePaise),
-			fromPaise(gstPaise),
-			fromPaise(totalPaise),
-			idempotencyKey,
-		],
-	);
+	let rows: { id: string }[];
+	try {
+		({ rows } = await pool().query<{ id: string }>(
+			`INSERT INTO orders (member_id, product_id, base_amount, gst_amount, total_amount, idempotency_key)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+			[
+				memberId,
+				productId,
+				fromPaise(basePaise),
+				fromPaise(gstPaise),
+				fromPaise(totalPaise),
+				idempotencyKey,
+			],
+		));
+	} catch (e: unknown) {
+		// FK violation: product was concurrently deleted between the price lookup and here.
+		const pg = e as { code?: string };
+		if (pg.code === "23503") {
+			const err = new Error("Product is no longer available") as Error & { statusCode: number };
+			err.statusCode = 409;
+			throw err;
+		}
+		throw e;
+	}
 	return { orderId: rows[0].id, idempotencyKey, totalPaise, status: "created", wasNew: true };
 }

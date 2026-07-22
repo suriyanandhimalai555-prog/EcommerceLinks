@@ -22,6 +22,7 @@ import {
 import { publishToStream } from "../lib/streams.js";
 import {
 	createProduct,
+	deleteProduct,
 	listAdminProducts,
 	updateProduct,
 } from "../services/productService.js";
@@ -96,6 +97,28 @@ export async function adminRoutes(app: FastifyInstance) {
 			return reply.status(403).send({ error: "Management only" });
 
 		await updateProduct(actor.sub, Number(id), body.data);
+		return { ok: true };
+	});
+
+	// DELETE /admin/products/:id — hard-delete a product that has no orders.
+	// Products with orders get a 409 with a message telling management to deactivate instead.
+	app.delete("/products/:id", auth, async (req, reply) => {
+		const { id } = req.params as { id: string };
+		const numId = parseInt(id, 10);
+		if (!Number.isFinite(numId) || numId < 1)
+			return reply.status(400).send({ error: "Invalid product id" });
+
+		const actor = req.user as { sub: string };
+		try {
+			if (!(await isManagement(actor.sub)))
+				return reply.status(403).send({ error: "Management only" });
+			await deleteProduct(actor.sub, numId);
+		} catch (e: unknown) {
+			const err = e as Error & { statusCode?: number };
+			return reply
+				.status(err.statusCode ?? 500)
+				.send({ error: err.message });
+		}
 		return { ok: true };
 	});
 
