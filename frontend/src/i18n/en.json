@@ -199,6 +199,7 @@
     },
     "kyc": {
       "title": "KYC Approvals",
+      "searchPlaceholder": "Search by name, phone or member code…",
       "filterPending": "Pending",
       "filterVerified": "Verified",
       "filterRejected": "Rejected",

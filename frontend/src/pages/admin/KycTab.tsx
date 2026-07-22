@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { ExternalLink, Loader2, ShieldCheck } from 'lucide-react'
+import { ExternalLink, Loader2, Search, ShieldCheck } from 'lucide-react'
 import api from '../../lib/api'
 import { apiErrorMessage } from '../../lib/apiError'
 import { formatDate } from '../../lib/format'
@@ -17,14 +17,23 @@ export function KycTab() {
   const { t } = useTranslation()
   const qc = useQueryClient()
   const [statusFilter, setStatusFilter] = useState<KycStatus>('pending')
+  const [input, setInput] = useState('')
+  const [q, setQ] = useState('')
   const [selected, setSelected] = useState<AdminMemberRow | null>(null)
   const [notes, setNotes] = useState('')
   const [banner, setBanner] = useState<{ ok: boolean; text: string } | null>(null)
 
+  useEffect(() => {
+    const id = setTimeout(() => setQ(input), 350)
+    return () => clearTimeout(id)
+  }, [input])
+
   const { data: membersPage, isPending } = useQuery<AdminMembersPage>({
-    queryKey: ['admin-kyc-queue', statusFilter],
+    queryKey: ['admin-kyc-queue', statusFilter, q],
     queryFn: () =>
-      api.get(`/admin/members?kycStatus=${statusFilter}&limit=100`).then((r) => r.data),
+      api
+        .get(`/admin/members?kycStatus=${statusFilter}&q=${encodeURIComponent(q)}&limit=100`)
+        .then((r) => r.data),
   })
   const members = membersPage?.items ?? []
 
@@ -111,6 +120,15 @@ export function KycTab() {
               {p.label}
             </button>
           ))}
+        </div>
+        <div className="relative max-w-md mt-3">
+          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted" />
+          <input
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder={t('admin.kyc.searchPlaceholder')}
+            className="w-full rounded-lg border border-surface-line bg-[#10141F] pl-9 pr-3 py-2.5 text-sm text-ink placeholder:text-ink-muted/60 outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+          />
         </div>
       </div>
 
