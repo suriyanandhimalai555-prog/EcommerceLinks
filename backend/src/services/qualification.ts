@@ -3,6 +3,9 @@ import type pg from "pg";
 import { writeOutbox } from "../events/outbox.js";
 
 // Evaluates BR-5 for a single member, inside the caller's transaction.
+// Since 2026-07 the gate requires BOTH direct referrals active (>= 2 active
+// sponsor-children) AND at least one active grandchild under an active child;
+// one active child alone no longer qualifies.
 // Returns true if the member just became qualified (transition only).
 export async function evaluateQualification(
 	memberId: bigint,
@@ -18,6 +21,8 @@ export async function evaluateQualification(
       WHERE m.id = $1
         AND m.is_active
         AND NOT m.is_qualified
+        AND (SELECT COUNT(*) FROM members r
+              WHERE r.sponsor_id = m.id AND r.is_active) >= 2
         AND EXISTS (
           SELECT 1 FROM members r
           JOIN members g ON g.sponsor_id = r.id AND g.is_active
@@ -26,7 +31,9 @@ export async function evaluateQualification(
         )
       RETURNING
         m.id,
-        (SELECT r.id FROM members r WHERE r.sponsor_id = m.id AND r.is_active LIMIT 1) AS child_id,
+        (SELECT r.id FROM members r
+          JOIN members g ON g.sponsor_id = r.id AND g.is_active
+          WHERE r.sponsor_id = m.id AND r.is_active LIMIT 1) AS child_id,
         (SELECT g.id FROM members r
           JOIN members g ON g.sponsor_id = r.id AND g.is_active
           WHERE r.sponsor_id = m.id AND r.is_active LIMIT 1) AS grandchild_id`,

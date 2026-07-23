@@ -188,18 +188,25 @@ interface AccrualRow {
 	pair_id: string;
 	beneficiary_id: string;
 	amount: string;
+	release_seq: number;
 }
 
 // Pay one accrual and mark it released. The idempotency key is shared between
 // the immediate path (accruePairBonus) and the retroactive path
 // (releasePendingBonuses), so any interleaving posts the money exactly once;
 // posted=false means a prior partial delivery already moved it.
+// release_seq > 0 means an earlier release was clawed back (qualification
+// revert); the key gains a :seq suffix so the old txn doesn't block re-credit.
 async function releaseAccrual(c: pg.PoolClient, a: AccrualRow): Promise<void> {
+	const key =
+		a.release_seq > 0
+			? `pairbonus:${a.pair_id}:${a.beneficiary_id}:${a.release_seq}`
+			: `pairbonus:${a.pair_id}:${a.beneficiary_id}`;
 	await creditBonusWithCap(
 		c,
 		BigInt(a.beneficiary_id),
 		toPaise(a.amount),
-		`pairbonus:${a.pair_id}:${a.beneficiary_id}`,
+		key,
 		"pair",
 		BigInt(a.id),
 	);
@@ -236,10 +243,11 @@ export async function accruePairBonus(e: PairBonusAccrued): Promise<void> {
 				pair_id: String(e.pair_id),
 				beneficiary_id: String(e.beneficiary_id),
 				amount: fromPaise(BigInt(e.amount_paise)),
+				release_seq: 0,
 			};
 		} else {
 			const { rows } = await c.query<AccrualRow & { status: string }>(
-				`SELECT id, pair_id, beneficiary_id, amount, status
+				`SELECT id, pair_id, beneficiary_id, amount, release_seq, status
            FROM pair_accruals WHERE pair_id=$1 AND beneficiary_id=$2 FOR UPDATE`,
 				[e.pair_id, e.beneficiary_id],
 			);
@@ -273,7 +281,7 @@ export async function releasePendingBonuses(
 		if (done.length > 0) return;
 
 		const { rows: pending } = await c.query<AccrualRow>(
-			`SELECT id, pair_id, beneficiary_id, amount
+			`SELECT id, pair_id, beneficiary_id, amount, release_seq
          FROM pair_accruals
         WHERE beneficiary_id=$1 AND status='pending'
         ORDER BY id

@@ -15,6 +15,7 @@
     "seed": "tsx scripts/seedRoot.ts",
     "seed:management": "tsx scripts/seedManagement.ts",
     "reset": "tsx scripts/reset.ts",
+    "revert:qualification": "tsx scripts/revertQualification.ts",
     "simulate": "tsx scripts/simulate.ts",
     "worker:outbox": "tsx src/workers/outboxRelay.ts",
     "worker:fanout": "tsx src/workers/fanout.ts",

@@ -166,13 +166,13 @@ describe('T8 – applyIncrements maintains counters, never mints pairs', () => {
   })
 })
 
-// T9: qualification chain
+// T9: qualification chain — tightened gate: BOTH directs active + 1 active grandchild
 describe('T9 – Qualification BR-5', () => {
-  it('A→B→C: C activating qualifies A', async () => {
+  it('A needs both directs active plus an active grandchild', async () => {
     const { memberCode: anchorCode } = await registerAnchor('T9Anchor')
 
     const ts = Date.now().toString().slice(-6)
-    // A sponsors B, B sponsors C
+    // A sponsors B and D; B sponsors C (grandchild of A)
     const { memberId: aId, memberCode: aCode } = await registerMember({
       sponsorCode: anchorCode,
       name: `QA${ts}`, phone: `7010${ts}`, email: uniqueEmail(), password: 'Test@1234',
@@ -181,34 +181,37 @@ describe('T9 – Qualification BR-5', () => {
       sponsorCode: aCode,
       name: `QB${ts}`, phone: `7011${ts}`, email: uniqueEmail(), password: 'Test@1234',
     })
+    const { memberId: dId, memberCode: dCode } = await registerMember({
+      sponsorCode: aCode,
+      name: `QD${ts}`, phone: `7013${ts}`, email: uniqueEmail(), password: 'Test@1234',
+    })
     const { memberId: cId, memberCode: cCode } = await registerMember({
       sponsorCode: bCode,
       name: `QC${ts}`, phone: `7012${ts}`, email: uniqueEmail(), password: 'Test@1234',
     })
 
-    // Activate A and B first
-    for (const [mId, code] of [[aId, aCode], [bId, bCode]] as [bigint, string][]) {
-      const { rows: oRows } = await pool().query<{ id: string }>(
+    const activate = async (mId: bigint, code: string) => {
+      await pool().query(
         `INSERT INTO orders (member_id,product_id,base_amount,gst_amount,total_amount,idempotency_key)
-         VALUES ($1,1,10000,1800,11800,$2) RETURNING id`,
+         VALUES ($1,1,10000,1800,11800,$2)`,
         [mId, `q-${code}`]
       )
       await pool().query(`UPDATE members SET is_active=TRUE, activated_at=now() WHERE id=$1`, [mId])
     }
 
-    // C activates
-    const { rows: cORows } = await pool().query<{ id: string }>(
-      `INSERT INTO orders (member_id,product_id,base_amount,gst_amount,total_amount,idempotency_key)
-       VALUES ($1,1,10000,1800,11800,$2) RETURNING id`,
-      [cId, `q-${cCode}`]
-    )
-    await pool().query(`UPDATE members SET is_active=TRUE, activated_at=now() WHERE id=$1`, [cId])
+    // A, B, C active — one active direct + grandchild used to qualify A, no longer does
+    await activate(aId, aCode)
+    await activate(bId, bCode)
+    await activate(cId, cCode)
+    const oneDirect = await withTxn(async (c) => evaluateQualification(aId, c))
+    expect(oneDirect).toBe(false)
 
-    // Evaluate qualification for A (should qualify since A→B→C all active)
+    // D (second direct) activates → A qualifies
+    await activate(dId, dCode)
     const qualified = await withTxn(async (c) => evaluateQualification(aId, c))
     expect(qualified).toBe(true)
 
-    // B should NOT be qualified (B's sponsor chain: B→C but C has no referral)
+    // B has only one direct (C) → NOT qualified
     const bQual = await withTxn(async (c) => evaluateQualification(bId, c))
     expect(bQual).toBe(false)
   })

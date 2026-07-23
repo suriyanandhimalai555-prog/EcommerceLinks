@@ -16,7 +16,7 @@ const GROUP = "avg-fanout";
 // Deterministic ID namespace for fan-out increments
 const NS = "1b671a64-40d5-491e-99b0-da01ff1f3341";
 
-function deterministicIncrementId(
+export function deterministicIncrementId(
 	sourceEventId: string,
 	ancestorId: bigint,
 ): string {
