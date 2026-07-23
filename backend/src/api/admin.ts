@@ -424,34 +424,63 @@ export async function adminRoutes(app: FastifyInstance) {
 	});
 
 	// ===== member search =====
-	const VALID_KYC_STATUSES = ["pending", "verified", "rejected"] as const;
+	// 'awaiting' is a read-only filter meaning pending + submitted; it is never a persisted status.
+	const VALID_FILTERS = ["awaiting", "pending", "verified", "rejected"] as const;
 	app.get("/members", auth, async (req, reply) => {
 		const query = req.query as {
 			q?: string;
 			limit?: string;
 			page?: string;
 			kycStatus?: string;
+			bankStatus?: string;
 		};
 		const q = query.q ?? "";
 		const limit = Math.min(Math.max(1, Number(query.limit ?? "20")), 100);
 		const page = Math.max(1, Number(query.page ?? "1"));
 		const offset = (page - 1) * limit;
 		const kycStatus = query.kycStatus;
+		const bankStatus = query.bankStatus;
 		if (
 			kycStatus !== undefined &&
-			!VALID_KYC_STATUSES.includes(
-				kycStatus as (typeof VALID_KYC_STATUSES)[number],
-			)
+			!VALID_FILTERS.includes(kycStatus as (typeof VALID_FILTERS)[number])
 		) {
 			return reply
 				.status(400)
-				.send({ error: "kycStatus must be one of: pending, verified, rejected" });
+				.send({ error: "kycStatus must be one of: awaiting, pending, verified, rejected" });
+		}
+		if (
+			bankStatus !== undefined &&
+			!VALID_FILTERS.includes(bankStatus as (typeof VALID_FILTERS)[number])
+		) {
+			return reply
+				.status(400)
+				.send({ error: "bankStatus must be one of: awaiting, pending, verified, rejected" });
 		}
 		const baseParams: unknown[] = [`%${q}%`, `%${q}%`, `%${q}%`];
 		let where = `WHERE (m.name ILIKE $1 OR m.phone LIKE $2 OR m.member_code ILIKE $3)`;
 		if (kycStatus) {
-			baseParams.push(kycStatus);
-			where += ` AND m.kyc_status = $${baseParams.length} AND m.role <> 'management'`;
+			if (kycStatus === "awaiting") {
+				// pending + has uploaded KYC documents — the actionable review queue
+				where += ` AND m.kyc_status = 'pending' AND EXISTS (SELECT 1 FROM kyc_documents kd WHERE kd.member_id = m.id) AND m.role <> 'management'`;
+			} else if (kycStatus === "pending") {
+				// pending + no documents uploaded yet
+				where += ` AND m.kyc_status = 'pending' AND NOT EXISTS (SELECT 1 FROM kyc_documents kd WHERE kd.member_id = m.id) AND m.role <> 'management'`;
+			} else {
+				baseParams.push(kycStatus);
+				where += ` AND m.kyc_status = $${baseParams.length} AND m.role <> 'management'`;
+			}
+		}
+		if (bankStatus) {
+			if (bankStatus === "awaiting") {
+				// pending + has submitted bank account details — the actionable review queue
+				where += ` AND m.bank_status = 'pending' AND m.bank_account_number IS NOT NULL AND m.role <> 'management'`;
+			} else if (bankStatus === "pending") {
+				// pending + no bank details submitted yet
+				where += ` AND m.bank_status = 'pending' AND m.bank_account_number IS NULL AND m.role <> 'management'`;
+			} else {
+				baseParams.push(bankStatus);
+				where += ` AND m.bank_status = $${baseParams.length} AND m.role <> 'management'`;
+			}
 		}
 		const { rows: countRows } = await pool().query<{ total: string }>(
 			`SELECT COUNT(*) AS total FROM members m ${where}`,
@@ -635,9 +664,9 @@ export async function adminRoutes(app: FastifyInstance) {
 	});
 
 	// ===== Bank status =====
-	// bank_status CHECK: ('pending','verified')
+	// bank_status CHECK: ('pending','verified','rejected') — see migration 031
 	const BankBody = z.object({
-		status: z.enum(["pending", "verified"]),
+		status: z.enum(["pending", "verified", "rejected"]),
 		notes: z.string().optional(),
 	});
 
@@ -671,6 +700,61 @@ export async function adminRoutes(app: FastifyInstance) {
 					id,
 					{ bank_status: before[0].bank_status },
 					{ bank_status: body.data.status, notes: body.data.notes },
+				],
+			);
+		});
+		return { ok: true };
+	});
+
+	// ===== Bank account details (management can correct name/number/IFSC) =====
+	const BankDetailsBody = z.object({
+		accountName: z.string().min(2, "Name required"),
+		accountNumber: z.string().min(9, "Valid account number required"),
+		ifsc: z.string().regex(/^[A-Z]{4}0[A-Z0-9]{6}$/, "Invalid IFSC format"),
+	});
+
+	app.put("/members/:id/bank-details", auth, async (req, reply) => {
+		const { id } = req.params as { id: string };
+		const body = BankDetailsBody.safeParse(req.body);
+		if (!body.success)
+			return reply.status(400).send({ error: body.error.flatten() });
+
+		const actor = req.user as { sub: string };
+
+		await withTxn(async (c) => {
+			const { rows: before } = await c.query<{
+				bank_account_name: string | null;
+				bank_account_number: string | null;
+				bank_ifsc: string | null;
+			}>(
+				"SELECT bank_account_name, bank_account_number, bank_ifsc FROM members WHERE id=$1 FOR UPDATE",
+				[id],
+			);
+			if (!before[0])
+				throw Object.assign(new Error("Member not found"), { statusCode: 404 });
+
+			await c.query(
+				`UPDATE members SET bank_account_name=$2, bank_account_number=$3, bank_ifsc=$4 WHERE id=$1`,
+				[id, body.data.accountName, body.data.accountNumber, body.data.ifsc],
+			);
+
+			await c.query(
+				`INSERT INTO admin_audit_log
+           (actor_id, action, target_type, target_id, before_state, after_state)
+         VALUES ($1,'bank_details_update','member',$2,$3,$4)`,
+				[
+					actor.sub,
+					id,
+					{
+						bankAccountName: before[0].bank_account_name,
+						bankAccountNumber: before[0].bank_account_number,
+						bankIfsc: before[0].bank_ifsc,
+					},
+					{
+						bankAccountName: body.data.accountName,
+						bankAccountNumber: body.data.accountNumber,
+						bankIfsc: body.data.ifsc,
+					},
 				],
 			);
 		});

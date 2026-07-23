@@ -34,7 +34,7 @@ export default function Register() {
   const queryClient = useQueryClient()
   const [searchParams] = useSearchParams()
   const [showPw, setShowPw] = useState(false)
-  const [otpEmail, setOtpEmail] = useState<string | null>(null)
+  const [otpCreds, setOtpCreds] = useState<{ email: string; password: string } | null>(null)
   const sponsorParam = searchParams.get('sponsor') || ''
 
   const { register, handleSubmit, formState: { errors, isSubmitting }, setError } = useForm<FormData>({
@@ -65,8 +65,8 @@ export default function Register() {
       // Auto-login after signup.
       const loginRes = await api.post('/auth/login', { email: data.email, password: data.password })
       if (loginRes.data.otpRequired) {
-        // OTP is enabled — show the verify step (email already known).
-        setOtpEmail(data.email)
+        // OTP is enabled — show the verify step, keeping creds for resend.
+        setOtpCreds({ email: data.email, password: data.password })
         return
       }
       handleSession(loginRes.data as SessionPayload)
@@ -101,7 +101,7 @@ export default function Register() {
   }
 
   // OTP step — shown after successful registration + auto-login when OTP is enabled.
-  if (otpEmail) {
+  if (otpCreds) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-[#0E1526] via-surface-page to-[#131B33] flex items-center justify-center p-4">
         <div className="w-full max-w-md">
@@ -112,9 +112,10 @@ export default function Register() {
           <div className="avg-card p-8">
             <h2 className="text-xl font-bold text-ink mb-6">{t('auth.login')}</h2>
             <OtpStep
-              email={otpEmail}
+              email={otpCreds.email}
               onSuccess={handleSession}
-              onBack={() => setOtpEmail(null)}
+              onResend={() => api.post('/auth/login', otpCreds).then(() => {})}
+              onBack={() => setOtpCreds(null)}
             />
           </div>
         </div>

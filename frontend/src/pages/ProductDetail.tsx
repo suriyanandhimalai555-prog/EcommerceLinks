@@ -3,7 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { isAxiosError } from 'axios'
 import { useTranslation } from 'react-i18next'
-import { AlertTriangle, ArrowLeft, CheckCircle2, Clock, Copy, Loader2, ShieldAlert, ShoppingBag, Upload } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, CheckCircle2, Clock, Copy, Loader2, ShoppingBag, Upload } from 'lucide-react'
 import api from '../lib/api'
 import { formatINR } from '../lib/format'
 import { ImageGallery } from '../components/ui/ImageGallery'
@@ -11,6 +11,7 @@ import { EmptyState } from '../components/ui/EmptyState'
 import { ImageUploader, type ImageUploaderHandle, type UploadedImage } from '../components/ui/ImageUploader'
 import { BANK_ACCOUNTS } from '../lib/bankAccounts'
 import type { Me, MyOrder, OrderStatus, PresignRes, Product } from '../types/api'
+import KycRequiredBanner from '../components/ui/KycRequiredBanner'
 
 export default function ProductDetail() {
   const { t } = useTranslation()
@@ -295,15 +296,7 @@ export default function ProductDetail() {
         {t('buy.backToCatalog')}
       </Link>
 
-      {kycRequired && (
-        <div className="flex flex-wrap items-center gap-3 bg-warning-50 border border-warning/30 text-warning text-sm p-3 rounded-xl">
-          <ShieldAlert size={16} className="shrink-0" />
-          <span className="flex-1 min-w-48">{t('buy.kycRequired')}</span>
-          <button onClick={() => navigate('/profile')} className="avg-btn-primary py-1.5 px-3 text-xs">
-            {t('buy.kycRequiredCta')}
-          </button>
-        </div>
-      )}
+      {kycRequired && <KycRequiredBanner />}
 
       <div className="grid lg:grid-cols-[1fr_380px] gap-6 items-start">
         {/* Left: gallery + info */}

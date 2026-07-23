@@ -72,10 +72,12 @@ export async function buildMe(memberId: string) {
 		bank_account_name: string | null;
 		bank_account_number: string | null;
 		bank_ifsc: string | null;
+		notifications_seen_at: string | null;
 	}>(
 		`SELECT m.member_code, m.name, m.phone, m.email, m.kyc_status, m.bank_status,
             m.is_active, m.created_at, m.role, m.blocked, s.member_code AS sponsor_code,
-            m.pan, m.aadhaar_last4, m.bank_account_name, m.bank_account_number, m.bank_ifsc
+            m.pan, m.aadhaar_last4, m.bank_account_name, m.bank_account_number, m.bank_ifsc,
+            m.notifications_seen_at
      FROM members m LEFT JOIN members s ON s.id = m.sponsor_id
      WHERE m.id = $1`,
 		[memberId],
@@ -110,6 +112,8 @@ export async function buildMe(memberId: string) {
 		// Tells the frontend whether KYC is required before purchasing.
 		// Payout still always requires verified KYC+bank regardless of this flag.
 		kycMandatory: !kycOptional,
+		// Server-side "notifications seen" timestamp — drives cross-device badge state.
+		notificationsSeenAt: m.notifications_seen_at ?? null,
 	};
 }
 
@@ -238,6 +242,21 @@ export async function frontendRoutes(app: FastifyInstance) {
 			body.data.name,
 		]);
 		return reply.send(await buildMe(memberId));
+	});
+
+	// ===== Mark all notifications as seen =====
+	// Bumps notifications_seen_at to now() so every existing notification
+	// is treated as "read". Cross-device: the timestamp lives on the server,
+	// so clearing the bell on one device clears it on all.
+	app.post("/me/notifications/seen", auth, async (req) => {
+		const memberId = (req.user as Auth).sub;
+		await pool().query(
+			`UPDATE members SET notifications_seen_at = now() WHERE id = $1`,
+			[memberId],
+		);
+		// Return the updated Me so the client can replace the ['me'] cache entry
+		// directly (same pattern as PUT /me/profile).
+		return buildMe(memberId);
 	});
 
 	// ===== Change own password =====
@@ -524,7 +543,7 @@ export async function frontendRoutes(app: FastifyInstance) {
 		await pool().query(
 			`UPDATE members
 			    SET bank_account_name = $2, bank_account_number = $3, bank_ifsc = $4,
-			        bank_status = CASE WHEN bank_status = 'verified' THEN bank_status ELSE 'pending' END
+			        bank_status = 'pending'
 			  WHERE id = $1`,
 			[
 				memberId,

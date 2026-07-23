@@ -1,10 +1,14 @@
+import { useEffect } from 'react'
 import { GitMerge, Trophy, Bell } from 'lucide-react'
 import { formatDateTime } from '../lib/format'
 import { useNotifications } from '../lib/useNotifications'
 import { EmptyState } from '../components/ui/EmptyState'
 
 export default function Notifications() {
-  const { notifications, unread } = useNotifications()
+  const { notifications, unread, markAllRead } = useNotifications()
+
+  // Clear the bell badge as soon as the page is opened.
+  useEffect(() => { markAllRead() }, [markAllRead])
 
   return (
     <div className="space-y-6">

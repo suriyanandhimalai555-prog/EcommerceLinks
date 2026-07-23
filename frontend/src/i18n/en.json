@@ -20,6 +20,7 @@
     "adminMembers": "Members",
     "adminProducts": "Products",
     "adminKyc": "KYC Approvals",
+    "adminBank": "Bank Approvals",
     "adminRanks": "Rank Approvals",
     "adminPayouts": "Payouts",
     "adminSystem": "System Health",
@@ -206,6 +207,7 @@
     "kyc": {
       "title": "KYC Approvals",
       "searchPlaceholder": "Search by name, phone or member code…",
+      "filterAwaiting": "Awaiting Review",
       "filterPending": "Pending",
       "filterVerified": "Verified",
       "filterRejected": "Rejected",
@@ -231,6 +233,25 @@
       "next": "Next ›",
       "emptyTitle": "No members in this queue",
       "emptyDesc": "All KYC submissions have been reviewed."
+    },
+    "bank": {
+      "title": "Bank Approvals",
+      "searchPlaceholder": "Search by name, phone or member code…",
+      "filterAwaiting": "Awaiting Review",
+      "filterPending": "Pending",
+      "filterVerified": "Verified",
+      "filterRejected": "Rejected",
+      "statusNotSubmitted": "Not Submitted",
+      "review": "Review",
+      "notesLabel": "Notes (optional, audit-logged)",
+      "verify": "Verify",
+      "reject": "Reject",
+      "resetPending": "Reset to pending",
+      "emptyTitle": "No bank submissions",
+      "emptyDesc": "No members with submitted bank details in this status.",
+      "showingRange": "Showing {{from}}–{{to}} of {{total}} members",
+      "prev": "‹ Prev",
+      "next": "Next ›"
     },
     "members": {
       "noDocsWarning": "No KYC documents uploaded yet — verify only if documents were checked another way.",

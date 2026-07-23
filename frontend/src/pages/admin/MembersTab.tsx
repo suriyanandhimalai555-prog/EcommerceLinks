@@ -10,7 +10,7 @@ import { DataTable, type Column } from '../../components/ui/DataTable'
 import { Badge } from '../../components/ui/Badge'
 import { Modal } from '../../components/ui/Modal'
 import { FormField } from '../../components/ui/FormField'
-import type { AdminMembersPage, AdminMemberRow, KycDocument, Me } from '../../types/api'
+import type { AdminKycDetail, AdminMembersPage, AdminMemberRow, KycDocument, Me } from '../../types/api'
 
 export function MembersTab() {
   const { t } = useTranslation()
@@ -23,6 +23,7 @@ export function MembersTab() {
 
   // form state for the action modal
   const [contact, setContact] = useState({ name: '', email: '', phone: '' })
+  const [bankForm, setBankForm] = useState({ accountName: '', accountNumber: '', ifsc: '' })
   const [adjust, setAdjust] = useState({ rupees: '', direction: 'credit' as 'credit' | 'debit', notes: '' })
   const [newPassword, setNewPassword] = useState('')
 
@@ -37,6 +38,21 @@ export function MembersTab() {
     queryFn: () => api.get(`/admin/members/${selected!.id}/kyc-documents`).then((r) => r.data),
     enabled: !!selected,
   })
+  const { data: kycDetail } = useQuery<AdminKycDetail>({
+    queryKey: ['admin-kyc-detail', selected?.id],
+    queryFn: () => api.get(`/admin/members/${selected!.id}/kyc-detail`).then((r) => r.data),
+    enabled: !!selected,
+  })
+  // Seed bankForm fields when kycDetail arrives (it loads after modal opens)
+  useEffect(() => {
+    if (kycDetail) {
+      setBankForm({
+        accountName: kycDetail.bankAccountName ?? '',
+        accountNumber: kycDetail.bankAccountNumber ?? '',
+        ifsc: kycDetail.bankIfsc ?? '',
+      })
+    }
+  }, [kycDetail])
   const PAGE_SIZE = 20
   const { data, isPending } = useQuery<AdminMembersPage>({
     queryKey: ['admin-members', q, page],
@@ -78,7 +94,13 @@ export function MembersTab() {
   const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contact.email.trim())
   const setBank = useMutation({
     mutationFn: (status: 'verified' | 'pending') => api.post(`/admin/members/${selected!.id}/bank`, { status }),
-    onSuccess: (_, status) => refresh(`Bank marked ${status}`),
+    // Fix: sync selected state so the badge updates immediately (same pattern as setBlocked/setRole)
+    onSuccess: (_, status) => { refresh(`Bank marked ${status}`); setSelected((s) => (s ? { ...s, bankStatus: status } : s)) },
+    onError: fail,
+  })
+  const saveBankDetails = useMutation({
+    mutationFn: () => api.put(`/admin/members/${selected!.id}/bank-details`, bankForm),
+    onSuccess: () => { refresh('Bank details saved'); qc.invalidateQueries({ queryKey: ['admin-kyc-detail', selected!.id] }) },
     onError: fail,
   })
   const applyAdjustment = useMutation({
@@ -126,7 +148,7 @@ export function MembersTab() {
         : r.role === 'admin' ? <Badge variant="primary" size="sm">admin</Badge> : <span className="text-xs text-ink-muted">member</span>,
     },
     { key: 'kyc', header: 'KYC', render: (r) => <Badge size="sm" variant={r.kycStatus === 'verified' ? 'success' : r.kycStatus === 'rejected' ? 'danger' : 'neutral'}>{r.kycStatus}</Badge> },
-    { key: 'bank', header: 'Bank', render: (r) => <Badge size="sm" variant={r.bankStatus === 'verified' ? 'success' : 'neutral'}>{r.bankStatus}</Badge> },
+    { key: 'bank', header: 'Bank', render: (r) => <Badge size="sm" variant={r.bankStatus === 'verified' ? 'success' : r.bankStatus === 'rejected' ? 'danger' : 'neutral'}>{r.bankStatus}</Badge> },
     {
       key: 'state', header: 'Status',
       render: (r) => r.blocked
@@ -247,10 +269,45 @@ export function MembersTab() {
                 <Badge size="sm" variant={selected.kycStatus === 'verified' ? 'success' : selected.kycStatus === 'rejected' ? 'danger' : 'neutral'}>{selected.kycStatus}</Badge>
                 <span className="text-xs text-ink-muted">{t('admin.members.kycReadOnly')}</span>
               </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-sm text-ink-muted w-14">Bank</span>
-                <button onClick={() => setBank.mutate('verified')} className="avg-btn-secondary py-1.5 px-3 text-xs"><ShieldCheck size={12} /> Verify</button>
-                <button onClick={() => setBank.mutate('pending')} className="flex items-center gap-1 bg-white/5 text-ink-muted font-semibold rounded-lg px-3 py-1.5 text-xs cursor-pointer hover:bg-white/10">Reset to pending</button>
+              {/* Bank details — editable by management + status toggle */}
+              <div className="space-y-3 border-t border-surface-line pt-3">
+                <h4 className="text-xs font-semibold text-ink-muted uppercase tracking-wider flex items-center gap-2">
+                  {t('admin.kyc.bankTitle')}
+                  <Badge size="sm" variant={selected.bankStatus === 'verified' ? 'success' : 'neutral'}>
+                    {selected.bankStatus}
+                  </Badge>
+                </h4>
+                <FormField
+                  label={t('admin.kyc.accountName')}
+                  value={bankForm.accountName}
+                  onChange={(e) => setBankForm({ ...bankForm, accountName: e.target.value })}
+                  placeholder="Full name as per bank"
+                />
+                <div className="grid grid-cols-2 gap-3">
+                  <FormField
+                    label={t('admin.kyc.accountNumber')}
+                    value={bankForm.accountNumber}
+                    onChange={(e) => setBankForm({ ...bankForm, accountNumber: e.target.value })}
+                    placeholder="Account number"
+                  />
+                  <FormField
+                    label={t('admin.kyc.ifscLabel')}
+                    value={bankForm.ifsc}
+                    onChange={(e) => setBankForm({ ...bankForm, ifsc: e.target.value.toUpperCase() })}
+                    placeholder="SBIN0001234"
+                  />
+                </div>
+                <button
+                  onClick={() => saveBankDetails.mutate()}
+                  disabled={saveBankDetails.isPending || !bankForm.accountName.trim() || !bankForm.accountNumber.trim() || !bankForm.ifsc.trim()}
+                  className="avg-btn-secondary py-2 text-xs"
+                >
+                  {saveBankDetails.isPending ? <Loader2 size={12} className="animate-spin" /> : null} Save bank details
+                </button>
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <button onClick={() => setBank.mutate('verified')} disabled={setBank.isPending} className="avg-btn-secondary py-1.5 px-3 text-xs"><ShieldCheck size={12} /> Verify</button>
+                  <button onClick={() => setBank.mutate('pending')} disabled={setBank.isPending} className="flex items-center gap-1 bg-white/5 text-ink-muted font-semibold rounded-lg px-3 py-1.5 text-xs cursor-pointer hover:bg-white/10 disabled:opacity-40">Reset to pending</button>
+                </div>
               </div>
             </section>
 

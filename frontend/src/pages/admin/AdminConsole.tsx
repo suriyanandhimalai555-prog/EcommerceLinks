@@ -8,6 +8,7 @@ import { OverviewTab } from './OverviewTab'
 import { MembersTab } from './MembersTab'
 import { ProductsTab } from './ProductsTab'
 import { KycTab } from './KycTab'
+import { BankTab } from './BankTab'
 import { RanksTab } from './RanksTab'
 import { PayoutsTab } from './PayoutsTab'
 import { SystemTab } from './SystemTab'
@@ -69,6 +70,7 @@ export default function AdminConsole() {
         {/* Product CRUD, KYC approvals, and system settings are management-only (backend enforces regardless) */}
         {isManagement(me) && <Route path="products" element={<ProductsTab />} />}
         {isManagement(me) && <Route path="kyc" element={<KycTab />} />}
+        {isManagement(me) && <Route path="bank" element={<BankTab />} />}
         {isManagement(me) && <Route path="settings" element={<SettingsTab />} />}
         {isManagement(me) && <Route path="record-payment" element={<RecordPaymentTab />} />}
         <Route path="ranks" element={<RanksTab />} />

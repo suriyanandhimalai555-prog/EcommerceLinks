@@ -1,10 +1,11 @@
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { AlertCircle, ImageOff, ShieldAlert } from 'lucide-react'
+import { AlertCircle, ImageOff } from 'lucide-react'
 import api from '../lib/api'
 import { formatINR } from '../lib/format'
 import type { Me, Product } from '../types/api'
+import KycRequiredBanner from '../components/ui/KycRequiredBanner'
 
 export default function BuyProduct() {
   const { t } = useTranslation()
@@ -31,15 +32,7 @@ export default function BuyProduct() {
         <p className="text-sm text-ink-muted">Choose a plan to activate your membership</p>
       </div>
 
-      {kycRequired && (
-        <div className="flex flex-wrap items-center gap-3 bg-warning-50 border border-warning/30 text-warning text-sm p-3 rounded-xl">
-          <ShieldAlert size={16} className="shrink-0" />
-          <span className="flex-1 min-w-48">{t('buy.kycRequired')}</span>
-          <button onClick={() => navigate('/profile')} className="avg-btn-primary py-1.5 px-3 text-xs">
-            {t('buy.kycRequiredCta')}
-          </button>
-        </div>
-      )}
+      {kycRequired && <KycRequiredBanner />}
 
       <div className="flex items-center gap-2 bg-primary-50 border border-primary/20 text-primary text-sm p-3 rounded-xl">
         <AlertCircle size={15} />

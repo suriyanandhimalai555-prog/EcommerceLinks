@@ -8,7 +8,7 @@ export interface Me {
   joinedAt: string
   isActive: boolean
   kycStatus: 'pending' | 'verified' | 'rejected'
-  bankStatus: 'pending' | 'verified'
+  bankStatus: 'pending' | 'verified' | 'rejected'
   currentRankLevel: number
   currentRankName: string
   role: 'member' | 'admin' | 'management'
@@ -22,6 +22,9 @@ export interface Me {
   /** Whether KYC is currently required before a purchase. Driven by the
    *  management-controlled kyc_optional system setting (false = mandatory). */
   kycMandatory?: boolean
+  /** Server-side "notifications last seen" ISO timestamp. null = never seen.
+   *  Drives the bell's unread count so read-state is consistent across devices. */
+  notificationsSeenAt?: string | null
 }
 
 // ---- system settings (management) ----
@@ -318,7 +321,7 @@ export interface AdminMemberRow {
   isQualified: boolean
   role: 'member' | 'admin' | 'management'
   kycStatus: 'pending' | 'verified' | 'rejected'
-  bankStatus: 'pending' | 'verified'
+  bankStatus: 'pending' | 'verified' | 'rejected'
   blocked: boolean
   createdAt: string
   hasDocuments: boolean
@@ -341,7 +344,7 @@ export interface AdminKycDetail {
   bankAccountName?: string
   bankAccountNumber?: string
   bankIfsc?: string
-  bankStatus: 'pending' | 'verified'
+  bankStatus: 'pending' | 'verified' | 'rejected'
 }
 
 export interface PendingRank {

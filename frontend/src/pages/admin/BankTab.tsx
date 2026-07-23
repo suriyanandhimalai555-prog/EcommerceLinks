@@ -1,24 +1,23 @@
 import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { ExternalLink, Loader2, Search, ShieldCheck } from 'lucide-react'
+import { Loader2, Search, ShieldCheck } from 'lucide-react'
 import api from '../../lib/api'
 import { apiErrorMessage } from '../../lib/apiError'
 import { formatDate } from '../../lib/format'
 import { DataTable, type Column } from '../../components/ui/DataTable'
 import { Badge } from '../../components/ui/Badge'
 import { Modal } from '../../components/ui/Modal'
-import { ImageGallery } from '../../components/ui/ImageGallery'
-import type { AdminKycDetail, AdminMembersPage, AdminMemberRow, KycDocument } from '../../types/api'
+import type { AdminKycDetail, AdminMembersPage, AdminMemberRow } from '../../types/api'
 
-// FilterStatus includes 'awaiting' (pending + has submitted docs) as a read-only filter.
-// KycStatus is the set of values that can actually be persisted via the decide mutation.
+// FilterStatus includes 'awaiting' (pending + has submitted details) as a read-only filter.
+// BankStatus is the set of values that can actually be persisted via the decide mutation.
 type FilterStatus = 'awaiting' | 'pending' | 'verified' | 'rejected'
-type KycStatus = 'pending' | 'verified' | 'rejected'
+type BankStatus = 'pending' | 'verified' | 'rejected'
 
 const PAGE_SIZE = 20
 
-export function KycTab() {
+export function BankTab() {
   const { t } = useTranslation()
   const qc = useQueryClient()
   const [statusFilter, setStatusFilter] = useState<FilterStatus>('awaiting')
@@ -35,10 +34,10 @@ export function KycTab() {
   }, [input])
 
   const { data: membersPage, isPending } = useQuery<AdminMembersPage>({
-    queryKey: ['admin-kyc-queue', statusFilter, q, page],
+    queryKey: ['admin-bank-queue', statusFilter, q, page],
     queryFn: () =>
       api
-        .get(`/admin/members?kycStatus=${statusFilter}&q=${encodeURIComponent(q)}&page=${page}&limit=${PAGE_SIZE}`)
+        .get(`/admin/members?bankStatus=${statusFilter}&q=${encodeURIComponent(q)}&page=${page}&limit=${PAGE_SIZE}`)
         .then((r) => r.data),
     placeholderData: keepPreviousData,
   })
@@ -46,14 +45,7 @@ export function KycTab() {
   const total = membersPage?.total ?? 0
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
 
-  const { data: kycDocs } = useQuery<KycDocument[]>({
-    queryKey: ['admin-kyc-docs', selected?.id],
-    queryFn: () =>
-      api.get(`/admin/members/${selected!.id}/kyc-documents`).then((r) => r.data),
-    enabled: !!selected,
-  })
-
-  const { data: kycDetail } = useQuery<AdminKycDetail>({
+  const { data: bankDetail } = useQuery<AdminKycDetail>({
     queryKey: ['admin-kyc-detail', selected?.id],
     queryFn: () =>
       api.get(`/admin/members/${selected!.id}/kyc-detail`).then((r) => r.data),
@@ -61,16 +53,16 @@ export function KycTab() {
   })
 
   const decide = useMutation({
-    mutationFn: (status: KycStatus) =>
-      api.post(`/admin/members/${selected!.id}/kyc`, {
+    mutationFn: (status: BankStatus) =>
+      api.post(`/admin/members/${selected!.id}/bank`, {
         status,
         notes: notes.trim() || undefined,
       }),
     onSuccess: (_, status) => {
-      qc.invalidateQueries({ queryKey: ['admin-kyc-queue'] })
+      qc.invalidateQueries({ queryKey: ['admin-bank-queue'] })
       qc.invalidateQueries({ queryKey: ['admin-members'] })
       qc.invalidateQueries({ queryKey: ['admin-overview'] })
-      setBanner({ ok: true, text: `KYC marked ${status}` })
+      setBanner({ ok: true, text: `Bank marked ${status}` })
       setSelected(null)
       setNotes('')
     },
@@ -79,10 +71,10 @@ export function KycTab() {
   })
 
   const filterPills: { key: FilterStatus; label: string }[] = [
-    { key: 'awaiting', label: t('admin.kyc.filterAwaiting') },
-    { key: 'pending', label: t('admin.kyc.filterPending') },
-    { key: 'verified', label: t('admin.kyc.filterVerified') },
-    { key: 'rejected', label: t('admin.kyc.filterRejected') },
+    { key: 'awaiting', label: t('admin.bank.filterAwaiting') },
+    { key: 'pending', label: t('admin.bank.filterPending') },
+    { key: 'verified', label: t('admin.bank.filterVerified') },
+    { key: 'rejected', label: t('admin.bank.filterRejected') },
   ]
 
   const columns: Column<AdminMemberRow>[] = [
@@ -93,16 +85,16 @@ export function KycTab() {
     { key: 'name', header: 'Name', render: (r) => <span className="text-sm font-medium text-ink">{r.name}</span> },
     { key: 'phone', header: 'Phone', render: (r) => <span className="text-xs text-ink-muted">{r.phone}</span> },
     {
-      key: 'kyc', header: 'KYC Status',
+      key: 'bank', header: 'Bank Status',
       render: (r) =>
-        r.kycStatus === 'verified' ? (
-          <Badge size="sm" variant="success">{t('admin.kyc.filterVerified')}</Badge>
-        ) : r.kycStatus === 'rejected' ? (
-          <Badge size="sm" variant="danger">{t('admin.kyc.filterRejected')}</Badge>
-        ) : r.hasDocuments ? (
-          <Badge size="sm" variant="warning">{t('admin.kyc.statusAwaitingReview')}</Badge>
+        r.bankStatus === 'verified' ? (
+          <Badge size="sm" variant="success">{t('admin.bank.filterVerified')}</Badge>
+        ) : r.bankStatus === 'rejected' ? (
+          <Badge size="sm" variant="danger">{t('admin.bank.filterRejected')}</Badge>
+        ) : statusFilter === 'awaiting' ? (
+          <Badge size="sm" variant="warning">{t('admin.bank.filterAwaiting')}</Badge>
         ) : (
-          <Badge size="sm" variant="neutral">{t('admin.kyc.statusNoDocs')}</Badge>
+          <Badge size="sm" variant="neutral">{t('admin.bank.statusNotSubmitted')}</Badge>
         ),
     },
     { key: 'joined', header: 'Joined', render: (r) => <span className="text-xs text-ink-muted">{formatDate(r.createdAt)}</span> },
@@ -113,7 +105,7 @@ export function KycTab() {
           onClick={() => { setSelected(r); setBanner(null); setNotes('') }}
           className="avg-btn-secondary py-1.5 px-3 text-xs"
         >
-          {t('admin.kyc.review')}
+          {t('admin.bank.review')}
         </button>
       ),
     },
@@ -122,7 +114,7 @@ export function KycTab() {
   return (
     <div className="avg-card">
       <div className="p-5 pb-3">
-        <h2 className="text-sm font-semibold text-ink mb-3">{t('admin.kyc.title')}</h2>
+        <h2 className="text-sm font-semibold text-ink mb-3">{t('admin.bank.title')}</h2>
         <div className="flex gap-1 bg-white/5 p-1 rounded-lg w-fit">
           {filterPills.map((p) => (
             <button
@@ -143,7 +135,7 @@ export function KycTab() {
           <input
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder={t('admin.kyc.searchPlaceholder')}
+            placeholder={t('admin.bank.searchPlaceholder')}
             className="w-full rounded-lg border border-surface-line bg-[#10141F] pl-9 pr-3 py-2.5 text-sm text-ink placeholder:text-ink-muted/60 outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
           />
         </div>
@@ -157,17 +149,17 @@ export function KycTab() {
 
       <DataTable
         columns={columns}
-        data={members ?? []}
+        data={members}
         loading={isPending}
         rowKey={(r) => r.id}
-        emptyTitle={t('admin.kyc.emptyTitle')}
-        emptyDescription={t('admin.kyc.emptyDesc')}
+        emptyTitle={t('admin.bank.emptyTitle')}
+        emptyDescription={t('admin.bank.emptyDesc')}
       />
 
       {total > 0 && (
         <div className="px-5 py-3 border-t border-surface-line flex items-center justify-between gap-4 flex-wrap">
           <span className="text-xs text-ink-muted">
-            {t('admin.kyc.showingRange', {
+            {t('admin.bank.showingRange', {
               from: (page - 1) * PAGE_SIZE + 1,
               to: Math.min(page * PAGE_SIZE, total),
               total,
@@ -179,7 +171,7 @@ export function KycTab() {
               disabled={page === 1}
               className="avg-btn-secondary py-1.5 px-3 text-xs disabled:opacity-40"
             >
-              {t('admin.kyc.prev')}
+              {t('admin.bank.prev')}
             </button>
             <span className="px-3 text-xs font-medium text-ink">{page} / {totalPages}</span>
             <button
@@ -187,7 +179,7 @@ export function KycTab() {
               disabled={page >= totalPages}
               className="avg-btn-secondary py-1.5 px-3 text-xs disabled:opacity-40"
             >
-              {t('admin.kyc.next')}
+              {t('admin.bank.next')}
             </button>
           </div>
         </div>
@@ -208,93 +200,43 @@ export function KycTab() {
               <span className="text-ink-muted">Joined {formatDate(selected.createdAt)}</span>
               <Badge
                 size="sm"
-                variant={selected.kycStatus === 'verified' ? 'success' : selected.kycStatus === 'rejected' ? 'danger' : 'neutral'}
+                variant={selected.bankStatus === 'verified' ? 'success' : selected.bankStatus === 'rejected' ? 'danger' : 'neutral'}
               >
-                {selected.kycStatus}
+                {selected.bankStatus}
               </Badge>
             </div>
 
-            {/* Identity — typed values to cross-check against the documents */}
+            {/* Bank details */}
             <section className="space-y-2">
-              <h3 className="text-xs font-semibold text-ink-muted uppercase tracking-wider">{t('admin.kyc.identityTitle')}</h3>
-              <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
-                <div>
-                  <dt className="text-xs text-ink-muted">{t('admin.kyc.panLabel')}</dt>
-                  <dd className={kycDetail?.pan ? 'font-mono text-ink' : 'text-ink-muted/60'}>
-                    {kycDetail?.pan ?? t('admin.kyc.notProvided')}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-xs text-ink-muted">{t('admin.kyc.aadhaarLabel')}</dt>
-                  <dd className={kycDetail?.aadhaarLast4 ? 'font-mono text-ink' : 'text-ink-muted/60'}>
-                    {kycDetail?.aadhaarLast4 ? `•••• •••• ${kycDetail.aadhaarLast4}` : t('admin.kyc.notProvided')}
-                  </dd>
-                </div>
-              </dl>
-            </section>
-
-            {/* Bank details — displayed for verification (status toggle lives in Members tab) */}
-            <section className="space-y-2">
-              <h3 className="text-xs font-semibold text-ink-muted uppercase tracking-wider flex items-center gap-2">
+              <h3 className="text-xs font-semibold text-ink-muted uppercase tracking-wider">
                 {t('admin.kyc.bankTitle')}
-                <Badge size="sm" variant={kycDetail?.bankStatus === 'verified' ? 'success' : 'neutral'}>
-                  {kycDetail?.bankStatus ?? 'pending'}
-                </Badge>
               </h3>
               <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
                 <div className="col-span-2">
                   <dt className="text-xs text-ink-muted">{t('admin.kyc.accountName')}</dt>
-                  <dd className={kycDetail?.bankAccountName ? 'text-ink' : 'text-ink-muted/60'}>
-                    {kycDetail?.bankAccountName ?? t('admin.kyc.notProvided')}
+                  <dd className={bankDetail?.bankAccountName ? 'text-ink' : 'text-ink-muted/60'}>
+                    {bankDetail?.bankAccountName ?? t('admin.kyc.notProvided')}
                   </dd>
                 </div>
                 <div>
                   <dt className="text-xs text-ink-muted">{t('admin.kyc.accountNumber')}</dt>
-                  <dd className={kycDetail?.bankAccountNumber ? 'font-mono text-ink' : 'text-ink-muted/60'}>
-                    {kycDetail?.bankAccountNumber ?? t('admin.kyc.notProvided')}
+                  <dd className={bankDetail?.bankAccountNumber ? 'font-mono text-ink' : 'text-ink-muted/60'}>
+                    {bankDetail?.bankAccountNumber ?? t('admin.kyc.notProvided')}
                   </dd>
                 </div>
                 <div>
                   <dt className="text-xs text-ink-muted">{t('admin.kyc.ifscLabel')}</dt>
-                  <dd className={kycDetail?.bankIfsc ? 'font-mono text-ink' : 'text-ink-muted/60'}>
-                    {kycDetail?.bankIfsc ?? t('admin.kyc.notProvided')}
+                  <dd className={bankDetail?.bankIfsc ? 'font-mono text-ink' : 'text-ink-muted/60'}>
+                    {bankDetail?.bankIfsc ?? t('admin.kyc.notProvided')}
                   </dd>
                 </div>
               </dl>
-            </section>
-
-            {/* Documents */}
-            <section className="space-y-3">
-              <h3 className="text-xs font-semibold text-ink-muted uppercase tracking-wider">{t('admin.kyc.docsTitle')}</h3>
-              {kycDocs && kycDocs.length > 0 ? (
-                <div className="space-y-4">
-                  <ImageGallery images={kycDocs} alt="KYC document" />
-                  <div className="flex flex-wrap gap-2">
-                    {kycDocs.map((d) => (
-                      <a
-                        key={d.id}
-                        href={d.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="flex items-center gap-1 text-xs text-primary hover:underline"
-                      >
-                        <ExternalLink size={11} />
-                        {d.docType.toUpperCase()}
-                        {d.originalName ? ` — ${d.originalName}` : ''}
-                        {' · '}{formatDate(d.uploadedAt)}
-                      </a>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                <p className="text-xs text-warning">{t('admin.kyc.noDocs')}</p>
-              )}
             </section>
 
             {/* Notes */}
             <section className="space-y-2">
               <label className="block text-xs font-semibold text-ink-muted uppercase tracking-wider">
-                {t('admin.kyc.notesLabel')}
+                {t('admin.bank.notesLabel')}
               </label>
               <textarea
                 value={notes}
@@ -308,26 +250,26 @@ export function KycTab() {
             <div className="flex flex-wrap gap-2 border-t border-surface-line pt-4">
               <button
                 onClick={() => decide.mutate('verified')}
-                disabled={decide.isPending || (kycDocs != null && kycDocs.length === 0)}
+                disabled={decide.isPending}
                 className="avg-btn-primary py-1.5 px-4 text-sm flex items-center gap-1.5"
               >
                 {decide.isPending ? <Loader2 size={13} className="animate-spin" /> : <ShieldCheck size={13} />}
-                {t('admin.kyc.approve')}
+                {t('admin.bank.verify')}
               </button>
               <button
                 onClick={() => decide.mutate('rejected')}
                 disabled={decide.isPending}
                 className="avg-btn-danger text-sm"
               >
-                {t('admin.kyc.reject')}
+                {t('admin.bank.reject')}
               </button>
-              {selected.kycStatus !== 'pending' && (
+              {selected.bankStatus !== 'pending' && (
                 <button
                   onClick={() => decide.mutate('pending')}
                   disabled={decide.isPending}
                   className="flex items-center gap-1 bg-white/5 text-ink-muted font-semibold rounded-lg px-3 py-1.5 text-xs cursor-pointer hover:bg-white/10"
                 >
-                  {t('admin.kyc.resetPending')}
+                  {t('admin.bank.resetPending')}
                 </button>
               )}
             </div>
