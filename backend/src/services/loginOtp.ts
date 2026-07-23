@@ -11,7 +11,7 @@
 import { randomInt } from "node:crypto";
 import { redis } from "../lib/redis.js";
 
-const OTP_TTL_SECONDS = 300;        // 5 minutes per code
+const OTP_TTL_SECONDS = 600;        // 10 minutes per code
 const MAX_ATTEMPTS = 5;             // wrong guesses before lockout
 const OTP_GEN_LIMIT = 5;           // max new codes per member per window
 const OTP_GEN_WINDOW_SECONDS = 900; // 15-minute generation window

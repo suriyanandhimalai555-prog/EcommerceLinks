@@ -24,7 +24,7 @@ function processQueue(err: unknown, token: string | null) {
 
 // Auth endpoints return 401 legitimately (wrong password, expired token check).
 // Never run the refresh-token interceptor on these — it causes a redirect loop.
-const AUTH_ROUTES = ['/auth/login', '/auth/refresh', '/auth/logout', '/auth/register']
+const AUTH_ROUTES = ['/auth/login', '/auth/login/verify-otp', '/auth/refresh', '/auth/logout', '/auth/register']
 
 api.interceptors.response.use(
   (res) => res,

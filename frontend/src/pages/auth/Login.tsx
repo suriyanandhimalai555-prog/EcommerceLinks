@@ -27,7 +27,7 @@ export default function Login() {
   const queryClient = useQueryClient()
   const [searchParams] = useSearchParams()
   const [showPw, setShowPw] = useState(false)
-  const [otpEmail, setOtpEmail] = useState<string | null>(null)
+  const [pendingCreds, setPendingCreds] = useState<FormData | null>(null)
   const sessionExpired = searchParams.get('reason') === 'session_expired'
 
   const { register, handleSubmit, formState: { errors, isSubmitting }, setError } = useForm<FormData>({
@@ -47,8 +47,8 @@ export default function Login() {
     try {
       const res = await api.post('/auth/login', data)
       if (res.data.otpRequired) {
-        // OTP is enabled — switch to the verify step.
-        setOtpEmail(data.email)
+        // OTP is enabled — switch to the verify step, keeping creds for resend.
+        setPendingCreds(data)
         return
       }
       // OTP is off — session issued directly.
@@ -74,14 +74,15 @@ export default function Login() {
         </div>
 
         <div className="avg-card p-8">
-          {otpEmail ? (
+          {pendingCreds ? (
             /* ── OTP step ── */
             <>
               <h2 className="text-xl font-bold text-ink mb-6">{t('auth.login')}</h2>
               <OtpStep
-                email={otpEmail}
+                email={pendingCreds.email}
                 onSuccess={handleSession}
-                onBack={() => setOtpEmail(null)}
+                onResend={() => api.post('/auth/login', pendingCreds).then(() => {})}
+                onBack={() => setPendingCreds(null)}
               />
             </>
           ) : (

@@ -147,6 +147,35 @@ export async function adminRoutes(app: FastifyInstance) {
 		);
 	});
 
+	// ===== KYC identity + bank detail (read-only; fetched when a reviewer opens a
+	// member's KYC modal). Sensitive PII, so it is only returned per-member here,
+	// never in the /members list response. =====
+	app.get("/members/:id/kyc-detail", auth, async (req, reply) => {
+		const { id } = req.params as { id: string };
+		const { rows } = await pool().query<{
+			pan: string | null;
+			aadhaar_last4: string | null;
+			bank_account_name: string | null;
+			bank_account_number: string | null;
+			bank_ifsc: string | null;
+			bank_status: string;
+		}>(
+			`SELECT pan, aadhaar_last4, bank_account_name, bank_account_number, bank_ifsc, bank_status
+       FROM members WHERE id = $1`,
+			[id],
+		);
+		if (!rows[0]) return reply.status(404).send({ error: "Member not found" });
+		const m = rows[0];
+		return {
+			pan: m.pan ?? undefined,
+			aadhaarLast4: m.aadhaar_last4 ?? undefined,
+			bankAccountName: m.bank_account_name ?? undefined,
+			bankAccountNumber: m.bank_account_number ?? undefined,
+			bankIfsc: m.bank_ifsc ?? undefined,
+			bankStatus: m.bank_status,
+		};
+	});
+
 	// ===== ranks =====
 	// "approved" = verified but reward not yet handed over; "received" = fulfilled_at set.
 	const RANK_LIST_STATUSES = [

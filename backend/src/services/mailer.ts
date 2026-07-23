@@ -219,14 +219,14 @@ export interface OtpEmailParams {
 }
 
 export function otpEmailTemplate(p: OtpEmailParams): MailOptions {
-	const subject = "Your Agila Vetri Groups Login Code";
+	const subject = `${p.code} is your Agila Vetri Groups login code`;
 
 	const text = `
 Dear ${p.name},
 
 Your one-time login code is: ${p.code}
 
-This code is valid for 5 minutes. Do not share it with anyone.
+This code is valid for 10 minutes. Do not share it with anyone.
 
 If you did not request this code, please contact us immediately at support@agilavetriglobal.com.
 
@@ -243,6 +243,8 @@ Agila Vetri Groups
   <title>${subject}</title>
 </head>
 <body style="margin:0;padding:0;background:#0E1526;font-family:'Segoe UI',Arial,sans-serif;color:#e2e8f0;">
+  <!-- Preheader: shown as snippet in inbox/notification preview -->
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0;">Your login code is ${p.code} — valid for 10 minutes.</div>
   <table width="100%" cellpadding="0" cellspacing="0" style="background:#0E1526;padding:32px 0;">
     <tr>
       <td align="center">
@@ -266,7 +268,7 @@ Agila Vetri Groups
               <div style="background:#0E1526;border:2px solid #1e40af;border-radius:12px;padding:28px 20px;margin-bottom:28px;display:inline-block;width:100%;box-sizing:border-box;">
                 <p style="margin:0 0 8px;font-size:12px;color:#64748b;text-transform:uppercase;letter-spacing:2px;">Your Login Code</p>
                 <p style="margin:0;font-size:44px;font-weight:900;letter-spacing:12px;color:#60a5fa;font-family:monospace;">${p.code}</p>
-                <p style="margin:12px 0 0;font-size:12px;color:#ef4444;">Valid for 5 minutes only</p>
+                <p style="margin:12px 0 0;font-size:12px;color:#ef4444;">Valid for 10 minutes only</p>
               </div>
 
               <p style="margin:0;font-size:13px;color:#475569;line-height:1.6;">

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { ExternalLink, Loader2, Search, ShieldCheck } from 'lucide-react'
 import api from '../../lib/api'
@@ -9,9 +9,11 @@ import { DataTable, type Column } from '../../components/ui/DataTable'
 import { Badge } from '../../components/ui/Badge'
 import { Modal } from '../../components/ui/Modal'
 import { ImageGallery } from '../../components/ui/ImageGallery'
-import type { AdminMembersPage, AdminMemberRow, KycDocument } from '../../types/api'
+import type { AdminKycDetail, AdminMembersPage, AdminMemberRow, KycDocument } from '../../types/api'
 
 type KycStatus = 'pending' | 'verified' | 'rejected'
+
+const PAGE_SIZE = 20
 
 export function KycTab() {
   const { t } = useTranslation()
@@ -19,28 +21,39 @@ export function KycTab() {
   const [statusFilter, setStatusFilter] = useState<KycStatus>('pending')
   const [input, setInput] = useState('')
   const [q, setQ] = useState('')
+  const [page, setPage] = useState(1)
   const [selected, setSelected] = useState<AdminMemberRow | null>(null)
   const [notes, setNotes] = useState('')
   const [banner, setBanner] = useState<{ ok: boolean; text: string } | null>(null)
 
   useEffect(() => {
-    const id = setTimeout(() => setQ(input), 350)
+    const id = setTimeout(() => { setQ(input); setPage(1) }, 350)
     return () => clearTimeout(id)
   }, [input])
 
   const { data: membersPage, isPending } = useQuery<AdminMembersPage>({
-    queryKey: ['admin-kyc-queue', statusFilter, q],
+    queryKey: ['admin-kyc-queue', statusFilter, q, page],
     queryFn: () =>
       api
-        .get(`/admin/members?kycStatus=${statusFilter}&q=${encodeURIComponent(q)}&limit=100`)
+        .get(`/admin/members?kycStatus=${statusFilter}&q=${encodeURIComponent(q)}&page=${page}&limit=${PAGE_SIZE}`)
         .then((r) => r.data),
+    placeholderData: keepPreviousData,
   })
   const members = membersPage?.items ?? []
+  const total = membersPage?.total ?? 0
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
 
   const { data: kycDocs } = useQuery<KycDocument[]>({
     queryKey: ['admin-kyc-docs', selected?.id],
     queryFn: () =>
       api.get(`/admin/members/${selected!.id}/kyc-documents`).then((r) => r.data),
+    enabled: !!selected,
+  })
+
+  const { data: kycDetail } = useQuery<AdminKycDetail>({
+    queryKey: ['admin-kyc-detail', selected?.id],
+    queryFn: () =>
+      api.get(`/admin/members/${selected!.id}/kyc-detail`).then((r) => r.data),
     enabled: !!selected,
   })
 
@@ -110,7 +123,7 @@ export function KycTab() {
           {filterPills.map((p) => (
             <button
               key={p.key}
-              onClick={() => setStatusFilter(p.key)}
+              onClick={() => { setStatusFilter(p.key); setPage(1) }}
               className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all duration-200 cursor-pointer whitespace-nowrap ${
                 statusFilter === p.key
                   ? 'bg-white/10 text-ink shadow-sm'
@@ -147,6 +160,35 @@ export function KycTab() {
         emptyDescription={t('admin.kyc.emptyDesc')}
       />
 
+      {total > 0 && (
+        <div className="px-5 py-3 border-t border-surface-line flex items-center justify-between gap-4 flex-wrap">
+          <span className="text-xs text-ink-muted">
+            {t('admin.kyc.showingRange', {
+              from: (page - 1) * PAGE_SIZE + 1,
+              to: Math.min(page * PAGE_SIZE, total),
+              total,
+            })}
+          </span>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setPage((p) => p - 1)}
+              disabled={page === 1}
+              className="avg-btn-secondary py-1.5 px-3 text-xs disabled:opacity-40"
+            >
+              {t('admin.kyc.prev')}
+            </button>
+            <span className="px-3 text-xs font-medium text-ink">{page} / {totalPages}</span>
+            <button
+              onClick={() => setPage((p) => p + 1)}
+              disabled={page >= totalPages}
+              className="avg-btn-secondary py-1.5 px-3 text-xs disabled:opacity-40"
+            >
+              {t('admin.kyc.next')}
+            </button>
+          </div>
+        </div>
+      )}
+
       <Modal
         open={!!selected}
         onClose={() => { setSelected(null); setNotes('') }}
@@ -167,6 +209,55 @@ export function KycTab() {
                 {selected.kycStatus}
               </Badge>
             </div>
+
+            {/* Identity — typed values to cross-check against the documents */}
+            <section className="space-y-2">
+              <h3 className="text-xs font-semibold text-ink-muted uppercase tracking-wider">{t('admin.kyc.identityTitle')}</h3>
+              <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+                <div>
+                  <dt className="text-xs text-ink-muted">{t('admin.kyc.panLabel')}</dt>
+                  <dd className={kycDetail?.pan ? 'font-mono text-ink' : 'text-ink-muted/60'}>
+                    {kycDetail?.pan ?? t('admin.kyc.notProvided')}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-ink-muted">{t('admin.kyc.aadhaarLabel')}</dt>
+                  <dd className={kycDetail?.aadhaarLast4 ? 'font-mono text-ink' : 'text-ink-muted/60'}>
+                    {kycDetail?.aadhaarLast4 ? `•••• •••• ${kycDetail.aadhaarLast4}` : t('admin.kyc.notProvided')}
+                  </dd>
+                </div>
+              </dl>
+            </section>
+
+            {/* Bank details — displayed for verification (status toggle lives in Members tab) */}
+            <section className="space-y-2">
+              <h3 className="text-xs font-semibold text-ink-muted uppercase tracking-wider flex items-center gap-2">
+                {t('admin.kyc.bankTitle')}
+                <Badge size="sm" variant={kycDetail?.bankStatus === 'verified' ? 'success' : 'neutral'}>
+                  {kycDetail?.bankStatus ?? 'pending'}
+                </Badge>
+              </h3>
+              <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+                <div className="col-span-2">
+                  <dt className="text-xs text-ink-muted">{t('admin.kyc.accountName')}</dt>
+                  <dd className={kycDetail?.bankAccountName ? 'text-ink' : 'text-ink-muted/60'}>
+                    {kycDetail?.bankAccountName ?? t('admin.kyc.notProvided')}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-ink-muted">{t('admin.kyc.accountNumber')}</dt>
+                  <dd className={kycDetail?.bankAccountNumber ? 'font-mono text-ink' : 'text-ink-muted/60'}>
+                    {kycDetail?.bankAccountNumber ?? t('admin.kyc.notProvided')}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-ink-muted">{t('admin.kyc.ifscLabel')}</dt>
+                  <dd className={kycDetail?.bankIfsc ? 'font-mono text-ink' : 'text-ink-muted/60'}>
+                    {kycDetail?.bankIfsc ?? t('admin.kyc.notProvided')}
+                  </dd>
+                </div>
+              </dl>
+            </section>
 
             {/* Documents */}
             <section className="space-y-3">

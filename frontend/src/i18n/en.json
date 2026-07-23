@@ -105,7 +105,13 @@
     "otpInvalid": "Invalid code. Please check and try again.",
     "otpExpired": "Code has expired. Please log in again.",
     "otpLocked": "Too many failed attempts. Please log in again to get a new code.",
-    "otpResend": "Back to Login"
+    "otpResend": "Resend code",
+    "otpResendIn": "Resend code in {{time}}",
+    "otpResent": "A new code has been sent to your email.",
+    "otpResendLimit": "Too many code requests. Please try again later.",
+    "otpExpiresIn": "Code expires in {{time}}",
+    "otpExpiredNotice": "Your code has expired — request a new one.",
+    "otpBack": "Back to Login"
   },
   "errors": {
     "network": "Cannot reach the server. Check your internet connection and try again.",
@@ -212,6 +218,17 @@
       "resetPending": "Reset to pending",
       "statusNoDocs": "No Docs",
       "statusAwaitingReview": "Awaiting Review",
+      "identityTitle": "Identity",
+      "panLabel": "PAN",
+      "aadhaarLabel": "Aadhaar",
+      "bankTitle": "Bank details",
+      "accountName": "Account holder name",
+      "accountNumber": "Account number",
+      "ifscLabel": "IFSC",
+      "notProvided": "Not provided",
+      "showingRange": "Showing {{from}}–{{to}} of {{total}} members",
+      "prev": "‹ Prev",
+      "next": "Next ›",
       "emptyTitle": "No members in this queue",
       "emptyDesc": "All KYC submissions have been reviewed."
     },

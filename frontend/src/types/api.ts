@@ -334,6 +334,16 @@ export interface AdminMembersPage {
   limit: number
 }
 
+/** Identity + bank details a member submitted, shown in the KYC review modal. */
+export interface AdminKycDetail {
+  pan?: string
+  aadhaarLast4?: string
+  bankAccountName?: string
+  bankAccountNumber?: string
+  bankIfsc?: string
+  bankStatus: 'pending' | 'verified'
+}
+
 export interface PendingRank {
   id: string
   member_id: string
