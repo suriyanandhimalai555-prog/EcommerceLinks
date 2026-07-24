@@ -3,13 +3,14 @@ import argon2 from "argon2";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { CFG } from "../config.js";
-import { pool } from "../lib/db.js";
+import { pool, withTxn } from "../lib/db.js";
 import { findMemberByEmail, registerMember } from "../services/placement.js";
 import { getSetting } from "../services/settings.js";
 import {
 	sendMail,
 	welcomeEmailTemplate,
 	otpEmailTemplate,
+	passwordResetEmailTemplate,
 } from "../services/mailer.js";
 import {
 	checkAndIncrOtpGenLimit,
@@ -34,6 +35,16 @@ const LoginBody = z.object({
 const VerifyOtpBody = z.object({
 	email: z.string().email(),
 	otp: z.string().length(6),
+});
+
+const ForgotPasswordBody = z.object({
+	email: z.string().email(),
+});
+
+const ResetPasswordBody = z.object({
+	email: z.string().email(),
+	otp: z.string().length(6),
+	newPassword: z.string().min(8),
 });
 
 const RefreshBody = z.object({
@@ -316,6 +327,137 @@ export async function authRoutes(app: FastifyInstance) {
 				console.error("[verify-otp] welcome email error:", err),
 			);
 
+			return reply.send(await issueSession(member, me));
+		},
+	);
+
+	// Self-service password reset — step 1: request a reset code by email.
+	// Always responds { ok: true } regardless of whether the email is on file:
+	// leaking existence here would let anyone enumerate registered members.
+	// Independent of login_otp_enabled — reset is always available.
+	app.post(
+		"/forgot-password",
+		{
+			config: {
+				rateLimit: {
+					max: 5,
+					timeWindow: "1 minute",
+				},
+			},
+		},
+		async (req, reply) => {
+			const body = ForgotPasswordBody.safeParse(req.body);
+			if (!body.success)
+				return reply.status(400).send({ error: body.error.flatten() });
+
+			// Case-insensitive lookup mirrors verify-otp. Not findMemberByEmail —
+			// that's exact-match and lives in money-critical placement.ts.
+			const { rows } = await pool().query<{
+				id: string;
+				name: string;
+				email: string | null;
+				blocked: boolean;
+			}>(
+				"SELECT id, name, email, blocked FROM members WHERE lower(email) = lower($1)",
+				[body.data.email],
+			);
+			const member = rows[0];
+
+			// Only send when the member exists, is not blocked, and is under the
+			// per-member generation throttle. Every branch still returns { ok: true }.
+			if (member && !member.blocked && member.email) {
+				const allowed = await checkAndIncrOtpGenLimit(member.id, "reset");
+				if (allowed) {
+					const code = await generateAndStoreOtp(member.id, "reset");
+					// Best-effort send — the code is authoritative in Redis even if email fails.
+					sendMail(
+						passwordResetEmailTemplate({
+							name: member.name,
+							email: member.email,
+							code,
+						}),
+					).catch((err) =>
+						console.error("[forgot-password] reset email error:", err),
+					);
+				}
+			}
+
+			return reply.send({ ok: true });
+		},
+	);
+
+	// Self-service password reset — step 2: verify the code and set a new password.
+	// On success the member is signed in directly (same session shape as login).
+	app.post(
+		"/reset-password",
+		{
+			config: {
+				rateLimit: {
+					max: 10,
+					timeWindow: "1 minute",
+				},
+			},
+		},
+		async (req, reply) => {
+			const body = ResetPasswordBody.safeParse(req.body);
+			if (!body.success)
+				return reply.status(400).send({ error: body.error.flatten() });
+
+			const { rows } = await pool().query<{
+				id: string;
+				name: string;
+				member_code: string;
+			}>(
+				"SELECT id, name, member_code FROM members WHERE lower(email) = lower($1)",
+				[body.data.email],
+			);
+			if (!rows[0])
+				return reply.status(401).send({ error: "Invalid credentials" });
+			const member = rows[0];
+
+			const result = await verifyOtp(String(member.id), body.data.otp, "reset");
+			if (!result.ok) {
+				if (result.reason === "locked") {
+					return reply.status(429).send({
+						error: "Too many failed attempts. Please request a new code.",
+					});
+				}
+				if (result.reason === "expired") {
+					return reply.status(401).send({
+						error: "Code has expired. Please request a new one.",
+					});
+				}
+				return reply.status(401).send({ error: "Invalid code." });
+			}
+
+			// Re-check blocked status — member could be suspended between code issue and verify.
+			const me = await buildMe(String(member.id));
+			if (!me) return reply.status(401).send({ error: "Invalid credentials" });
+			if (me.blocked)
+				return reply.status(403).send({
+					error: {
+						code: "ACCOUNT_BLOCKED",
+						message: "Account is blocked. Contact support.",
+					},
+				});
+
+			const passwordHash = await argon2.hash(body.data.newPassword);
+			// Update the password and revoke all existing refresh tokens in one txn —
+			// resetting a password invalidates every other active session.
+			await withTxn(async (c) => {
+				await c.query("UPDATE members SET password_hash = $1 WHERE id = $2", [
+					passwordHash,
+					member.id,
+				]);
+				await c.query(
+					`UPDATE refresh_tokens SET revoked_at = now()
+           WHERE member_id = $1 AND revoked_at IS NULL`,
+					[member.id],
+				);
+			});
+
+			// Issue the new session AFTER the revoke-all commits, so the fresh
+			// refresh token issueSession mints isn't swept away by the revoke.
 			return reply.send(await issueSession(member, me));
 		},
 	);

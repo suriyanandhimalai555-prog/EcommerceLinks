@@ -1,11 +1,16 @@
 /**
- * loginOtp.ts — Redis-backed OTP generation and verification for login.
+ * loginOtp.ts — Redis-backed OTP generation and verification.
  *
  * OTPs live in Redis with a 5-minute TTL (authoritative), not in the DB.
  * Losing Redis before a code is used is intentional — the member tries again.
  *
  * Brute-force guard: max 5 attempts per OTP enforced atomically via Lua.
  * Generation throttle: max 5 new OTPs per member per 15 minutes.
+ *
+ * The `scope` parameter (default "login") namespaces the Redis keys so the same
+ * mechanism serves multiple purposes without collision — login codes live under
+ * `login_otp:*`, password-reset codes under `reset_otp:*`. The default preserves
+ * the exact original key strings, so existing login callers are unaffected.
  */
 
 import { randomInt } from "node:crypto";
@@ -16,16 +21,18 @@ const MAX_ATTEMPTS = 5;             // wrong guesses before lockout
 const OTP_GEN_LIMIT = 5;           // max new codes per member per window
 const OTP_GEN_WINDOW_SECONDS = 900; // 15-minute generation window
 
-function otpKey(memberId: string | number): string {
-	return `login_otp:${memberId}`;
+export type OtpScope = "login" | "reset";
+
+function otpKey(memberId: string | number, scope: OtpScope): string {
+	return `${scope}_otp:${memberId}`;
 }
 
-function attemptsKey(memberId: string | number): string {
-	return `login_otp_attempts:${memberId}`;
+function attemptsKey(memberId: string | number, scope: OtpScope): string {
+	return `${scope}_otp_attempts:${memberId}`;
 }
 
-function genLimitKey(memberId: string | number): string {
-	return `login_otp_gen:${memberId}`;
+function genLimitKey(memberId: string | number, scope: OtpScope): string {
+	return `${scope}_otp_gen:${memberId}`;
 }
 
 /**
@@ -35,12 +42,13 @@ function genLimitKey(memberId: string | number): string {
  */
 export async function checkAndIncrOtpGenLimit(
 	memberId: string | number,
+	scope: OtpScope = "login",
 ): Promise<boolean> {
 	const r = redis();
-	const count = await r.incr(genLimitKey(memberId));
+	const count = await r.incr(genLimitKey(memberId, scope));
 	if (count === 1) {
 		// First generation in this window — set the TTL.
-		await r.expire(genLimitKey(memberId), OTP_GEN_WINDOW_SECONDS);
+		await r.expire(genLimitKey(memberId, scope), OTP_GEN_WINDOW_SECONDS);
 	}
 	return count <= OTP_GEN_LIMIT;
 }
@@ -48,14 +56,15 @@ export async function checkAndIncrOtpGenLimit(
 /** Generate a cryptographically secure 6-digit code, store it in Redis. */
 export async function generateAndStoreOtp(
 	memberId: string | number,
+	scope: OtpScope = "login",
 ): Promise<string> {
 	// randomInt is cryptographically secure (backed by OS entropy).
 	const code = String(randomInt(100000, 1000000));
 	const r = redis();
 	// Store the code and reset any prior attempt counter atomically.
 	await Promise.all([
-		r.setex(otpKey(memberId), OTP_TTL_SECONDS, code),
-		r.del(attemptsKey(memberId)),
+		r.setex(otpKey(memberId, scope), OTP_TTL_SECONDS, code),
+		r.del(attemptsKey(memberId, scope)),
 	]);
 	return code;
 }
@@ -96,13 +105,14 @@ return 'ok'
 export async function verifyOtp(
 	memberId: string | number,
 	submitted: string,
+	scope: OtpScope = "login",
 ): Promise<OtpVerifyResult> {
 	const r = redis();
 	const outcome = (await r.eval(
 		LUA_VERIFY_OTP,
 		2,
-		otpKey(memberId),
-		attemptsKey(memberId),
+		otpKey(memberId, scope),
+		attemptsKey(memberId, scope),
 		String(MAX_ATTEMPTS),
 		String(OTP_TTL_SECONDS),
 		submitted,

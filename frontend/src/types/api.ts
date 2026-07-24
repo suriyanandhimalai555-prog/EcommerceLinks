@@ -56,6 +56,16 @@ export interface AuthRes {
   member: Me
 }
 
+export interface ForgotPasswordReq {
+  email: string
+}
+
+export interface ResetPasswordReq {
+  email: string
+  otp: string
+  newPassword: string
+}
+
 // ---- catalog & orders ----
 export interface ProductImage {
   id: string

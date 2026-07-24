@@ -9,6 +9,7 @@ import Login from './pages/auth/Login'
 // Route-level code splitting: each page loads on first visit, keeping the
 // initial bundle free of heavy deps (recharts ships only with chart pages).
 const Register = lazy(() => import('./pages/auth/Register'))
+const ForgotPassword = lazy(() => import('./pages/auth/ForgotPassword'))
 const Dashboard = lazy(() => import('./pages/Dashboard'))
 const Network = lazy(() => import('./pages/Network'))
 const BuyProduct = lazy(() => import('./pages/BuyProduct'))
@@ -48,6 +49,7 @@ export default function App() {
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
+            <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route element={<RequireAuth><AppShell /></RequireAuth>}>
               <Route path="/" element={<MemberHome><Dashboard /></MemberHome>} />
               <Route path="/profile/*" element={<Profile />} />

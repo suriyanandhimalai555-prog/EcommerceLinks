@@ -112,7 +112,18 @@
     "otpResendLimit": "Too many code requests. Please try again later.",
     "otpExpiresIn": "Code expires in {{time}}",
     "otpExpiredNotice": "Your code has expired — request a new one.",
-    "otpBack": "Back to Login"
+    "otpBack": "Back to Login",
+    "forgotPassword": "Forgot password?",
+    "resetTitle": "Reset Your Password",
+    "resetDescription": "Enter your account email and we'll send you a 6-digit code to reset your password.",
+    "sendCode": "Send Reset Code",
+    "resetSentNotice": "If an account exists for that email, a 6-digit reset code has been sent. Enter it below with your new password.",
+    "newPassword": "New Password",
+    "passwordTooShort": "Password must be at least 8 characters",
+    "passwordsMismatch": "Passwords do not match",
+    "resetBtn": "Reset Password & Sign In",
+    "changeEmail": "Change email",
+    "backToLogin": "Back to Login"
   },
   "errors": {
     "network": "Cannot reach the server. Check your internet connection and try again.",

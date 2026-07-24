@@ -125,6 +125,12 @@ export default function Login() {
                   }
                 />
 
+                <div className="text-right">
+                  <Link to="/forgot-password" className="text-sm text-primary hover:underline">
+                    {t('auth.forgotPassword')}
+                  </Link>
+                </div>
+
                 <button type="submit" disabled={isSubmitting} className="avg-btn-primary w-full py-3 mt-2">
                   {isSubmitting ? <Loader2 size={16} className="animate-spin" /> : null}
                   {t('auth.login')}
