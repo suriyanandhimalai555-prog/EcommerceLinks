@@ -36,7 +36,7 @@ const RANK_NAMES: Record<number, string> = {
 	4: "Car Achiever",
 	5: "Gold Achiever",
 	6: "10L Gold Achiever",
-	7: "30L Gold Achiever",
+	7: "25L Gold Achiever",
 	8: "Villa Achiever",
 	9: "Crorepati Gold Achiever",
 	10: "Dubai Villa Achiever",
@@ -765,12 +765,47 @@ export async function frontendRoutes(app: FastifyInstance) {
 		const rootParam =
 			query.root === "me" || !query.root ? user.sub : query.root;
 
+		// Management is off-tree (parent_id NULL, empty placement_path), so the
+		// downline authorization below never matches for it. Detect the role and,
+		// for management, grant full-tree access: default root is the true tree
+		// root, and any node's subtree may be viewed. Role isn't in the JWT, so a
+		// cheap indexed lookup is required (same pattern as requireAdmin).
+		const { rows: roleRows } = await pool().query<{ role: string }>(
+			"SELECT role FROM members WHERE id = $1",
+			[user.sub],
+		);
+		const isMgmt = roleRows[0]?.role === "management";
+
 		// G-12: authorize tree access — caller must be the root themselves OR appear in
 		// the target's placement_path (i.e. the target is in the caller's downline).
 		// Return 404 (not 403) to avoid leaking whether a member code exists.
 		// Lookup and authorization are one round trip.
 		let rootId = rootParam;
-		if (!rootParam.match(/^\d+$/)) {
+		if (isMgmt) {
+			// Management: no placement_path gate.
+			if (query.root === "me" || !query.root) {
+				// The single binary tree root (enforced by uq_single_root).
+				const { rows } = await pool().query<{ id: string }>(
+					`SELECT id FROM members WHERE parent_id IS NULL AND role <> 'management' LIMIT 1`,
+				);
+				if (!rows[0])
+					return reply
+						.status(404)
+						.send({ error: { code: "NOT_FOUND", message: "Root not found" } });
+				rootId = rows[0].id;
+			} else if (!rootParam.match(/^\d+$/)) {
+				const { rows } = await pool().query<{ id: string }>(
+					`SELECT id FROM members WHERE member_code = $1`,
+					[rootParam],
+				);
+				if (!rows[0])
+					return reply
+						.status(404)
+						.send({ error: { code: "NOT_FOUND", message: "Root not found" } });
+				rootId = rows[0].id;
+			}
+			// numeric id: use as-is
+		} else if (!rootParam.match(/^\d+$/)) {
 			const { rows } = await pool().query<{ id: string }>(
 				`SELECT id FROM members
          WHERE member_code = $1

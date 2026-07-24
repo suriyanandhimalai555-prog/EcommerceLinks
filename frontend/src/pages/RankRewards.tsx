@@ -13,7 +13,7 @@ const RANK_REWARDS = [
   { reward: 'Royal Enfield', value: 'worth ₹1.5L' },
   { reward: 'Car', value: 'worth ₹5L' },
   { reward: 'Gold', value: 'worth ₹10L' },
-  { reward: 'Gold', value: 'worth ₹30L' },
+  { reward: 'Gold', value: 'worth ₹25L' },
   { reward: 'Villa', value: 'worth ₹50L' },
   { reward: 'Luxury Car', value: 'worth ₹1Cr' },
   { reward: 'Gold', value: 'worth ₹2.5Cr' },

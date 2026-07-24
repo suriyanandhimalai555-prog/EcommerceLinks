@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Search, Loader2, ShieldCheck, ShieldOff, KeyRound, Wallet, UserCog } from 'lucide-react'
+import { Search, Loader2, ShieldCheck, ShieldOff, KeyRound, Wallet, UserCog, AlertTriangle } from 'lucide-react'
 import api from '../../lib/api'
 import { apiErrorMessage } from '../../lib/apiError'
 import { isManagement } from '../../lib/roles'
@@ -26,6 +26,10 @@ export function MembersTab() {
   const [bankForm, setBankForm] = useState({ accountName: '', accountNumber: '', ifsc: '' })
   const [adjust, setAdjust] = useState({ rupees: '', direction: 'credit' as 'credit' | 'debit', notes: '' })
   const [newPassword, setNewPassword] = useState('')
+  // Grant-admin type-to-confirm guard: the Grant button opens this modal, and the
+  // final grant is disabled until the operator types the member's code.
+  const [grantConfirm, setGrantConfirm] = useState(false)
+  const [confirmCode, setConfirmCode] = useState('')
 
   useEffect(() => {
     const t = setTimeout(() => { setQ(input); setPage(1) }, 350)
@@ -124,7 +128,12 @@ export function MembersTab() {
   })
   const setRole = useMutation({
     mutationFn: (role: 'member' | 'admin') => api.post(`/admin/members/${selected!.id}/role`, { role }),
-    onSuccess: (_, role) => { refresh(`Role set to ${role}`); setSelected((s) => (s ? { ...s, role } : s)) },
+    onSuccess: (_, role) => {
+      refresh(`Role set to ${role}`)
+      setSelected((s) => (s ? { ...s, role } : s))
+      setGrantConfirm(false)
+      setConfirmCode('')
+    },
     onError: fail,
   })
 
@@ -359,11 +368,46 @@ export function MembersTab() {
                   {isManagement(me) && (
                     selected.role === 'admin'
                       ? <button onClick={() => setRole.mutate('member')} disabled={setRole.isPending} className="flex items-center gap-1 bg-warning-50 text-warning font-semibold rounded-lg px-3 py-1.5 text-xs cursor-pointer hover:bg-warning-50/80">Revoke admin</button>
-                      : <button onClick={() => setRole.mutate('admin')} disabled={setRole.isPending} className="avg-btn-secondary py-1.5 px-3 text-xs">Grant admin</button>
+                      : <button onClick={() => { setConfirmCode(''); setGrantConfirm(true) }} disabled={setRole.isPending} className="avg-btn-secondary py-1.5 px-3 text-xs">Grant admin</button>
                   )}
                 </div>
               )}
             </section>
+          </div>
+        )}
+      </Modal>
+
+      {/* Grant-admin confirmation: names the member and requires typing their
+          code before the grant is enabled — guards against accidental clicks. */}
+      <Modal open={grantConfirm && !!selected} onClose={() => setGrantConfirm(false)} title="Grant admin access" size="sm">
+        {selected && (
+          <div className="space-y-4">
+            <div className="flex items-start gap-2 bg-warning-50 text-warning text-sm p-3 rounded-lg border border-warning/20">
+              <AlertTriangle size={15} className="shrink-0 mt-0.5" />
+              <span>
+                You are about to grant <strong>full admin privileges</strong> to{' '}
+                <strong className="text-ink">{selected.name}</strong> ({selected.memberCode}).
+                Admins can manage members, orders and payouts.
+              </span>
+            </div>
+            <FormField
+              label={`Type ${selected.memberCode} to confirm`}
+              value={confirmCode}
+              onChange={(e) => setConfirmCode(e.target.value)}
+              placeholder={selected.memberCode}
+              autoFocus
+            />
+            <div className="flex justify-end gap-2 pt-1">
+              <button onClick={() => setGrantConfirm(false)} className="avg-btn-secondary py-2 px-4 text-xs">Cancel</button>
+              <button
+                onClick={() => setRole.mutate('admin')}
+                disabled={setRole.isPending || confirmCode.trim().toUpperCase() !== selected.memberCode.toUpperCase()}
+                className="avg-btn-primary py-2 px-4 text-xs disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {setRole.isPending ? <Loader2 size={12} className="animate-spin inline mr-1" /> : null}
+                Grant admin
+              </button>
+            </div>
           </div>
         )}
       </Modal>

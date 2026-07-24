@@ -10,7 +10,7 @@ export const RANKS: RankDef[] = [
 	{ level: 3, name: "Rank 3", reward: "Royal Enfield ₹1.5L" },
 	{ level: 4, name: "Rank 4", reward: "Car ₹5L" },
 	{ level: 5, name: "Rank 5", reward: "Gold ₹10L" },
-	{ level: 6, name: "Rank 6", reward: "Gold ₹30L" },
+	{ level: 6, name: "Rank 6", reward: "Gold ₹25L" },
 	{ level: 7, name: "Rank 7", reward: "Villa ₹50L" },
 	{ level: 8, name: "Rank 8", reward: "Luxury car ₹1Cr" },
 	{ level: 9, name: "Rank 9", reward: "Gold ₹2.5Cr" },
