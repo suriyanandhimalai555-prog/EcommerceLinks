@@ -6,11 +6,12 @@ import { z } from "zod";
 import { CFG } from "../config.js";
 import { pool, withTxn } from "../lib/db.js";
 import { getAllSettings, setSetting } from "../services/settings.js";
-import { toPaise } from "../lib/money.js";
+import { fromPaise, toPaise } from "../lib/money.js";
 // DLQ replay is a sanctioned re-delivery of an already-published event — not a
 // new producer; consumers stay safe via processed_events idempotency.
 import {
 	buildKey,
+	deleteObject,
 	IMAGE_CONTENT_TYPES,
 	MAX_UPLOAD_BYTES,
 	objectExists,
@@ -1283,6 +1284,7 @@ export async function adminRoutes(app: FastifyInstance) {
 			id: string;
 			member_code: string;
 			member_name: string;
+			product_id: string;
 			product_name: string;
 			total_amount: string;
 			status: string;
@@ -1291,7 +1293,8 @@ export async function adminRoutes(app: FastifyInstance) {
 			confirmed_at: string | null;
 			proof_keys: string[] | null;
 		}>(
-			`SELECT o.id, m.member_code, m.name AS member_name, p.name AS product_name,
+			`SELECT o.id, m.member_code, m.name AS member_name,
+			        o.product_id, p.name AS product_name,
 			        o.total_amount, o.status, o.created_at,
 			        o.payment_ref, o.confirmed_at,
 			        array_agg(opp.s3_key ORDER BY opp.uploaded_at)
@@ -1301,7 +1304,7 @@ export async function adminRoutes(app: FastifyInstance) {
 			   JOIN products p ON p.id  = o.product_id
 			   LEFT JOIN order_payment_proofs opp ON opp.order_id = o.id
 			  WHERE o.status = $1
-			  GROUP BY o.id, m.member_code, m.name, p.name
+			  GROUP BY o.id, m.member_code, m.name, o.product_id, p.name
 			  ORDER BY o.created_at DESC
 			  LIMIT $2 OFFSET $3`,
 			[status, limit, offset],
@@ -1314,12 +1317,14 @@ export async function adminRoutes(app: FastifyInstance) {
 					orderId: r.id,
 					memberCode: r.member_code,
 					memberName: r.member_name,
+					productId: Number(r.product_id),
 					productName: r.product_name,
 					totalPaise: Number(toPaise(r.total_amount)),
 					status: r.status,
 					createdAt: r.created_at,
 					paymentRef: r.payment_ref ?? undefined,
 					confirmedAt: r.confirmed_at ?? undefined,
+					paymentProofKeys: keys.length > 0 ? keys : undefined,
 					paymentProofUrls: paymentProofUrls.length > 0 ? paymentProofUrls : undefined,
 				};
 			}),
@@ -1436,6 +1441,227 @@ export async function adminRoutes(app: FastifyInstance) {
 				],
 			);
 		});
+
+		return { ok: true };
+	});
+
+	// POST /admin/orders/:orderId/proof/presign — mint a presigned S3 POST URL for
+	// replacing / adding a payment-proof image on an existing order.
+	// The member id is derived server-side from the order so the client cannot
+	// forge a key that points to a different member's folder.
+	const OrderProofPresignBody = z.object({
+		contentType: z.enum(IMAGE_CONTENT_TYPES),
+		sizeBytes: z.number().int().positive().max(MAX_UPLOAD_BYTES),
+	});
+
+	app.post("/orders/:orderId/proof/presign", auth, async (req, reply) => {
+		const { orderId } = req.params as { orderId: string };
+		const actor = req.user as { sub: string };
+		if (!(await isManagement(actor.sub)))
+			return reply.status(403).send({ error: "Management only" });
+		if (!s3Configured())
+			return reply.status(503).send({ error: "S3_NOT_CONFIGURED" });
+
+		const body = OrderProofPresignBody.safeParse(req.body);
+		if (!body.success)
+			return reply.status(400).send({ error: body.error.flatten() });
+
+		const { rows } = await pool().query<{ member_id: string }>(
+			"SELECT member_id FROM orders WHERE id = $1",
+			[orderId],
+		);
+		if (!rows[0]) return reply.status(404).send({ error: "Order not found" });
+
+		const key = buildKey(
+			`payment-proofs-img/${rows[0].member_id}`,
+			body.data.contentType,
+		);
+		return presignUpload(key, body.data.contentType);
+	});
+
+	// PATCH /admin/orders/:orderId — management corrects an existing order:
+	// product (→ recalculates amounts server-side), payment reference, and/or
+	// proof images (full-replacement diff; removed S3 objects deleted post-commit).
+	// Never touches is_active or re-emits MemberActivated — safe on confirmed orders.
+	const EditOrderBody = z.object({
+		productId: z.number().int().positive().optional(),
+		paymentRef: z.string().min(1).optional(),
+		// undefined = leave proofs untouched; [] = remove all; [...] = replace set
+		proofKeys: z.array(z.string()).optional(),
+	});
+
+	app.patch("/orders/:orderId", auth, async (req, reply) => {
+		const { orderId } = req.params as { orderId: string };
+		const actor = req.user as { sub: string };
+		if (!(await isManagement(actor.sub)))
+			return reply.status(403).send({ error: "Management only" });
+
+		const body = EditOrderBody.safeParse(req.body);
+		if (!body.success)
+			return reply.status(400).send({ error: body.error.flatten() });
+
+		// Load the current order.
+		const { rows: oRows } = await pool().query<{
+			member_id: string;
+			product_id: string;
+			base_amount: string;
+			gst_amount: string;
+			total_amount: string;
+			payment_ref: string | null;
+			status: string;
+		}>(
+			`SELECT member_id, product_id, base_amount, gst_amount, total_amount,
+			        payment_ref, status
+			   FROM orders WHERE id = $1`,
+			[orderId],
+		);
+		if (!oRows[0]) return reply.status(404).send({ error: "Order not found" });
+
+		const order = oRows[0];
+
+		// Only editable while the order is still correctable (never on terminal statuses).
+		const EDITABLE_STATUSES = ["created", "paid", "confirmed", "rejected"];
+		if (!EDITABLE_STATUSES.includes(order.status))
+			return reply.status(409).send({
+				error: `Cannot edit an order with status '${order.status}'`,
+			});
+
+		// Resolve new product pricing server-side (never trust client amounts).
+		let newProductId: number | undefined;
+		let newBasePaise: bigint | undefined;
+		if (
+			body.data.productId !== undefined &&
+			body.data.productId !== Number(order.product_id)
+		) {
+			const { rows: pRows } = await pool().query<{ base_price: string }>(
+				"SELECT base_price FROM products WHERE id = $1 AND active = TRUE",
+				[body.data.productId],
+			);
+			if (!pRows[0])
+				return reply
+					.status(404)
+					.send({ error: "Product not found or inactive" });
+			newProductId = body.data.productId;
+			newBasePaise = toPaise(pRows[0].base_price);
+		}
+
+		// Validate incoming proof keys (only the NEW ones — kept keys are already trusted).
+		const { proofKeys } = body.data;
+		let removedKeys: string[] = []; // populated inside txn, deleted post-commit
+
+		if (proofKeys !== undefined) {
+			// Fetch existing proof keys for this order.
+			const { rows: existingProofRows } = await pool().query<{ s3_key: string }>(
+				"SELECT s3_key FROM order_payment_proofs WHERE order_id = $1",
+				[orderId],
+			);
+			const existingKeySet = new Set(existingProofRows.map((r) => r.s3_key));
+			const incomingKeySet = new Set(proofKeys);
+
+			// Validate only genuinely new keys.
+			for (const key of proofKeys) {
+				if (existingKeySet.has(key)) continue; // already in DB — trusted
+				if (!paymentProofKeyRe(order.member_id).test(key))
+					return reply
+						.status(400)
+						.send({ error: `Invalid proof key: ${key}` });
+				if (!(await objectExists(key)))
+					return reply
+						.status(400)
+						.send({ error: `Proof not found in storage: ${key}` });
+			}
+
+			// Collect keys to remove (in DB but not in incoming set).
+			removedKeys = [...existingKeySet].filter((k) => !incomingKeySet.has(k));
+		}
+
+		// Capture before-state for the audit log.
+		const beforeState = {
+			productId: Number(order.product_id),
+			totalPaise: Number(toPaise(order.total_amount)),
+			paymentRef: order.payment_ref,
+			proofCount: undefined as number | undefined,
+		};
+		if (proofKeys !== undefined) {
+			const { rows: cntRows } = await pool().query<{ cnt: string }>(
+				"SELECT COUNT(*)::int AS cnt FROM order_payment_proofs WHERE order_id = $1",
+				[orderId],
+			);
+			beforeState.proofCount = Number(cntRows[0].cnt);
+		}
+
+		// Apply all mutations in a single transaction.
+		await withTxn(async (c) => {
+			// Build the UPDATE for the orders row.
+			const setClauses: string[] = [];
+			const params: unknown[] = [];
+			let p = 1;
+
+			if (newProductId !== undefined && newBasePaise !== undefined) {
+				setClauses.push(
+					`product_id = $${p++}, base_amount = $${p++}, gst_amount = $${p++}, total_amount = $${p++}`,
+				);
+				params.push(
+					newProductId,
+					fromPaise(newBasePaise),
+					fromPaise(0n),
+					fromPaise(newBasePaise),
+				);
+			}
+			if (body.data.paymentRef !== undefined) {
+				setClauses.push(`payment_ref = $${p++}`);
+				params.push(body.data.paymentRef);
+			}
+
+			if (setClauses.length > 0) {
+				params.push(orderId);
+				await c.query(
+					`UPDATE orders SET ${setClauses.join(", ")} WHERE id = $${p}`,
+					params,
+				);
+			}
+
+			// Proof diff: delete removed rows, insert new ones.
+			if (proofKeys !== undefined) {
+				if (removedKeys.length > 0) {
+					await c.query(
+						`DELETE FROM order_payment_proofs
+						  WHERE order_id = $1 AND s3_key = ANY($2::text[])`,
+						[orderId, removedKeys],
+					);
+				}
+				for (const key of proofKeys) {
+					await c.query(
+						`INSERT INTO order_payment_proofs (order_id, s3_key)
+						 VALUES ($1, $2) ON CONFLICT (s3_key) DO NOTHING`,
+						[orderId, key],
+					);
+				}
+			}
+
+			// Audit trail.
+			const afterState = {
+				productId: newProductId ?? Number(order.product_id),
+				totalPaise:
+					newBasePaise !== undefined
+						? Number(newBasePaise)
+						: Number(toPaise(order.total_amount)),
+				paymentRef: body.data.paymentRef ?? order.payment_ref,
+				proofCount: proofKeys?.length,
+			};
+			await c.query(
+				`INSERT INTO admin_audit_log
+				   (actor_id, action, target_type, target_id, before_state, after_state)
+				 VALUES ($1, 'order_edit', 'order', $2, $3, $4)`,
+				[actor.sub, orderId, beforeState, afterState],
+			);
+		});
+
+		// Best-effort S3 cleanup — runs after commit so a storage failure can't
+		// roll back a clean DB state (same pattern as updateProduct in productService.ts).
+		for (const key of removedKeys) {
+			await deleteObject(key);
+		}
 
 		return { ok: true };
 	});

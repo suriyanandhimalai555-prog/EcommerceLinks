@@ -100,6 +100,9 @@ export interface MyOrder {
   status: 'created' | 'paid' | 'confirmed' | 'rejected' | 'failed' | 'refunded'
   createdAt: string
   rejectionReason?: string
+  paymentRef?: string
+  confirmedAt?: string
+  paymentProofUrls?: string[]
 }
 
 export interface OrderStatus {
@@ -115,12 +118,15 @@ export interface AdminOrder {
   orderId: string
   memberCode: string
   memberName: string
+  productId: number
   productName: string
   totalPaise: number
   status: string
   createdAt: string
   paymentRef?: string
   confirmedAt?: string
+  /** Raw S3 keys for uploaded payment-proof screenshots — used by the edit modal to diff additions/removals. */
+  paymentProofKeys?: string[]
   /** Short-lived presigned GET URLs for uploaded payment-proof screenshots (status=paid only). */
   paymentProofUrls?: string[]
 }

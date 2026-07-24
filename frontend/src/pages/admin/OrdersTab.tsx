@@ -1,13 +1,14 @@
-import { useState } from 'react'
-import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useRef, useState } from 'react'
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { CheckCircle2, Loader2, XCircle } from 'lucide-react'
+import { CheckCircle2, Loader2, Pencil, XCircle } from 'lucide-react'
 import api from '../../lib/api'
 import { formatINR, formatDate } from '../../lib/format'
 import { DataTable, type Column } from '../../components/ui/DataTable'
 import { Badge } from '../../components/ui/Badge'
 import { Modal } from '../../components/ui/Modal'
-import type { AdminOrder } from '../../types/api'
+import { ImageUploader, type ImageUploaderHandle, type UploadedImage } from '../../components/ui/ImageUploader'
+import type { AdminOrder, AdminProduct, PresignRes } from '../../types/api'
 
 const PAGE = 50
 
@@ -32,6 +33,14 @@ export function OrdersTab() {
   // Reject modal state (separate from approve)
   const [rejectTarget, setRejectTarget] = useState<AdminOrder | null>(null)
   const [rejectReason, setRejectReason] = useState('')
+
+  // Edit modal state
+  const [editTarget, setEditTarget] = useState<AdminOrder | null>(null)
+  const [editProductId, setEditProductId] = useState<number>(0)
+  const [editPaymentRef, setEditPaymentRef] = useState('')
+  const [editProofImages, setEditProofImages] = useState<UploadedImage[]>([])
+  const [editError, setEditError] = useState('')
+  const editUploaderRef = useRef<ImageUploaderHandle>(null)
 
   const {
     data,
@@ -72,6 +81,67 @@ export function OrdersTab() {
       setRejectReason('')
     },
   })
+
+  // Products list for the edit modal product selector.
+  const { data: productsData } = useQuery<AdminProduct[]>({
+    queryKey: ['admin-products'],
+    queryFn: () => api.get('/admin/products').then((r) => r.data),
+    staleTime: 60_000,
+  })
+  const activeProducts = (productsData ?? []).filter((p) => p.active)
+
+  const editOrder = useMutation({
+    mutationFn: async (order: AdminOrder) => {
+      // Upload any newly staged images and collect full key set (kept + new).
+      const proofKeys = editUploaderRef.current
+        ? await editUploaderRef.current.upload()
+        : (order.paymentProofKeys ?? [])
+      return api
+        .patch(`/admin/orders/${order.orderId}`, {
+          productId: editProductId !== order.productId ? editProductId : undefined,
+          paymentRef: editPaymentRef.trim() !== (order.paymentRef ?? '') ? editPaymentRef.trim() || undefined : undefined,
+          proofKeys,
+        })
+        .then((r) => r.data)
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin', 'orders'] })
+      qc.invalidateQueries({ queryKey: ['admin-overview'] })
+      closeEdit()
+    },
+    onError: () => {
+      setEditError(t('errors.generic'))
+    },
+  })
+
+  function openEdit(order: AdminOrder, e: React.MouseEvent) {
+    e.stopPropagation()
+    setEditTarget(order)
+    setEditProductId(order.productId)
+    setEditPaymentRef(order.paymentRef ?? '')
+    // Seed the uploader with existing proofs so kept ones stay and removed ones get diffed.
+    const keys = order.paymentProofKeys ?? []
+    const urls = order.paymentProofUrls ?? []
+    setEditProofImages(keys.map((key, i) => ({ key, previewUrl: urls[i] ?? '' })))
+    setEditError('')
+  }
+
+  function closeEdit() {
+    setEditTarget(null)
+    setEditProductId(0)
+    setEditPaymentRef('')
+    setEditProofImages([])
+    setEditError('')
+  }
+
+  function getEditPresign(file: File): Promise<PresignRes> {
+    return api
+      .post(`/admin/orders/${editTarget!.orderId}/proof/presign`, {
+        contentType: file.type,
+        sizeBytes: file.size,
+      })
+      .then((r) => r.data)
+  }
 
   const handleConfirm = () => {
     if (!paymentRef.trim()) {
@@ -154,6 +224,13 @@ export function OrdersTab() {
       render: (r) => (
         <div className="flex items-center gap-2 justify-end">
           <button
+            onClick={(e) => openEdit(r, e)}
+            className="py-1.5 px-3 text-xs rounded-lg border border-surface-line text-ink-muted font-semibold flex items-center gap-1.5 hover:bg-white/5 hover:text-ink transition-colors"
+          >
+            <Pencil size={12} />
+            {t('admin.orders.editBtn')}
+          </button>
+          <button
             onClick={(e) => openReject(r, e)}
             className="py-1.5 px-3 text-xs rounded-lg border border-danger text-danger font-semibold flex items-center gap-1.5 hover:bg-danger/10 transition-colors"
           >
@@ -204,6 +281,20 @@ export function OrdersTab() {
       header: 'Status',
       render: () => <Badge variant="neutral">Awaiting Payment</Badge>,
     },
+    {
+      key: 'actions',
+      header: '',
+      align: 'right',
+      render: (r) => (
+        <button
+          onClick={(e) => openEdit(r, e)}
+          className="py-1.5 px-3 text-xs rounded-lg border border-surface-line text-ink-muted font-semibold flex items-center gap-1.5 hover:bg-white/5 hover:text-ink transition-colors"
+        >
+          <Pencil size={12} />
+          {t('admin.orders.editBtn')}
+        </button>
+      ),
+    },
   ]
 
   // ── Confirmed (history) columns ───────────────────────────────────────────
@@ -246,6 +337,20 @@ export function OrdersTab() {
       key: 'status',
       header: 'Status',
       render: () => <Badge variant="success">Confirmed</Badge>,
+    },
+    {
+      key: 'actions',
+      header: '',
+      align: 'right',
+      render: (r) => (
+        <button
+          onClick={(e) => openEdit(r, e)}
+          className="py-1.5 px-3 text-xs rounded-lg border border-surface-line text-ink-muted font-semibold flex items-center gap-1.5 hover:bg-white/5 hover:text-ink transition-colors"
+        >
+          <Pencil size={12} />
+          {t('admin.orders.editBtn')}
+        </button>
+      ),
     },
   ]
 
@@ -425,6 +530,105 @@ export function OrdersTab() {
               >
                 {reject.isPending ? <Loader2 size={15} className="animate-spin" /> : <XCircle size={15} />}
                 {t('admin.orders.rejectConfirm')}
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* ── Edit modal ────────────────────────────────────────────────────── */}
+      <Modal
+        open={!!editTarget}
+        onClose={closeEdit}
+        title={t('admin.orders.editTitle')}
+      >
+        {editTarget && (
+          <div className="space-y-4">
+            {/* Member / order summary */}
+            <div className="bg-white/5 rounded-xl p-4 space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-ink-muted">Member</span>
+                <span className="font-semibold text-ink">
+                  {editTarget.memberName} ({editTarget.memberCode})
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-ink-muted">Order ID</span>
+                <span className="font-mono text-xs text-ink">{editTarget.orderId}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-ink-muted">Status</span>
+                <span className="text-ink">{editTarget.status}</span>
+              </div>
+            </div>
+
+            {/* Product selector */}
+            <div>
+              <label className="block text-sm font-medium text-ink mb-1.5">
+                {t('admin.orders.editProduct')}
+              </label>
+              <select
+                value={editProductId}
+                onChange={(e) => setEditProductId(Number(e.target.value))}
+                className="w-full rounded-lg border border-surface-line bg-[#10141F] px-3 py-2.5 text-sm text-ink outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+              >
+                {activeProducts.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+                {/* Keep the current product option even if it's now inactive */}
+                {!activeProducts.find((p) => p.id === editTarget.productId) && (
+                  <option value={editTarget.productId}>
+                    {editTarget.productName} (inactive)
+                  </option>
+                )}
+              </select>
+            </div>
+
+            {/* Payment reference */}
+            <div>
+              <label className="block text-sm font-medium text-ink mb-1.5">
+                {t('admin.orders.editRefLabel')}
+              </label>
+              <input
+                type="text"
+                value={editPaymentRef}
+                onChange={(e) => setEditPaymentRef(e.target.value)}
+                placeholder={t('admin.orders.editRefPlaceholder')}
+                className="w-full rounded-lg border border-surface-line bg-[#10141F] px-3 py-2.5 text-sm text-ink outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+              />
+            </div>
+
+            {/* Proof images */}
+            <ImageUploader
+              ref={editUploaderRef}
+              label={t('admin.orders.editProofLabel')}
+              maxFiles={3}
+              value={editProofImages}
+              onChange={setEditProofImages}
+              getPresign={getEditPresign}
+              deferUpload
+            />
+            <p className="text-xs text-ink-muted -mt-2">{t('admin.orders.editProofHint')}</p>
+
+            {editError && <p className="text-xs text-danger">{editError}</p>}
+
+            <div className="flex gap-2">
+              <button
+                onClick={closeEdit}
+                disabled={editOrder.isPending}
+                className="flex-1 py-2.5 rounded-xl border border-surface-line text-ink-muted text-sm font-semibold hover:bg-white/5 transition-colors"
+              >
+                {t('common.cancel')}
+              </button>
+              <button
+                onClick={() => editOrder.mutate(editTarget)}
+                disabled={editOrder.isPending}
+                className="flex-1 avg-btn-primary py-2.5"
+              >
+                {editOrder.isPending ? <Loader2 size={15} className="animate-spin" /> : <Pencil size={15} />}
+                {t('admin.orders.editSave')}
               </button>
             </div>
           </div>

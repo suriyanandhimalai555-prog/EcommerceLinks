@@ -667,24 +667,41 @@ export async function frontendRoutes(app: FastifyInstance) {
 			status: string;
 			created_at: string;
 			rejection_reason: string | null;
+			payment_ref: string | null;
+			confirmed_at: string | null;
+			proof_keys: string[] | null;
 		}>(
 			`SELECT o.id, o.product_id, p.name AS product_name,
-			        o.total_amount, o.status, o.created_at, o.rejection_reason
+			        o.total_amount, o.status, o.created_at, o.rejection_reason,
+			        o.payment_ref, o.confirmed_at,
+			        array_agg(opp.s3_key ORDER BY opp.uploaded_at)
+			          FILTER (WHERE opp.s3_key IS NOT NULL) AS proof_keys
 			   FROM orders o
 			   JOIN products p ON p.id = o.product_id
+			   LEFT JOIN order_payment_proofs opp ON opp.order_id = o.id
 			  WHERE o.member_id = $1
+			  GROUP BY o.id, o.product_id, p.name
 			  ORDER BY o.created_at DESC`,
 			[memberId],
 		);
-		return rows.map((r) => ({
-			orderId: r.id,
-			productId: r.product_id,
-			productName: r.product_name,
-			totalPaise: Number(toPaise(r.total_amount)),
-			status: r.status,
-			createdAt: r.created_at,
-			rejectionReason: r.rejection_reason ?? undefined,
-		}));
+		return Promise.all(
+			rows.map(async (r) => {
+				const keys = r.proof_keys ?? [];
+				const paymentProofUrls = await Promise.all(keys.map((k) => presignGet(k)));
+				return {
+					orderId: r.id,
+					productId: r.product_id,
+					productName: r.product_name,
+					totalPaise: Number(toPaise(r.total_amount)),
+					status: r.status,
+					createdAt: r.created_at,
+					rejectionReason: r.rejection_reason ?? undefined,
+					paymentRef: r.payment_ref ?? undefined,
+					confirmedAt: r.confirmed_at ?? undefined,
+					paymentProofUrls: paymentProofUrls.length > 0 ? paymentProofUrls : undefined,
+				};
+			}),
+		);
 	});
 
 	app.get("/orders/:orderId", auth, async (req, reply) => {

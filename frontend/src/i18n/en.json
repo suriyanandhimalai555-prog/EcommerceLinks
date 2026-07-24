@@ -318,7 +318,16 @@
       "paidEmptyTitle": "No proofs to review",
       "paidEmptyDesc": "Orders where members have uploaded a payment screenshot appear here.",
       "confirmedEmptyTitle": "No confirmed orders yet",
-      "confirmedEmptyDesc": "Confirmed orders will appear here after payment is verified."
+      "confirmedEmptyDesc": "Confirmed orders will appear here after payment is verified.",
+      "editBtn": "Edit",
+      "editTitle": "Edit order",
+      "editProduct": "Product",
+      "editProofLabel": "Payment proof images",
+      "editProofHint": "Remove existing screenshots or add new ones. Removed images are permanently deleted.",
+      "editRefLabel": "Bank UTR / Reference",
+      "editRefPlaceholder": "e.g. UTR number from bank transfer",
+      "editSave": "Save changes",
+      "editSuccess": "Order updated successfully."
     }
   },
   "payout": {
@@ -369,7 +378,11 @@
     "browseProducts": "Browse products",
     "uploadProof": "Upload payment proof",
     "reUploadProof": "Re-upload payment proof",
-    "rejectedReason": "Reason"
+    "rejectedReason": "Reason",
+    "orderId": "Order ID",
+    "paymentRef": "Bank UTR / Reference",
+    "confirmedAt": "Confirmed On",
+    "proofImages": "Payment screenshots"
   },
   "common": {
     "cancel": "Cancel"
