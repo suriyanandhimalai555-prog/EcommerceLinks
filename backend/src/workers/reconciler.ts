@@ -167,6 +167,43 @@ export async function reconcile(): Promise<Alert[]> {
 		}
 	}
 
+	// Sample 200 random withdrawable balances vs SUM(ledger)
+	const { rows: withdrawableSample } = await pool().query<{
+		account_id: string;
+		member_code: string;
+		balance: string;
+	}>(
+		`SELECT wb.account_id, m.member_code, wb.balance
+     FROM wallet_balances wb
+     JOIN accounts a ON a.id = wb.account_id
+     JOIN members m ON m.id = a.owner_id
+     WHERE a.kind='withdrawable'
+     ORDER BY random()
+     LIMIT 200`,
+	);
+
+	for (const row of withdrawableSample) {
+		const { rows: ledgerRows } = await pool().query<{ net: string }>(
+			`SELECT COALESCE(
+         SUM(CASE WHEN direction='C' THEN amount ELSE -amount END), 0
+       ) AS net
+       FROM ledger_entries WHERE account_id=$1`,
+			[row.account_id],
+		);
+		const computedBalance = toPaise(ledgerRows[0].net);
+		const storedBalance = toPaise(row.balance);
+		if (computedBalance !== storedBalance) {
+			alerts.push({
+				type: "withdrawable_drift",
+				memberId: row.account_id,
+				memberCode: row.member_code,
+				field: "balance",
+				stored: row.balance,
+				computed: String(computedBalance),
+			});
+		}
+	}
+
 	if (alerts.length > 0) {
 		console.error(
 			`[reconciler] CRITICAL: ${alerts.length} drift(s) detected`,

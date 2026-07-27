@@ -1,12 +1,11 @@
 import { randomUUID } from "node:crypto";
 import argon2 from "argon2";
 import type { FastifyInstance } from "fastify";
-import { DateTime } from "luxon";
 import { z } from "zod";
 import { CFG } from "../config.js";
 import { pool, withTxn } from "../lib/db.js";
 import { getAllSettings, setSetting } from "../services/settings.js";
-import { fromPaise, toPaise } from "../lib/money.js";
+import { fromPaise, pctRoundUp, toPaise } from "../lib/money.js";
 // DLQ replay is a sanctioned re-delivery of an already-published event — not a
 // new producer; consumers stay safe via processed_events idempotency.
 import {
@@ -28,7 +27,6 @@ import {
 	updateProduct,
 } from "../services/productService.js";
 import { postLedgerTxn } from "../workers/ledger.js";
-import { buildBatch } from "../workers/payout.js";
 import { confirmOrder, createOrder } from "../services/orderService.js";
 
 export async function adminRoutes(app: FastifyInstance) {
@@ -409,19 +407,253 @@ export async function adminRoutes(app: FastifyInstance) {
 		return { ok: true };
 	});
 
-	// ===== payouts =====
-	// buildBatch manages its own transaction; audit row is best-effort in a separate txn.
-	app.post("/payouts/trigger", auth, async (req, reply) => {
-		const now = DateTime.now().setZone(CFG.TZ);
+	// ===== admin withdrawals =====
+	// GET /admin/withdrawals?status=requested&page=1&limit=20
+	app.get("/withdrawals", auth, async (req, reply) => {
 		const actor = req.user as { sub: string };
-		const batchId = await buildBatch(now);
-		await pool().query(
-			`INSERT INTO admin_audit_log
-         (actor_id, action, target_type, target_id, before_state, after_state)
-       VALUES ($1,'payout_trigger','payout_batch',$2,NULL,NULL)`,
-			[actor.sub, String(batchId)],
+		if (!(await isManagement(actor.sub)))
+			return reply.status(403).send({ error: "Management only" });
+
+		const query = req.query as {
+			status?: string;
+			page?: string;
+			limit?: string;
+		};
+		const statusFilter = query.status ?? "requested";
+		const limit = Math.min(Math.max(1, Number(query.limit ?? "20")), 100);
+		const page = Math.max(1, Number(query.page ?? "1"));
+		const offset = (page - 1) * limit;
+
+		const { rows } = await pool().query<{
+			id: string;
+			member_code: string;
+			name: string;
+			amount: string;
+			tds: string | null;
+			net: string | null;
+			status: string;
+			requested_at: string;
+			processed_at: string | null;
+			notes: string | null;
+		}>(
+			`SELECT w.id, m.member_code, m.name, w.amount, w.tds, w.net,
+              w.status, w.requested_at, w.processed_at, w.notes
+       FROM withdrawals w
+       JOIN members m ON m.id = w.member_id
+       WHERE ($1 = 'all' OR w.status = $1)
+       ORDER BY w.id DESC
+       LIMIT $2 OFFSET $3`,
+			[statusFilter, limit, offset],
 		);
-		return reply.send({ ok: true, batchId: String(batchId) });
+
+		const { rows: countRows } = await pool().query<{ total: string }>(
+			`SELECT COUNT(*) AS total FROM withdrawals WHERE ($1 = 'all' OR status = $1)`,
+			[statusFilter],
+		);
+
+		return {
+			items: rows.map((r) => ({
+				id: r.id,
+				memberCode: r.member_code,
+				memberName: r.name,
+				amountPaise: Number(toPaise(r.amount)),
+				tdsPaise: r.tds ? Number(toPaise(r.tds)) : null,
+				netPaise: r.net ? Number(toPaise(r.net)) : null,
+				status: r.status,
+				requestedAt: r.requested_at,
+				processedAt: r.processed_at,
+				notes: r.notes,
+			})),
+			total: Number(countRows[0]?.total ?? 0),
+			page,
+			limit,
+		};
+	});
+
+	const WithdrawalDecideBody = z.object({
+		notes: z.string().optional(),
+		bankRef: z.string().optional(),
+	});
+
+	// POST /admin/withdrawals/:id/approve
+	app.post("/withdrawals/:id/approve", auth, async (req, reply) => {
+		const actor = req.user as { sub: string };
+		if (!(await isManagement(actor.sub)))
+			return reply.status(403).send({ error: "Management only" });
+
+		const { id } = req.params as { id: string };
+		const body = WithdrawalDecideBody.safeParse(req.body);
+		if (!body.success)
+			return reply.status(400).send({ error: body.error.flatten() });
+
+		await withTxn(async (c) => {
+			const { rows: wdRows } = await c.query<{
+				id: string;
+				member_id: string;
+				amount: string;
+				status: string;
+			}>(
+				"SELECT id, member_id, amount, status FROM withdrawals WHERE id=$1 FOR UPDATE",
+				[id],
+			);
+			if (!wdRows[0])
+				throw Object.assign(new Error("Withdrawal not found"), { statusCode: 404 });
+			if (wdRows[0].status !== "requested")
+				throw Object.assign(
+					new Error("Withdrawal is not in requested status"),
+					{ statusCode: 409 },
+				);
+
+			const grossPaise = toPaise(wdRows[0].amount);
+			const tdsPaise = pctRoundUp(grossPaise, CFG.TDS_PCT);
+			const netPaise = grossPaise - tdsPaise;
+
+			// Get system accounts
+			const { rows: sysAccs } = await c.query<{ id: string; kind: string }>(
+				`SELECT id, kind FROM accounts WHERE owner_type='system' AND kind IN ('payout_clearing','tds_payable','bank')`,
+			);
+			const payoutClearingId = BigInt(
+				sysAccs.find((a) => a.kind === "payout_clearing")!.id,
+			);
+			const tdsPayableId = BigInt(
+				sysAccs.find((a) => a.kind === "tds_payable")!.id,
+			);
+			const bankAccId = BigInt(sysAccs.find((a) => a.kind === "bank")!.id);
+
+			// Pay: D payout_clearing / C bank(net) + C tds_payable(tds)
+			await postLedgerTxn(
+				c,
+				`wdpay:${id}`,
+				"withdrawal",
+				BigInt(id),
+				[
+					{ accountId: payoutClearingId, direction: "D", amountPaise: grossPaise },
+					{ accountId: bankAccId, direction: "C", amountPaise: netPaise },
+					{ accountId: tdsPayableId, direction: "C", amountPaise: tdsPaise },
+				],
+			);
+
+			await c.query(
+				`UPDATE withdrawals
+           SET status='paid',
+               tds=$1, net=$2,
+               bank_ref=$3,
+               processed_by=$4,
+               notes=$5,
+               processed_at=now()
+         WHERE id=$6`,
+				[
+					fromPaise(tdsPaise),
+					fromPaise(netPaise),
+					body.data.bankRef ?? null,
+					actor.sub,
+					body.data.notes ?? null,
+					id,
+				],
+			);
+
+			await c.query(
+				`INSERT INTO admin_audit_log
+           (actor_id, action, target_type, target_id, before_state, after_state)
+         VALUES ($1,'withdrawal_approve','withdrawal',$2,$3,$4)`,
+				[
+					actor.sub,
+					id,
+					{ status: "requested" },
+					{
+						status: "paid",
+						grossPaise: Number(grossPaise),
+						tdsPaise: Number(tdsPaise),
+						netPaise: Number(netPaise),
+						bankRef: body.data.bankRef ?? null,
+						notes: body.data.notes ?? null,
+					},
+				],
+			);
+		});
+
+		return { ok: true };
+	});
+
+	// POST /admin/withdrawals/:id/reject
+	app.post("/withdrawals/:id/reject", auth, async (req, reply) => {
+		const actor = req.user as { sub: string };
+		if (!(await isManagement(actor.sub)))
+			return reply.status(403).send({ error: "Management only" });
+
+		const { id } = req.params as { id: string };
+		const body = WithdrawalDecideBody.safeParse(req.body);
+		if (!body.success)
+			return reply.status(400).send({ error: body.error.flatten() });
+
+		await withTxn(async (c) => {
+			const { rows: wdRows } = await c.query<{
+				id: string;
+				member_id: string;
+				amount: string;
+				status: string;
+			}>(
+				"SELECT id, member_id, amount, status FROM withdrawals WHERE id=$1 FOR UPDATE",
+				[id],
+			);
+			if (!wdRows[0])
+				throw Object.assign(new Error("Withdrawal not found"), { statusCode: 404 });
+			if (wdRows[0].status !== "requested")
+				throw Object.assign(
+					new Error("Withdrawal is not in requested status"),
+					{ statusCode: 409 },
+				);
+
+			const grossPaise = toPaise(wdRows[0].amount);
+
+			// Get accounts
+			const { rows: sysAccs } = await c.query<{ id: string }>(
+				`SELECT id FROM accounts WHERE owner_type='system' AND kind='payout_clearing'`,
+			);
+			const payoutClearingId = BigInt(sysAccs[0].id);
+
+			const { rows: memberAccs } = await c.query<{ id: string }>(
+				`SELECT id FROM accounts WHERE owner_id=$1 AND kind='withdrawable'`,
+				[wdRows[0].member_id],
+			);
+			const withdrawableAccId = BigInt(memberAccs[0].id);
+
+			// Refund: D payout_clearing / C withdrawable
+			await postLedgerTxn(
+				c,
+				`wdrefund:${id}`,
+				"withdrawal",
+				BigInt(id),
+				[
+					{ accountId: payoutClearingId, direction: "D", amountPaise: grossPaise },
+					{ accountId: withdrawableAccId, direction: "C", amountPaise: grossPaise },
+				],
+			);
+
+			await c.query(
+				`UPDATE withdrawals
+           SET status='rejected',
+               processed_by=$1,
+               notes=$2,
+               processed_at=now()
+         WHERE id=$3`,
+				[actor.sub, body.data.notes ?? null, id],
+			);
+
+			await c.query(
+				`INSERT INTO admin_audit_log
+           (actor_id, action, target_type, target_id, before_state, after_state)
+         VALUES ($1,'withdrawal_reject','withdrawal',$2,$3,$4)`,
+				[
+					actor.sub,
+					id,
+					{ status: "requested" },
+					{ status: "rejected", notes: body.data.notes ?? null },
+				],
+			);
+		});
+
+		return { ok: true };
 	});
 
 	// ===== member search =====

@@ -10,8 +10,8 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { CFG } from "../config.js";
 import { QUALIFIED_THRESHOLDS } from "../domain/ranks.js";
-import { pool } from "../lib/db.js";
-import { fromPaise, toPaise } from "../lib/money.js";
+import { pool, withTxn } from "../lib/db.js";
+import { fromPaise, pctRoundUp, toPaise } from "../lib/money.js";
 import { redis } from "../lib/redis.js";
 import {
 	buildKey,
@@ -27,6 +27,7 @@ import {
 import { confirmOrder, createOrder } from "../services/orderService.js";
 import { imagesByProduct } from "../services/productService.js";
 import { getSetting } from "../services/settings.js";
+import { postLedgerTxn } from "../workers/ledger.js";
 
 // Display names the frontend expects (index 1..12)
 const RANK_NAMES: Record<number, string> = {
@@ -119,10 +120,12 @@ export async function buildMe(memberId: string) {
 
 function mapRefType(
 	referenceType: string,
-): "pair" | "payout" | "sweep" | "manual" {
+): "pair" | "payout" | "sweep" | "wsweep" | "withdrawal" | "manual" {
 	if (referenceType === "pair") return "pair";
 	if (referenceType === "payout_item") return "payout";
 	if (referenceType === "sweep") return "sweep";
+	if (referenceType === "wsweep") return "wsweep";
+	if (referenceType === "withdrawal") return "withdrawal";
 	return "manual";
 }
 
@@ -130,6 +133,8 @@ function describe(refType: string, referenceId: string | null): string {
 	if (refType === "pair") return `Pair Match Bonus #${referenceId ?? ""}`;
 	if (refType === "payout") return "Payout to bank";
 	if (refType === "sweep") return "Weekly cap sweep";
+	if (refType === "wsweep") return "Transferred to withdrawable";
+	if (refType === "withdrawal") return `Withdrawal #${referenceId ?? ""}`;
 	return "Transaction";
 }
 
@@ -1041,6 +1046,7 @@ export async function frontendRoutes(app: FastifyInstance) {
 			counterRes,
 			walletRes,
 			deferredRes,
+			withdrawableRes,
 			accrualRes,
 			todayRes,
 			seriesRes,
@@ -1064,6 +1070,11 @@ export async function frontendRoutes(app: FastifyInstance) {
 			pool().query<{ balance: string }>(
 				`SELECT wb.balance FROM wallet_balances wb JOIN accounts a ON a.id = wb.account_id
          WHERE a.owner_id = $1 AND a.kind = 'deferred_bonus'`,
+				[memberId],
+			),
+			pool().query<{ balance: string }>(
+				`SELECT wb.balance FROM wallet_balances wb JOIN accounts a ON a.id = wb.account_id
+         WHERE a.owner_id = $1 AND a.kind = 'withdrawable'`,
 				[memberId],
 			),
 			// Income = released accruals; pending = accrued but awaiting the
@@ -1127,6 +1138,7 @@ export async function frontendRoutes(app: FastifyInstance) {
 		const { items: recent } = recentLedger;
 
 		return {
+			lifetimeEarnedPaise: Number(toPaise(accrualRes.rows[0]?.released ?? "0")),
 			totalIncomePaise: Number(toPaise(accrualRes.rows[0]?.released ?? "0")),
 			pairMatchIncomePaise: Number(
 				toPaise(accrualRes.rows[0]?.released ?? "0"),
@@ -1135,6 +1147,9 @@ export async function frontendRoutes(app: FastifyInstance) {
 			walletBalancePaise: Number(toPaise(walletRes.rows[0]?.balance ?? "0")),
 			deferredBalancePaise: Number(
 				toPaise(deferredRes.rows[0]?.balance ?? "0"),
+			),
+			withdrawablePaise: Number(
+				toPaise(withdrawableRes.rows[0]?.balance ?? "0"),
 			),
 			counters: {
 				leftActive,
@@ -1166,9 +1181,11 @@ export async function frontendRoutes(app: FastifyInstance) {
 						? "pair_bonus"
 						: r.refType === "payout"
 							? "payout"
-							: r.refType === "sweep"
+							: r.refType === "sweep" || r.refType === "wsweep"
 								? "sweep"
-								: "purchase",
+								: r.refType === "withdrawal"
+									? "withdrawal"
+									: "purchase",
 				amountPaise: r.amountPaise,
 				direction: r.direction,
 				at: r.at,
@@ -1236,9 +1253,10 @@ export async function frontendRoutes(app: FastifyInstance) {
 
 		// Balances + open window (with the caller's earnings joined in) — one
 		// parallel round trip instead of four sequential ones.
-		const [walletBal, deferredBal, winRes] = await Promise.all([
+		const [walletBal, deferredBal, withdrawableBal, winRes] = await Promise.all([
 			bal("wallet"),
 			bal("deferred_bonus"),
+			bal("withdrawable"),
 			pool().query<{
 				window_start: string;
 				window_end: string;
@@ -1264,6 +1282,7 @@ export async function frontendRoutes(app: FastifyInstance) {
 		return {
 			balancePaise: Number(walletBal),
 			deferredPaise: Number(deferredBal),
+			withdrawablePaise: Number(withdrawableBal),
 			currentWindow: {
 				start,
 				end,
@@ -1283,6 +1302,149 @@ export async function frontendRoutes(app: FastifyInstance) {
 			limit,
 		);
 		return { items, nextCursor };
+	});
+
+	// ===== member withdrawals =====
+	const WithdrawalReqBody = z.object({
+		amountPaise: z
+			.number()
+			.int()
+			.min(CFG.MIN_PAYOUT_PAISE, `Minimum withdrawal is ₹${CFG.MIN_PAYOUT_PAISE / 100}`),
+	});
+
+	app.post("/me/withdrawals", auth, async (req, reply) => {
+		const memberId = (req.user as Auth).sub;
+		const body = WithdrawalReqBody.safeParse(req.body);
+		if (!body.success)
+			return reply.status(400).send({ error: body.error.flatten() });
+
+		const amountPaise = BigInt(body.data.amountPaise);
+
+		await withTxn(async (c) => {
+			// Check KYC + bank gates
+			const { rows: memberRows } = await c.query<{
+				kyc_status: string;
+				bank_status: string;
+			}>("SELECT kyc_status, bank_status FROM members WHERE id=$1 FOR UPDATE", [
+				memberId,
+			]);
+			if (!memberRows[0])
+				throw Object.assign(new Error("Member not found"), { statusCode: 404 });
+
+			if (memberRows[0].kyc_status !== "verified") {
+				throw Object.assign(
+					new Error("KYC verification required before withdrawing"),
+					{ statusCode: 409 },
+				);
+			}
+			if (memberRows[0].bank_status !== "verified") {
+				throw Object.assign(
+					new Error("Bank details must be verified before withdrawing"),
+					{ statusCode: 409 },
+				);
+			}
+
+			// Fetch and lock withdrawable account
+			const { rows: accRows } = await c.query<{
+				id: string;
+				balance: string;
+			}>(
+				`SELECT a.id, wb.balance FROM accounts a
+         JOIN wallet_balances wb ON wb.account_id = a.id
+         WHERE a.owner_id=$1 AND a.kind='withdrawable'
+         FOR UPDATE`,
+				[memberId],
+			);
+			if (!accRows[0])
+				throw Object.assign(new Error("Withdrawable account not found"), {
+					statusCode: 500,
+				});
+
+			const withdrawableAccId = BigInt(accRows[0].id);
+			const currentBalance = toPaise(accRows[0].balance);
+
+			if (currentBalance < amountPaise) {
+				throw Object.assign(
+					new Error(
+						`Insufficient withdrawable balance (have ₹${Number(currentBalance) / 100}, requested ₹${Number(amountPaise) / 100})`,
+					),
+					{ statusCode: 409 },
+				);
+			}
+
+			// Get system payout_clearing account
+			const { rows: sysRows } = await c.query<{ id: string }>(
+				`SELECT id FROM accounts WHERE owner_type='system' AND kind='payout_clearing'`,
+			);
+			const payoutClearingId = BigInt(sysRows[0].id);
+
+			// Create withdrawal row first to get the ID for the idempotency key
+			const { rows: wdRows } = await c.query<{ id: string }>(
+				`INSERT INTO withdrawals (member_id, amount, status)
+         VALUES ($1, $2, 'requested')
+         RETURNING id`,
+				[memberId, fromPaise(amountPaise)],
+			);
+			const withdrawalId = wdRows[0].id;
+
+			// Hold: D withdrawable / C payout_clearing
+			await postLedgerTxn(
+				c,
+				`wdhold:${withdrawalId}`,
+				"withdrawal",
+				BigInt(withdrawalId),
+				[
+					{
+						accountId: withdrawableAccId,
+						direction: "D",
+						amountPaise,
+					},
+					{
+						accountId: payoutClearingId,
+						direction: "C",
+						amountPaise,
+					},
+				],
+			);
+		});
+
+		return reply.status(201).send({ ok: true });
+	});
+
+	app.get("/me/withdrawals", auth, async (req) => {
+		const memberId = (req.user as Auth).sub;
+		const query = req.query as { limit?: string; offset?: string };
+		const limit = Math.min(50, parseInt(query.limit ?? "20", 10) || 20);
+		const offset = Math.max(0, parseInt(query.offset ?? "0", 10) || 0);
+
+		const { rows } = await pool().query<{
+			id: string;
+			amount: string;
+			tds: string | null;
+			net: string | null;
+			status: string;
+			requested_at: string;
+			processed_at: string | null;
+		}>(
+			`SELECT id, amount, tds, net, status, requested_at, processed_at
+       FROM withdrawals
+       WHERE member_id=$1
+       ORDER BY id DESC
+       LIMIT $2 OFFSET $3`,
+			[memberId, limit, offset],
+		);
+
+		return {
+			items: rows.map((r) => ({
+				id: r.id,
+				amountPaise: Number(toPaise(r.amount)),
+				tdsPaise: r.tds ? Number(toPaise(r.tds)) : null,
+				netPaise: r.net ? Number(toPaise(r.net)) : null,
+				status: r.status as "requested" | "approved" | "rejected" | "paid",
+				requestedAt: r.requested_at,
+				processedAt: r.processed_at,
+			})),
+		};
 	});
 
 	// ===== payouts =====

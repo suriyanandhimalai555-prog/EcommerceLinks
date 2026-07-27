@@ -103,6 +103,33 @@ export async function closeAndOpenCutoff(): Promise<void> {
 		if (!newCutoff[0]) return;
 		const newCutoffId = newCutoff[0].id;
 
+		// Snapshot wallet balances now (inside the close transaction) and emit
+		// WithdrawableSweepRequested for every member with earnings > 0.
+		// The snapshot amount is embedded in the event so the handler moves exactly
+		// that amount regardless of delivery order or XAUTOCLAIM re-delivery.
+		const { rows: walletSnapshot } = await c.query<{
+			owner_id: string;
+			balance: string;
+		}>(
+			`SELECT a.owner_id, wb.balance FROM wallet_balances wb
+       JOIN accounts a ON a.id = wb.account_id
+       WHERE a.kind='wallet' AND wb.balance > 0`,
+		);
+		for (const row of walletSnapshot) {
+			// Convert NUMERIC balance (rupees) to paise for the event payload.
+			const amountPaise = Math.round(parseFloat(row.balance) * 100);
+			if (amountPaise <= 0) continue;
+			await writeOutbox(c, {
+				event_id: randomUUID(),
+				event_type: "WithdrawableSweepRequested",
+				occurred_at: new Date().toISOString(),
+				schema_version: 1,
+				member_id: Number(row.owner_id),
+				closed_cutoff_id: Number(closed.id),
+				amount_paise: amountPaise,
+			});
+		}
+
 		// Emit DeferredSweepRequested for every member with deferred balance > 0.
 		// Must use the transaction client `c`, not pool(), so the deferred query sees
 		// the same snapshot as the window-close UPDATE above (same connection, same txn).

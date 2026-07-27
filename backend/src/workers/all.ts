@@ -4,7 +4,6 @@ import { run as fanoutRun } from "./fanout.js";
 import { run as ledgerRun } from "./ledger.js";
 import { run as outboxRelayRun } from "./outboxRelay.js";
 import { run as pairCompleteRun } from "./pairComplete.js";
-import { run as payoutRun } from "./payout.js";
 import { run as qualificationRun } from "./qualification.js";
 import { run as rankRun } from "./rank.js";
 import { run as reconcilerRun } from "./reconciler.js";
@@ -13,8 +12,11 @@ import { run as reconcilerRun } from "./reconciler.js";
 // Redis Streams consumer groups distribute entries across consumers; multiple
 // avg-workers processes would interleave counterPair increments and break
 // per-ancestor ordering. See PLAN.md §2A — "Critical constraint".
+//
+// Note: the auto-payout worker (payout.ts run()) has been removed. Payouts are
+// now member-initiated withdrawals reviewed and approved by an admin.
 
-console.log("[avg-workers] starting all ten worker loops");
+console.log("[avg-workers] starting nine worker loops");
 
 Promise.all([
 	outboxRelayRun(),
@@ -25,7 +27,6 @@ Promise.all([
 	ledgerRun(),
 	rankRun(),
 	cutoffRun(),
-	payoutRun(),
 	reconcilerRun(),
 ]).catch((err) => {
 	console.error("[avg-workers] fatal", err);

@@ -281,38 +281,7 @@ export async function ingestSettlement(
 	}
 }
 
-// Cron: state-based — builds a batch whenever payout_date is today or past and no batch exists.
-// Implements the 7-day hold: cutoff closes on Saturday, payout_date = next Saturday (7 days later).
-// Self-heals after downtime: if the worker was down on payout day, it catches up on next startup.
-export async function run() {
-	console.log("[payout] started");
-	setInterval(async () => {
-		try {
-			const { rows } = await pool().query<{ payout_date: string }>(
-				`SELECT payout_date FROM cutoffs
-         WHERE status = 'closed'
-           AND payout_date <= CURRENT_DATE
-           AND NOT EXISTS (
-             SELECT 1 FROM payout_batches
-             WHERE scheduled_for = cutoffs.payout_date AND status = 'sent'
-           )
-         LIMIT 1`,
-			);
-			if (rows.length > 0) {
-				const dt = DateTime.fromISO(rows[0].payout_date, { zone: CFG.TZ });
-				console.log("[payout] building batch for", rows[0].payout_date);
-				await buildBatch(dt);
-			}
-		} catch (err) {
-			console.error("[payout] error in tick", err);
-		}
-	}, 60_000);
-}
-
-const _argv1 = process.argv[1] ?? "";
-if (_argv1.endsWith("payout.ts") || _argv1.endsWith("payout.js")) {
-	run().catch((err) => {
-		console.error("[payout] fatal", err);
-		process.exit(1);
-	});
-}
+// The auto-drain wallet-to-bank payout loop has been removed (G-4 reversal).
+// Payouts are now member-initiated withdrawals reviewed and approved by an admin.
+// buildBatch / ingestSettlement are retained for reference and legacy settlement
+// of any payout_items already in-flight; they are no longer called on a schedule.

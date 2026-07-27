@@ -43,6 +43,7 @@ function route(e: AvgEvent): RouteInfo {
 			};
 		case "PendingBonusReleaseRequested":
 		case "DeferredSweepRequested":
+		case "WithdrawableSweepRequested":
 			return {
 				topic: TOPICS.ledger.name,
 				partitionKey: String(e.member_id),

@@ -23,15 +23,32 @@ function uniquePhone(suffix: number) {
   return `8${Date.now().toString().slice(-7)}${s}`
 }
 
+// Save and restore register_otp_enabled so these tests run with OTP disabled.
+// OTP registration is tested separately in loginOtpScope.test.ts.
+let savedRegisterOtp: boolean | null = null
+
 beforeAll(async () => {
   await app.ready()
   const { rows } = await pool().query<{ member_code: string }>(
     "SELECT member_code FROM members WHERE parent_id IS NULL AND role <> 'management' LIMIT 1"
   )
   if (!rows[0]) throw new Error('Root member not seeded — run npm run seed first')
+  const { rows: s } = await pool().query<{ value: boolean }>(
+    "SELECT value FROM system_settings WHERE key='register_otp_enabled'"
+  )
+  savedRegisterOtp = s[0]?.value ?? false
+  await pool().query(
+    "INSERT INTO system_settings (key,value) VALUES ('register_otp_enabled','false') ON CONFLICT (key) DO UPDATE SET value='false'"
+  )
 })
 
 afterAll(async () => {
+  if (savedRegisterOtp !== null) {
+    await pool().query(
+      "INSERT INTO system_settings (key,value) VALUES ('register_otp_enabled',$1) ON CONFLICT (key) DO UPDATE SET value=$1",
+      [JSON.stringify(savedRegisterOtp)]
+    )
+  }
   await app.close()
   await pool().end().catch(() => null)
 })
@@ -42,9 +59,11 @@ describe('G-10 – Duplicate registration returns 409', () => {
   const phone = uniquePhone(1)
   const email = uniqueEmail('dup')
   let anchorCode: string
+  let emailAnchorCode: string // separate anchor so phone-dup test doesn't fill both slots
 
   beforeAll(async () => {
     anchorCode = (await registerAnchor('DupAnchor')).memberCode
+    emailAnchorCode = (await registerAnchor('DupEmailAnchor')).memberCode
   })
 
   it('first registration succeeds (201)', async () => {
@@ -58,9 +77,8 @@ describe('G-10 – Duplicate registration returns 409', () => {
     expect(res.statusCode).toBe(201)
   })
 
-  it('second registration with same phone returns 409', async () => {
-    // Anchor's R slot is still free and the email differs,
-    // so the failure is the phone constraint
+  it('second registration with same phone is allowed (phones are shared since migration 029)', async () => {
+    // migration 029 dropped the phone UNIQUE constraint — families share phones
     const res = await app.inject({
       method: 'POST', url: '/auth/register',
       payload: {
@@ -68,15 +86,15 @@ describe('G-10 – Duplicate registration returns 409', () => {
         name: 'DupTest2', phone, email: uniqueEmail('dup2'), password: 'Test@12345',
       },
     })
-    expect(res.statusCode).toBe(409)
-    expect(JSON.parse(res.body).error).toMatch(/already registered/i)
+    expect(res.statusCode).toBe(201)
   })
 
   it('registration with same email but different phone returns 409', async () => {
+    // Use a separate anchor so both slots are available to isolate the email-dup check
     const res = await app.inject({
       method: 'POST', url: '/auth/register',
       payload: {
-        sponsorCode: anchorCode,
+        sponsorCode: emailAnchorCode,
         name: 'DupTest3', phone: uniquePhone(2), email, password: 'Test@12345',
       },
     })
@@ -613,7 +631,7 @@ describe('GET /products/:id — single product detail', () => {
     productId = JSON.parse(createRes.body).id
   })
 
-  it('returns 200 with correct paise math (base + gst = total, floor rounding)', async () => {
+  it('returns 200 with correct paise math (GST is 0 — removed per c62e1be)', async () => {
     const res = await app.inject({ method: 'GET', url: `/products/${productId}` })
     expect(res.statusCode).toBe(200)
     const p = JSON.parse(res.body) as {
@@ -621,8 +639,8 @@ describe('GET /products/:id — single product detail', () => {
     }
     expect(p.id).toBe(productId)
     expect(p.basePricePaise).toBe(123456)
-    expect(p.gstPaise).toBe(22222)      // floor(123456 * 0.18)
-    expect(p.totalPaise).toBe(145678)   // base + gst
+    expect(p.gstPaise).toBe(0)           // GST removed
+    expect(p.totalPaise).toBe(123456)    // total = base (no GST)
     expect(p.basePricePaise + p.gstPaise).toBe(p.totalPaise)
   })
 
@@ -992,8 +1010,8 @@ describe('Products – management-only catalog CRUD', () => {
     const created = products.find((p) => p.id === productId)
     expect(created).toBeTruthy()
     expect(created?.basePricePaise).toBe(123456)
-    expect(created?.gstPaise).toBe(22222)          // floor(123456 * 18%)
-    expect(created?.totalPaise).toBe(145678)
+    expect(created?.gstPaise).toBe(0)              // GST removed (c62e1be)
+    expect(created?.totalPaise).toBe(123456)
     expect(created?.description).toBe('Integration test product')
     expect(created?.images).toEqual([])
 

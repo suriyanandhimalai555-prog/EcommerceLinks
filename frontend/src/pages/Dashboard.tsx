@@ -88,25 +88,25 @@ export default function Dashboard() {
       {/* Row 1: Stat Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
-          label={t('dashboard.totalIncome')}
-          value={formatINR(d.totalIncomePaise)}
-          sub="All time earnings"
-          icon={<Wallet />}
+          label={t('dashboard.lifetimeEarned')}
+          value={formatINR(d.lifetimeEarnedPaise ?? d.totalIncomePaise)}
+          sub={t('dashboard.lifetimeEarnedSub')}
+          icon={<TrendingUp />}
           tint="primary"
-        />
-        <StatCard
-          label={t('dashboard.pairMatchIncome')}
-          value={formatINR(d.pairMatchIncomePaise)}
-          sub={`${d.counters.pairsMatched} pairs matched`}
-          icon={<GitMerge />}
-          tint="success"
         />
         <StatCard
           label={t('dashboard.walletBalance')}
           value={formatINR(d.walletBalancePaise)}
-          sub="Available to withdraw"
+          sub={t('dashboard.walletSub')}
           icon={<Wallet />}
           tint="violet"
+        />
+        <StatCard
+          label={t('dashboard.withdrawable')}
+          value={formatINR(d.withdrawablePaise ?? 0)}
+          sub={t('dashboard.withdrawableSub')}
+          icon={<ArrowUpRight />}
+          tint="success"
         />
         <StatCard
           label={t('dashboard.deferred')}

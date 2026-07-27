@@ -90,9 +90,10 @@ describe('DELETE /admin/products/:id', () => {
 
   it('404 — non-existent product', async () => {
     if (!mgmtToken) return
+    // products.id is SMALLINT (max 32767); use an in-range but non-existent id
     const res = await app.inject({
       method: 'DELETE',
-      url: '/admin/products/999999',
+      url: '/admin/products/32000',
       headers: { authorization: `Bearer ${mgmtToken}` },
     })
     expect(res.statusCode).toBe(404)

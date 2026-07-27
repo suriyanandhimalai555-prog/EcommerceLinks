@@ -6,6 +6,7 @@ import type {
 	DeferredSweepRequested,
 	PairBonusAccrued,
 	PendingBonusReleaseRequested,
+	WithdrawableSweepRequested,
 } from "../events/types.js";
 import { withTxn } from "../lib/db.js";
 import { txnUuid } from "../lib/ids.js";
@@ -65,7 +66,7 @@ export async function postLedgerTxn(
 			[leg.accountId],
 		);
 		const kind = acRows[0]?.kind;
-		if (kind === "wallet" || kind === "deferred_bonus") {
+		if (kind === "wallet" || kind === "deferred_bonus" || kind === "withdrawable") {
 			const signed =
 				leg.direction === "C"
 					? fromPaise(leg.amountPaise)
@@ -377,6 +378,63 @@ export async function sweepDeferred(e: DeferredSweepRequested): Promise<void> {
 	});
 }
 
+// Sweep the snapshotted earnings wallet balance into the withdrawable wallet.
+// The exact amount_paise is carried in the event (captured at cutoff-close time)
+// so this handler is order-independent and safe under XAUTOCLAIM re-delivery.
+export async function sweepToWithdrawable(
+	e: WithdrawableSweepRequested,
+): Promise<void> {
+	await withTxn(async (c) => {
+		const { rows: done } = await c.query(
+			"SELECT 1 FROM processed_events WHERE consumer_group=$1 AND event_id=$2",
+			[GROUP, e.event_id],
+		);
+		if (done.length > 0) return;
+
+		const memberId = BigInt(e.member_id);
+		const moveAmt = BigInt(e.amount_paise);
+
+		if (moveAmt === 0n) {
+			await c.query(
+				"INSERT INTO processed_events (consumer_group, event_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
+				[GROUP, e.event_id],
+			);
+			return;
+		}
+
+		const { rows: accs } = await c.query<{ id: string; kind: string }>(
+			`SELECT id, kind FROM accounts WHERE owner_id=$1 AND kind IN ('wallet','withdrawable')`,
+			[memberId],
+		);
+		const walletAccId = BigInt(accs.find((a) => a.kind === "wallet")!.id);
+		const withdrawableAccId = BigInt(
+			accs.find((a) => a.kind === "withdrawable")!.id,
+		);
+
+		// Idempotency key uses a distinct prefix (wsweep:) to avoid collision
+		// with the deferred sweep which uses (sweep:).
+		await postLedgerTxn(
+			c,
+			`wsweep:${e.closed_cutoff_id}:${memberId}`,
+			"wsweep",
+			null,
+			[
+				{ accountId: walletAccId, direction: "D", amountPaise: moveAmt },
+				{
+					accountId: withdrawableAccId,
+					direction: "C",
+					amountPaise: moveAmt,
+				},
+			],
+		);
+
+		await c.query(
+			"INSERT INTO processed_events (consumer_group, event_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
+			[GROUP, e.event_id],
+		);
+	});
+}
+
 export async function run() {
 	await startConsumer({
 		stream: TOPICS.ledger.name,
@@ -388,6 +446,8 @@ export async function run() {
 			if (e.event_type === "PendingBonusReleaseRequested")
 				await releasePendingBonuses(e);
 			if (e.event_type === "DeferredSweepRequested") await sweepDeferred(e);
+			if (e.event_type === "WithdrawableSweepRequested")
+				await sweepToWithdrawable(e);
 		},
 	});
 }

@@ -17,7 +17,7 @@ export default function Support() {
   const { register, handleSubmit, reset } = useForm()
 
   const onSubmit = (data: any) => {
-    window.location.href = `mailto:support@avilavetrigroups.com?subject=Support: ${data.subject}&body=${data.message}`
+    window.location.href = `mailto:support@agilavetriglobal.com?subject=Support: ${data.subject}&body=${data.message}`
     reset()
   }
 

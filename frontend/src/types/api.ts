@@ -165,19 +165,23 @@ export interface DashboardRank {
 }
 
 export interface DashboardTransaction {
-  type: 'pair_bonus' | 'payout' | 'purchase' | 'sweep'
+  type: 'pair_bonus' | 'payout' | 'purchase' | 'sweep' | 'withdrawal'
   amountPaise: number
   direction: 'credit' | 'debit'
   at: string
 }
 
 export interface Dashboard {
+  /** Sum of all pair bonuses ever released — the all-time earned total. */
+  lifetimeEarnedPaise: number
   totalIncomePaise: number
   pairMatchIncomePaise: number
   /** Accrued pair bonuses held until the member qualifies (3-gen gate). */
   pendingBonusPaise: number
   walletBalancePaise: number
   deferredBalancePaise: number
+  /** Balance in the withdrawable wallet (swept from earnings at each cutoff). */
+  withdrawablePaise: number
   counters: DashboardCounters
   /** Display-only leg imbalance; income no longer depends on leg balance. */
   carryForward: { side: 'L' | 'R'; excess: number }
@@ -262,6 +266,8 @@ export interface PairsRes {
 export interface Wallet {
   balancePaise: number
   deferredPaise: number
+  /** Balance in the withdrawable wallet. Swept from earnings at each weekly cutoff. */
+  withdrawablePaise: number
   currentWindow: {
     start: string
     end: string
@@ -275,7 +281,7 @@ export interface LedgerEntry {
   description: string
   direction: 'credit' | 'debit'
   amountPaise: number
-  refType: 'pair' | 'payout' | 'sweep' | 'manual'
+  refType: 'pair' | 'payout' | 'sweep' | 'wsweep' | 'withdrawal' | 'manual'
 }
 
 export interface LedgerRes {
@@ -295,8 +301,35 @@ export interface Payout {
 export interface Withdrawal {
   id: string
   amountPaise: number
-  status: 'pending' | 'processing' | 'done' | 'failed'
+  tdsPaise: number | null
+  netPaise: number | null
+  status: 'requested' | 'approved' | 'rejected' | 'paid'
   requestedAt: string
+  processedAt: string | null
+}
+
+export interface WithdrawalsRes {
+  items: Withdrawal[]
+}
+
+export interface AdminWithdrawal {
+  id: string
+  memberCode: string
+  memberName: string
+  amountPaise: number
+  tdsPaise: number | null
+  netPaise: number | null
+  status: 'requested' | 'approved' | 'rejected' | 'paid'
+  requestedAt: string
+  processedAt: string | null
+  notes: string | null
+}
+
+export interface AdminWithdrawalsPage {
+  items: AdminWithdrawal[]
+  total: number
+  page: number
+  limit: number
 }
 
 // ---- ranks ----

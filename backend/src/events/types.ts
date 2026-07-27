@@ -71,6 +71,18 @@ export interface DeferredSweepRequested extends Envelope {
 	new_cutoff_id: number;
 }
 
+// Sweep the snapshotted earnings wallet balance into the withdrawable wallet.
+// amount_paise is captured inside the cutoff-close transaction so the handler
+// moves exactly that amount regardless of delivery order or re-delivery.
+export interface WithdrawableSweepRequested extends Envelope {
+	event_type: "WithdrawableSweepRequested";
+	member_id: number;
+	/** Cutoff that just closed — used as part of the idempotency key. */
+	closed_cutoff_id: number;
+	/** Exact wallet balance at cutoff-close time to move into withdrawable. */
+	amount_paise: number;
+}
+
 export interface RankEvalRequested extends Envelope {
 	event_type: "RankEvalRequested";
 	member_id: number;
@@ -122,6 +134,7 @@ export type AvgEvent =
 	| PairBonusAccrued
 	| PendingBonusReleaseRequested
 	| DeferredSweepRequested
+	| WithdrawableSweepRequested
 	| RankEvalRequested
 	| RankAchieved
 	| CutoffClosed

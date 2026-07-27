@@ -1,6 +1,5 @@
-import { useQuery, useMutation } from '@tanstack/react-query'
-import { Users, UserCheck, ShieldOff, FileSearch, Trophy, GitMerge, Inbox, AlertTriangle, Zap, Loader2 } from 'lucide-react'
-import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { Users, UserCheck, ShieldOff, FileSearch, Trophy, GitMerge, Inbox, AlertTriangle } from 'lucide-react'
 import api from '../../lib/api'
 import { formatINR, formatDate } from '../../lib/format'
 import { StatCard } from '../../components/ui/StatCard'
@@ -8,19 +7,9 @@ import { SkeletonCard } from '../../components/ui/Skeleton'
 import type { AdminOverview } from '../../types/api'
 
 export function OverviewTab() {
-  const [payoutMsg, setPayoutMsg] = useState<string | null>(null)
-  const { data: ov, isPending, refetch } = useQuery<AdminOverview>({
+  const { data: ov, isPending } = useQuery<AdminOverview>({
     queryKey: ['admin-overview'],
     queryFn: () => api.get('/admin/overview').then((r) => r.data),
-  })
-
-  const triggerPayout = useMutation({
-    mutationFn: () => api.post('/admin/payouts/trigger'),
-    onSuccess: (res) => { setPayoutMsg(`Payout batch triggered — batch ID ${res.data.batchId}`); refetch() },
-    onError: (err: unknown) => {
-      const e = err as { response?: { data?: { error?: string } } }
-      setPayoutMsg(e.response?.data?.error ?? 'Failed to trigger payout')
-    },
   })
 
   if (isPending || !ov) return <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">{[1, 2, 3, 4].map((i) => <SkeletonCard key={i} />)}</div>
@@ -47,18 +36,6 @@ export function OverviewTab() {
         ) : (
           <p className="text-sm text-warning">No open cutoff window — the ledger worker cannot credit pairs.</p>
         )}
-        <div className="border-t border-surface-line pt-3 space-y-2">
-          <p className="text-sm text-ink-muted">Manually trigger today's payout batch (idempotent — safe to run twice).</p>
-          {payoutMsg && <p className="text-sm text-success">{payoutMsg}</p>}
-          <button
-            onClick={() => { setPayoutMsg(null); triggerPayout.mutate() }}
-            disabled={triggerPayout.isPending}
-            className="avg-btn-primary"
-          >
-            {triggerPayout.isPending ? <Loader2 size={15} className="animate-spin" /> : <Zap size={15} />}
-            Trigger Payout Now
-          </button>
-        </div>
       </div>
     </div>
   )
