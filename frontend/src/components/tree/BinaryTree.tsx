@@ -16,8 +16,9 @@ function initials(name: string) {
   return name.split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 2)
 }
 
-function referralUrl(memberCode: string) {
-  return `${window.location.origin}/register?sponsor=${memberCode}`
+function referralUrl(memberCode: string, leg?: 'L' | 'R') {
+  const base = `${window.location.origin}/register?sponsor=${memberCode}`
+  return leg ? `${base}&leg=${leg}` : base
 }
 
 interface NodeCardProps {
@@ -34,8 +35,8 @@ function NodeCard({ ln, onClick, wasDragged }: NodeCardProps) {
   const [copied, setCopied] = useState(false)
   const copyTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
 
-  const copyReferral = (code: string) => {
-    navigator.clipboard.writeText(referralUrl(code))
+  const copyReferral = (code: string, leg?: 'L' | 'R') => {
+    navigator.clipboard.writeText(referralUrl(code, leg))
     setCopied(true)
     clearTimeout(copyTimer.current)
     copyTimer.current = setTimeout(() => setCopied(false), 1500)
@@ -43,11 +44,12 @@ function NodeCard({ ln, onClick, wasDragged }: NodeCardProps) {
 
   if (isVacant) {
     // Tapping a vacant slot copies the referral link of the member ABOVE it,
-    // so the new recruit registers directly into this slot.
+    // pinned to THIS slot's side (node.position), so the new recruit registers
+    // directly into this exact slot rather than auto-filling L-then-R.
     const handleVacantClick = (e: React.MouseEvent) => {
       e.stopPropagation()
       if (wasDragged() || !parentCode) return
-      copyReferral(parentCode)
+      copyReferral(parentCode, node.position ?? undefined)
     }
     return (
       <g

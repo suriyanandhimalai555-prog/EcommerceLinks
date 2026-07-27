@@ -11,6 +11,7 @@ import {
 	welcomeEmailTemplate,
 	otpEmailTemplate,
 	passwordResetEmailTemplate,
+	registerOtpEmailTemplate,
 } from "../services/mailer.js";
 import {
 	checkAndIncrOtpGenLimit,
@@ -25,6 +26,15 @@ const RegisterBody = z.object({
 	phone: z.string().min(10),
 	email: z.string().email(),
 	password: z.string().min(8),
+	// Optional requested placement side, sent when the recruit registers via a
+	// leg-specific referral link (tapped vacant slot). Omitted → auto L-then-R.
+	leg: z.enum(["L", "R"]).optional(),
+});
+
+// Full registration payload + OTP code — sent to verify-otp to create the account.
+// Keeps the same fields as RegisterBody so the frontend can re-send unchanged.
+const RegisterVerifyBody = RegisterBody.extend({
+	otp: z.string().length(6),
 });
 
 const LoginBody = z.object({
@@ -158,18 +168,70 @@ export async function authRoutes(app: FastifyInstance) {
 			if (!body.success)
 				return reply.status(400).send({ error: body.error.flatten() });
 
-			// Management-sponsor rejection (409) is enforced inside registerMember,
-			// so every caller of the service shares the guard.
+			const registerOtpEnabled = await getSetting<boolean>("register_otp_enabled");
+
+			if (registerOtpEnabled) {
+				// OTP-gated path: validate the email, issue an OTP, do NOT create
+				// the account. The account is created in POST /register/verify-otp
+				// after the member enters the correct code.
+				//
+				// Email normalization must be byte-identical here and in verify-otp
+				// so that a mixed-case/whitespace email always matches its code key.
+				const normEmail = body.data.email.trim().toLowerCase();
+
+				// Light pre-checks for fast UX feedback. registerMember remains
+				// authoritative at verify-otp — these never replace its guards.
+				const { rows: sponsorRows } = await pool().query<{
+					id: string;
+					role: string;
+				}>(
+					"SELECT id, role FROM members WHERE member_code = $1",
+					[body.data.sponsorCode],
+				);
+				if (!sponsorRows[0])
+					return reply.status(404).send({ error: "Sponsor not found" });
+				if (sponsorRows[0].role === "management")
+					return reply.status(409).send({ error: "This code cannot be used as a sponsor" });
+
+				const { rows: emailRows } = await pool().query<{ id: string }>(
+					"SELECT id FROM members WHERE lower(email) = $1",
+					[normEmail],
+				);
+				if (emailRows[0])
+					return reply.status(409).send({ error: "Email address already registered" });
+
+				// Generation rate-limit (5 codes per 15 minutes per email address).
+				const allowed = await checkAndIncrOtpGenLimit(normEmail, "register");
+				if (!allowed)
+					return reply.status(429).send({
+						error: "Too many code requests. Try again in 15 minutes.",
+					});
+
+				const code = await generateAndStoreOtp(normEmail, "register");
+				// Best-effort send — losing the email never blocks the response.
+				sendMail(
+					registerOtpEmailTemplate({
+						name: body.data.name,
+						email: normEmail,
+						code,
+					}),
+				).catch((err) =>
+					console.error("[register] verification email error:", err),
+				);
+
+				return reply.send({ otpRequired: true });
+			}
+
+			// OTP off — original immediate-create path (keeps simulate.ts and
+			// all integration tests green).
 			try {
 				const { memberId, memberCode } = await registerMember(body.data);
 
-				// Welcome email follows the signup flow: with OTP login on, signup
-				// completes at the first OTP verify (the frontend's auto-login sends
-				// the OTP email now), so the welcome email waits until then. With
-				// OTP off it goes out right here. Best-effort — never blocks the 201.
+				// Welcome email: with login OTP on, signup completes at first OTP verify.
+				// With both flags off it goes out right here. Best-effort.
 				(async () => {
-					const otpEnabled = await getSetting<boolean>("login_otp_enabled");
-					if (!otpEnabled) await sendWelcomeIfPending(String(memberId));
+					const loginOtpEnabled = await getSetting<boolean>("login_otp_enabled");
+					if (!loginOtpEnabled) await sendWelcomeIfPending(String(memberId));
 				})().catch((err) =>
 					console.error("[register] welcome email error:", err),
 				);
@@ -177,6 +239,84 @@ export async function authRoutes(app: FastifyInstance) {
 				return reply
 					.status(201)
 					.send({ memberId: String(memberId), memberCode });
+			} catch (err: unknown) {
+				const e = err as { statusCode?: number; message?: string };
+				if (e.statusCode === 404)
+					return reply.status(404).send({ error: e.message });
+				if (e.statusCode === 409)
+					return reply.status(409).send({ error: e.message });
+				throw err;
+			}
+		},
+	);
+
+	// Verify the email OTP issued by POST /register, then create the account
+	// and return a full session. The full signup payload is re-sent here so
+	// no pending-signup state needs to be stored in Redis.
+	app.post(
+		"/register/verify-otp",
+		{
+			config: {
+				rateLimit: {
+					max: 10,
+					timeWindow: "1 minute",
+				},
+			},
+		},
+		async (req, reply) => {
+			// Guard: reject stale codes after the feature is turned off — mirrors
+			// POST /login/verify-otp which checks login_otp_enabled the same way.
+			const registerOtpEnabled = await getSetting<boolean>("register_otp_enabled");
+			if (!registerOtpEnabled)
+				return reply.status(404).send({ error: "OTP registration is not enabled" });
+
+			const body = RegisterVerifyBody.safeParse(req.body);
+			if (!body.success)
+				return reply.status(400).send({ error: body.error.flatten() });
+
+			// Byte-identical normalisation to the one in POST /register.
+			const normEmail = body.data.email.trim().toLowerCase();
+
+			// Verify the OTP (keyed by normalised email, scope "register").
+			const result = await verifyOtp(normEmail, body.data.otp, "register");
+			if (!result.ok) {
+				if (result.reason === "locked") {
+					return reply.status(429).send({
+						error: "Too many failed attempts. Please request a new code.",
+					});
+				}
+				if (result.reason === "expired") {
+					return reply.status(401).send({
+						error: "Code has expired. Please request a new one.",
+					});
+				}
+				return reply.status(401).send({ error: "Invalid code." });
+			}
+
+			// OTP is valid — create the account now. Propagate registerMember
+			// errors (404 sponsor gone, 409 dup email/leg conflict) with their
+			// real statuses so the frontend can surface them distinctly from OTP
+			// failures (which are 401/429 above).
+			try {
+				const { memberId, memberCode } = await registerMember(body.data);
+
+				// Send welcome email immediately (the OTP already verified the email
+				// address, so there is no deferred-to-login-verify scenario here).
+				sendWelcomeIfPending(String(memberId)).catch((err) =>
+					console.error("[register/verify-otp] welcome email error:", err),
+				);
+
+				const me = await buildMe(String(memberId));
+				if (!me)
+					return reply.status(500).send({ error: "Failed to build session" });
+
+				// Inline member shape for issueSession (memberCode is freshly minted).
+				const memberForSession = {
+					id: String(memberId),
+					member_code: memberCode,
+					name: body.data.name,
+				};
+				return reply.status(201).send(await issueSession(memberForSession, me));
 			} catch (err: unknown) {
 				const e = err as { statusCode?: number; message?: string };
 				if (e.statusCode === 404)

@@ -761,6 +761,65 @@ describe('CAP – each member can refer at most 2 people, placed L then R', () =
   })
 })
 
+// ─── LEG: leg-specific referral links pin the placement side ──────────────────
+
+describe('LEG – leg-specific referral link pins direct placement side', () => {
+  it('leg=R places the recruit on R even when L is free (no auto-L)', async () => {
+    const anchor = await registerAnchor('LegRAnchor')
+
+    const res = await app.inject({
+      method: 'POST', url: '/auth/register',
+      payload: { sponsorCode: anchor.memberCode, name: 'LegRKid', phone: uniquePhone(60), email: uniqueEmail('legrkid'), password: 'Test@12345', leg: 'R' },
+    })
+    expect(res.statusCode).toBe(201)
+
+    const kidId = JSON.parse(res.body).memberId
+    const { rows } = await pool().query<{ position: string; parent_id: string }>(
+      'SELECT position, parent_id FROM members WHERE id = $1', [kidId]
+    )
+    expect(rows[0].position).toBe('R')
+    expect(rows[0].parent_id).toBe(String(anchor.memberId))
+
+    // L slot is still open under the anchor — nothing landed there.
+    const { rows: lrows } = await pool().query(
+      "SELECT 1 FROM members WHERE parent_id = $1 AND position = 'L'", [anchor.memberId]
+    )
+    expect(lrows.length).toBe(0)
+  })
+
+  it('leg=L when L is already filled returns 409 (no silent fallback to R)', async () => {
+    const anchor = await registerAnchor('LegTakenAnchor')
+
+    const first = await app.inject({
+      method: 'POST', url: '/auth/register',
+      payload: { sponsorCode: anchor.memberCode, name: 'LegTaken0', phone: uniquePhone(61), email: uniqueEmail('legtaken0'), password: 'Test@12345', leg: 'L' },
+    })
+    expect(first.statusCode).toBe(201)
+
+    const second = await app.inject({
+      method: 'POST', url: '/auth/register',
+      payload: { sponsorCode: anchor.memberCode, name: 'LegTaken1', phone: uniquePhone(62), email: uniqueEmail('legtaken1'), password: 'Test@12345', leg: 'L' },
+    })
+    expect(second.statusCode).toBe(409)
+    expect(JSON.parse(second.body).error).toMatch(/left position already filled/i)
+
+    // R must remain untouched — the 409 did NOT fall back to the other leg.
+    const { rows } = await pool().query(
+      "SELECT 1 FROM members WHERE parent_id = $1 AND position = 'R'", [anchor.memberId]
+    )
+    expect(rows.length).toBe(0)
+  })
+
+  it('an invalid leg value is rejected by request validation (400)', async () => {
+    const anchor = await registerAnchor('LegBadAnchor')
+    const res = await app.inject({
+      method: 'POST', url: '/auth/register',
+      payload: { sponsorCode: anchor.memberCode, name: 'LegBad', phone: uniquePhone(63), email: uniqueEmail('legbad'), password: 'Test@12345', leg: 'X' },
+    })
+    expect(res.statusCode).toBe(400)
+  })
+})
+
 // ─── Management accounts are off-tree: nothing may register under them ───────
 
 describe('Management sponsor guard (placement.ts)', () => {

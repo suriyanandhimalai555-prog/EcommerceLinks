@@ -35,6 +35,13 @@ export interface SystemSettings {
   welcomeEmailEnabled: boolean
   /** When true, every login requires a 6-digit OTP sent to the member's email. */
   loginOtpEnabled: boolean
+  /** When true, registration requires email-OTP verification before the account is created. */
+  registerOtpEnabled: boolean
+}
+
+/** Returned by POST /auth/register or POST /auth/login when OTP is required. */
+export interface OtpChallenge {
+  otpRequired: true
 }
 
 export interface RegisterReq {
@@ -43,7 +50,12 @@ export interface RegisterReq {
   phone: string
   email: string
   password: string
+  /** Optional placement side from a leg-specific referral link; omit for auto L-then-R. */
+  leg?: 'L' | 'R'
 }
+
+/** Sent to POST /auth/register/verify-otp — full signup payload + OTP code. */
+export type RegisterVerifyReq = RegisterReq & { otp: string }
 
 export interface LoginReq {
   email: string
@@ -373,6 +385,21 @@ export interface PendingRank {
   verification_status: 'pending' | 'approved' | 'rejected'
   fulfilled_at: string | null
   fulfillment_notes: string | null
+}
+
+export interface RanksPage {
+  ranks: PendingRank[]
+  total: number
+  page: number
+  limit: number
+}
+
+export interface RankSummaryRow {
+  rank_level: number
+  pending: number
+  approved: number
+  received: number
+  rejected: number
 }
 
 export interface AdminPayoutBatch {

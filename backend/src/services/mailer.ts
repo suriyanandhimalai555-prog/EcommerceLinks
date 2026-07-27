@@ -303,6 +303,94 @@ Agila Vetri Groups
 	return { to: p.email, subject, html, text };
 }
 
+export interface RegisterOtpEmailParams {
+	name: string;
+	email: string;
+	code: string;
+}
+
+export function registerOtpEmailTemplate(
+	p: RegisterOtpEmailParams,
+): MailOptions {
+	const subject = `${p.code} is your Agila Vetri Groups email verification code`;
+
+	const text = `
+Dear ${p.name},
+
+To complete your registration with Agila Vetri Groups, please verify your email address.
+
+Your verification code is: ${p.code}
+
+This code is valid for 10 minutes. Do not share it with anyone.
+
+If you did not request this, please ignore this email.
+
+Best Regards,
+Agila Vetri Groups
+`.trim();
+
+	const html = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>${subject}</title>
+</head>
+<body style="margin:0;padding:0;background:#0E1526;font-family:'Segoe UI',Arial,sans-serif;color:#e2e8f0;">
+  <!-- Preheader -->
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0;">Your email verification code is ${p.code} — valid for 10 minutes.</div>
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#0E1526;padding:32px 0;">
+    <tr>
+      <td align="center">
+        <table width="520" cellpadding="0" cellspacing="0" style="background:#131B33;border-radius:16px;overflow:hidden;max-width:520px;width:100%;">
+
+          <!-- Header -->
+          <tr>
+            <td style="background:linear-gradient(135deg,#1e3a8a,#1e40af);padding:36px 40px;text-align:center;">
+              <h1 style="margin:0;font-size:20px;font-weight:800;color:#ffffff;">✉️ Verify Your Email</h1>
+              <p style="margin:8px 0 0;font-size:13px;color:#93c5fd;">Agila Vetri Groups — Confirm your email to finish signing up</p>
+            </td>
+          </tr>
+
+          <!-- Body -->
+          <tr>
+            <td style="padding:36px 40px;text-align:center;">
+              <p style="margin:0 0 8px;font-size:15px;color:#cbd5e1;">Dear <strong style="color:#f1f5f9;">${p.name}</strong>,</p>
+              <p style="margin:0 0 28px;font-size:14px;color:#94a3b8;">Enter the code below to verify your email and complete registration.</p>
+
+              <!-- OTP Box -->
+              <div style="background:#0E1526;border:2px solid #1e40af;border-radius:12px;padding:28px 20px;margin-bottom:28px;display:inline-block;width:100%;box-sizing:border-box;">
+                <p style="margin:0 0 8px;font-size:12px;color:#64748b;text-transform:uppercase;letter-spacing:2px;">Email Verification Code</p>
+                <p style="margin:0;font-size:44px;font-weight:900;letter-spacing:12px;color:#60a5fa;font-family:monospace;">${p.code}</p>
+                <p style="margin:12px 0 0;font-size:12px;color:#ef4444;">Valid for 10 minutes only</p>
+              </div>
+
+              <p style="margin:0;font-size:13px;color:#475569;line-height:1.6;">
+                If you did not attempt to register, you can safely ignore this email.
+                For assistance, contact <a href="mailto:support@agilavetriglobal.com" style="color:#60a5fa;">support@agilavetriglobal.com</a>.
+              </p>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="background:#0a0f1e;padding:20px 40px;text-align:center;border-top:1px solid #1e293b;">
+              <p style="margin:0;font-size:12px;color:#475569;">Agila Vetri Groups · 📧 support@agilavetriglobal.com</p>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+`.trim();
+
+	return { to: p.email, subject, html, text };
+}
+
 export interface OtpEmailParams {
 	name: string;
 	email: string;

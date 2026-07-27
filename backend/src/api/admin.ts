@@ -1674,6 +1674,7 @@ export async function adminRoutes(app: FastifyInstance) {
 			kycOptional: Boolean(raw["kyc_optional"]),
 			welcomeEmailEnabled: Boolean(raw["welcome_email_enabled"]),
 			loginOtpEnabled: Boolean(raw["login_otp_enabled"]),
+			registerOtpEnabled: Boolean(raw["register_otp_enabled"]),
 		};
 	});
 
@@ -1683,6 +1684,7 @@ export async function adminRoutes(app: FastifyInstance) {
 		kycOptional: z.boolean().optional(),
 		welcomeEmailEnabled: z.boolean().optional(),
 		loginOtpEnabled: z.boolean().optional(),
+		registerOtpEnabled: z.boolean().optional(),
 	});
 
 	app.patch("/settings", auth, async (req, reply) => {
@@ -1702,6 +1704,8 @@ export async function adminRoutes(app: FastifyInstance) {
 			patches.push({ dbKey: "welcome_email_enabled", value: body.data.welcomeEmailEnabled });
 		if (body.data.loginOtpEnabled !== undefined)
 			patches.push({ dbKey: "login_otp_enabled", value: body.data.loginOtpEnabled });
+		if (body.data.registerOtpEnabled !== undefined)
+			patches.push({ dbKey: "register_otp_enabled", value: body.data.registerOtpEnabled });
 
 		if (patches.length === 0)
 			return reply.status(400).send({ error: "No settings fields provided" });
@@ -1737,6 +1741,7 @@ export async function adminRoutes(app: FastifyInstance) {
 			kycOptional: snapshot["kyc_optional"] ?? false,
 			welcomeEmailEnabled: snapshot["welcome_email_enabled"] ?? false,
 			loginOtpEnabled: snapshot["login_otp_enabled"] ?? false,
+			registerOtpEnabled: snapshot["register_otp_enabled"] ?? false,
 		};
 	});
 

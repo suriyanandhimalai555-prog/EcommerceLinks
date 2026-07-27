@@ -1,12 +1,15 @@
 /**
- * OtpStep — reusable OTP entry step for the two-step login flow.
+ * OtpStep — reusable OTP entry step.
+ *
+ * Used in two modes:
+ *  - Login mode (default): verifies at POST /auth/login/verify-otp with { email, otp }.
+ *  - Register mode: verifies at POST /auth/register/verify-otp with the full
+ *    signup payload merged from extraPayload + { email, otp }. On success creates
+ *    the account and returns a full session (auto-login).
  *
  * Shown after the backend returns { otpRequired: true }.
- * Calls POST /auth/login/verify-otp with the user's email + the entered code.
- * On success it stores tokens and calls onSuccess({ accessToken, refreshToken, member }).
- * On "resend", calls onResend() which re-submits the credentials to /auth/login
- * (the only way to generate a new code — no dedicated resend endpoint).
- * On "back", calls onBack() so the parent can re-show the password form.
+ * On "resend", calls onResend() to generate a new code.
+ * On "back", calls onBack() so the parent can re-show the previous form.
  */
 
 import { useEffect, useRef, useState } from 'react'
@@ -27,9 +30,19 @@ export interface SessionPayload {
 interface Props {
   email: string
   onSuccess: (session: SessionPayload) => void
-  /** Re-submits the stored credentials to /auth/login to generate a new code. */
+  /** Re-submits the stored credentials/payload to generate a new code. */
   onResend: () => Promise<void>
   onBack: () => void
+  /**
+   * Verify endpoint. Default: '/auth/login/verify-otp'.
+   * For registration: '/auth/register/verify-otp'.
+   */
+  verifyUrl?: string
+  /**
+   * Extra fields merged into the verify POST body alongside { email, otp }.
+   * Used in register mode to re-send the full signup payload.
+   */
+  extraPayload?: Record<string, unknown>
 }
 
 /** Format seconds as M:SS */
@@ -42,7 +55,7 @@ function mmss(s: number): string {
 const OTP_TTL = 600   // mirrors backend OTP_TTL_SECONDS
 const RESEND_WAIT = 60 // 1 minute cooldown before resend is allowed
 
-export function OtpStep({ email, onSuccess, onResend, onBack }: Props) {
+export function OtpStep({ email, onSuccess, onResend, onBack, verifyUrl = '/auth/login/verify-otp', extraPayload }: Props) {
   const { t } = useTranslation()
   const [otp, setOtp] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -77,11 +90,12 @@ export function OtpStep({ email, onSuccess, onResend, onBack }: Props) {
     setError(null)
     setInfo(null)
     try {
-      const res = await api.post('/auth/login/verify-otp', { email, otp })
+      const res = await api.post(verifyUrl, { ...extraPayload, email, otp })
       onSuccess(res.data as SessionPayload)
     } catch (err) {
       const status = isAxiosError(err) ? err.response?.status : undefined
       if (status === 401) {
+        // OTP-specific 401s — distinguish "expired" from "invalid code".
         const reason = isAxiosError(err) ? (err.response?.data?.error as string | undefined) : undefined
         if (reason?.toLowerCase().includes('expired')) {
           setError(t('auth.otpExpired'))
@@ -91,6 +105,8 @@ export function OtpStep({ email, onSuccess, onResend, onBack }: Props) {
       } else if (status === 429) {
         setError(t('auth.otpLocked'))
       } else {
+        // 404/409 from registerMember (sponsor gone, duplicate email, leg conflict)
+        // or any other non-OTP error — surface the server message directly.
         setError(apiErrorMessage(err, t, t('errors.generic')))
       }
       setSubmitting(false)

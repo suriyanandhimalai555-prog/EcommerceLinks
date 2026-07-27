@@ -21,7 +21,7 @@ const MAX_ATTEMPTS = 5;             // wrong guesses before lockout
 const OTP_GEN_LIMIT = 5;           // max new codes per member per window
 const OTP_GEN_WINDOW_SECONDS = 900; // 15-minute generation window
 
-export type OtpScope = "login" | "reset";
+export type OtpScope = "login" | "reset" | "register";
 
 function otpKey(memberId: string | number, scope: OtpScope): string {
 	return `${scope}_otp:${memberId}`;

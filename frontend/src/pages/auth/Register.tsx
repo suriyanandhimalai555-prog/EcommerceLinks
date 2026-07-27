@@ -34,8 +34,19 @@ export default function Register() {
   const queryClient = useQueryClient()
   const [searchParams] = useSearchParams()
   const [showPw, setShowPw] = useState(false)
+  // Login-OTP mode: after account creation, auto-login returned { otpRequired: true }.
   const [otpCreds, setOtpCreds] = useState<{ email: string; password: string } | null>(null)
+  // Register-OTP mode: POST /auth/register itself returned { otpRequired: true }.
+  // We hold the full form payload so OtpStep can re-send it at verify time.
+  const [registerOtpPayload, setRegisterOtpPayload] = useState<{
+    sponsorCode: string; name: string; phone: string
+    email: string; password: string; leg?: 'L' | 'R'
+  } | null>(null)
   const sponsorParam = searchParams.get('sponsor') || ''
+  // Optional placement side from a leg-specific referral link (tapped vacant
+  // slot). Only 'L'/'R' are honored; anything else falls back to auto-fill.
+  const legRaw = searchParams.get('leg')
+  const legParam: 'L' | 'R' | undefined = legRaw === 'L' || legRaw === 'R' ? legRaw : undefined
 
   const { register, handleSubmit, formState: { errors, isSubmitting }, setError } = useForm<FormData>({
     resolver: zodResolver(schema),
@@ -54,18 +65,28 @@ export default function Register() {
   }
 
   const onSubmit = async (data: FormData) => {
+    const payload = {
+      sponsorCode: data.sponsorCode,
+      name: data.name,
+      phone: data.phone,
+      email: data.email,
+      password: data.password,
+      ...(legParam ? { leg: legParam } : {}),
+    }
     try {
-      await api.post('/auth/register', {
-        sponsorCode: data.sponsorCode,
-        name: data.name,
-        phone: data.phone,
-        email: data.email,
-        password: data.password,
-      })
-      // Auto-login after signup.
+      const regRes = await api.post('/auth/register', payload)
+
+      if (regRes.data.otpRequired) {
+        // Register-OTP is enabled — the account has NOT been created yet.
+        // Show OtpStep in register mode: verify-otp will create the account.
+        setRegisterOtpPayload(payload)
+        return
+      }
+
+      // Account created immediately — auto-login.
       const loginRes = await api.post('/auth/login', { email: data.email, password: data.password })
       if (loginRes.data.otpRequired) {
-        // OTP is enabled — show the verify step, keeping creds for resend.
+        // Login-OTP is enabled — show OtpStep in login mode.
         setOtpCreds({ email: data.email, password: data.password })
         return
       }
@@ -100,7 +121,33 @@ export default function Register() {
     )
   }
 
-  // OTP step — shown after successful registration + auto-login when OTP is enabled.
+  // Register-OTP step — shown when POST /auth/register returned { otpRequired: true }.
+  // The account hasn't been created yet; verifying the code creates it and auto-signs in.
+  if (registerOtpPayload) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-[#0E1526] via-surface-page to-[#131B33] flex items-center justify-center p-4">
+        <div className="w-full max-w-md">
+          <div className="text-center mb-6">
+            <img src="/AVGLOGO.jpeg" alt="AVG Logo" className="w-14 h-14 rounded-2xl object-cover mx-auto mb-3 shadow-glow" />
+            <h1 className="text-2xl font-bold text-ink">Agila Vetri Groups</h1>
+          </div>
+          <div className="avg-card p-8">
+            <h2 className="text-xl font-bold text-ink mb-6">{t('auth.verifyEmailTitle')}</h2>
+            <OtpStep
+              email={registerOtpPayload.email}
+              verifyUrl="/auth/register/verify-otp"
+              extraPayload={registerOtpPayload}
+              onSuccess={handleSession}
+              onResend={() => api.post('/auth/register', registerOtpPayload).then(() => {})}
+              onBack={() => setRegisterOtpPayload(null)}
+            />
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Login-OTP step — shown after successful registration + auto-login when login OTP is enabled.
   if (otpCreds) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-[#0E1526] via-surface-page to-[#131B33] flex items-center justify-center p-4">

@@ -50,7 +50,10 @@
     "otpToggleLabel": "Require OTP on every login",
     "otpToggleHint": "When ON, members must enter a 6-digit code sent to their email after entering their password.",
     "otpStatusOn": "OTP login enabled",
-    "otpStatusOff": "OTP login disabled"
+    "otpStatusOff": "OTP login disabled",
+    "registerOtpSection": "Registration Email Verification",
+    "registerOtpToggleLabel": "Verify email before creating account",
+    "registerOtpToggleHint": "When ON, a 6-digit code is sent to the email entered during sign-up. The account is only created after the code is verified."
   },
   "counters": {
     "active": "Active",
@@ -100,6 +103,7 @@
     "termsAccept": "I agree to the Terms & Conditions",
     "invalidCredentials": "Invalid email or password",
     "registrationFailed": "Registration failed. Please try again.",
+    "verifyEmailTitle": "Verify Your Email",
     "otpSentNotice": "A 6-digit code has been sent to your email. Enter it below to continue.",
     "otpLabel": "Verification Code",
     "otpPlaceholder": "6-digit code",

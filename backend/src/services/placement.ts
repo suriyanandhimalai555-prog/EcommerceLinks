@@ -6,11 +6,15 @@ import { pool, withTxn } from "../lib/db.js";
 import { claimNextMemberCode } from "../lib/ids.js";
 
 // Each member may refer at most 2 people; a new registrant is always placed
-// directly under their sponsor — first referral fills L, second fills R.
+// directly under their sponsor. Without a requested leg, the slot auto-fills —
+// first referral fills L, second fills R. With a requested leg (from tapping a
+// specific vacant slot in the tree), that exact slot is used, or 409 if it is
+// already taken (we never silently drop the recruit onto the other leg).
 // The sponsor row lock (FOR UPDATE) serializes concurrent registrations under
 // the same sponsor so two of them cannot both claim the last open slot.
-async function nextChildPosition(
+async function resolvePosition(
 	sponsorId: bigint,
+	preferredLeg: "L" | "R" | undefined,
 	c: pg.PoolClient,
 ): Promise<"L" | "R"> {
 	const { rows } = await c.query<{ position: "L" | "R" }>(
@@ -25,6 +29,17 @@ async function nextChildPosition(
 		e.statusCode = 409;
 		throw e;
 	}
+	if (preferredLeg) {
+		if (taken.includes(preferredLeg)) {
+			const side = preferredLeg === "L" ? "Left" : "Right";
+			const e = new Error(`${side} position already filled`) as Error & {
+				statusCode: number;
+			};
+			e.statusCode = 409;
+			throw e;
+		}
+		return preferredLeg;
+	}
 	return taken.includes("L") ? "R" : "L";
 }
 
@@ -34,6 +49,10 @@ interface RegisterInput {
 	phone: string;
 	email: string;
 	password: string;
+	// Optional requested placement side. When set (from a leg-specific referral
+	// link), the recruit is pinned to this slot or the registration 409s if it
+	// is taken. Omitted → auto L-then-R (unchanged legacy behavior).
+	leg?: "L" | "R";
 }
 
 export async function registerMember(
@@ -83,7 +102,7 @@ export async function registerMember(
 				const sponsorId = BigInt(sponsor.id);
 
 				// Direct placement: the sponsor IS the binary parent (2-referral cap)
-				const position = await nextChildPosition(sponsorId, c);
+				const position = await resolvePosition(sponsorId, input.leg, c);
 				const parentId = sponsorId;
 
 				// path = sponsor.placement_path + sponsor.id; sides = sponsor.placement_sides + position

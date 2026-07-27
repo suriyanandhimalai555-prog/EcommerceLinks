@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { ShieldCheck, Mail, Lock, LockOpen, AlertCircle, Loader2 } from 'lucide-react'
+import { ShieldCheck, Mail, Lock, LockOpen, AlertCircle, Loader2, UserCheck } from 'lucide-react'
 import api from '../../lib/api'
 import type { SystemSettings } from '../../types/api'
 
@@ -68,6 +68,7 @@ export function SettingsTab() {
   const kycOptional = settings?.kycOptional ?? false
   const welcomeEmailEnabled = settings?.welcomeEmailEnabled ?? false
   const loginOtpEnabled = settings?.loginOtpEnabled ?? false
+  const registerOtpEnabled = settings?.registerOtpEnabled ?? false
 
   return (
     <div className="space-y-6 max-w-2xl">
@@ -245,6 +246,100 @@ export function SettingsTab() {
             <AlertCircle size={14} className="shrink-0 mt-0.5" style={{ color: '#F87171' }} />
             <p className="text-xs" style={{ color: 'rgba(248,113,113,0.9)' }}>
               All member logins currently bypass email verification. Enable OTP to protect account access.
+            </p>
+          </div>
+        )}
+      </div>
+
+      {/* ── Registration email-OTP control panel ── */}
+      <div
+        className="rounded-2xl p-5 space-y-4 transition-all duration-300"
+        style={{
+          background: 'var(--color-surface-card, #141927)',
+          border: registerOtpEnabled
+            ? '1px solid rgba(52,211,153,0.35)'
+            : '1px solid rgba(248,113,113,0.35)',
+          boxShadow: registerOtpEnabled
+            ? '0 0 24px rgba(52,211,153,0.07)'
+            : '0 0 24px rgba(248,113,113,0.07)',
+        }}
+      >
+        {/* Header row */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div
+              className="p-2 rounded-xl transition-colors duration-300"
+              style={{ background: registerOtpEnabled ? 'rgba(52,211,153,0.12)' : 'rgba(248,113,113,0.12)' }}
+            >
+              <UserCheck size={16} style={{ color: registerOtpEnabled ? '#34D399' : '#F87171' }} />
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold text-ink">{t('adminSettings.registerOtpSection')}</h3>
+              <p className="text-xs text-ink-muted">Email verified before account is created</p>
+            </div>
+          </div>
+          {/* Live status pill */}
+          <span
+            className="text-[11px] font-bold tracking-widest px-3 py-1 rounded-full uppercase transition-all duration-300"
+            style={registerOtpEnabled
+              ? { background: 'rgba(52,211,153,0.12)', color: '#34D399' }
+              : { background: 'rgba(248,113,113,0.12)', color: '#F87171' }}
+          >
+            {registerOtpEnabled ? '● Active' : '● Bypassed'}
+          </span>
+        </div>
+
+        {/* Control panel body */}
+        <div
+          className="rounded-xl p-4 space-y-4"
+          style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}
+        >
+          <div className="space-y-0.5">
+            <p className="text-sm text-ink">{t('adminSettings.registerOtpToggleLabel')}</p>
+            <p className="text-xs text-ink-muted">{t('adminSettings.registerOtpToggleHint')}</p>
+          </div>
+
+          {/* ON / OFF segmented control */}
+          {isPending ? (
+            <Loader2 size={18} className="animate-spin text-ink-muted" />
+          ) : (
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-1 w-fit rounded-lg p-1" style={{ background: 'rgba(255,255,255,0.05)' }}>
+                <button
+                  onClick={() => update.mutate({ registerOtpEnabled: true })}
+                  disabled={update.isPending || registerOtpEnabled}
+                  className="px-5 py-1.5 text-xs font-bold rounded-md transition-all duration-200 cursor-pointer disabled:cursor-default"
+                  style={registerOtpEnabled
+                    ? { background: '#34D399', color: '#0B0E16', boxShadow: '0 0 10px rgba(52,211,153,0.45)' }
+                    : { color: '#98A2B8' }}
+                >
+                  ON
+                </button>
+                <button
+                  onClick={() => update.mutate({ registerOtpEnabled: false })}
+                  disabled={update.isPending || !registerOtpEnabled}
+                  className="px-5 py-1.5 text-xs font-bold rounded-md transition-all duration-200 cursor-pointer disabled:cursor-default"
+                  style={!registerOtpEnabled
+                    ? { background: '#F87171', color: '#0B0E16', boxShadow: '0 0 10px rgba(248,113,113,0.45)' }
+                    : { color: '#98A2B8' }}
+                >
+                  OFF
+                </button>
+              </div>
+              {update.isPending && <Loader2 size={16} className="animate-spin text-ink-muted" />}
+            </div>
+          )}
+        </div>
+
+        {/* Warning when off */}
+        {!registerOtpEnabled && !isPending && (
+          <div
+            className="flex items-start gap-2.5 rounded-xl p-3"
+            style={{ background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.2)' }}
+          >
+            <AlertCircle size={14} className="shrink-0 mt-0.5" style={{ color: '#F87171' }} />
+            <p className="text-xs" style={{ color: 'rgba(248,113,113,0.9)' }}>
+              Accounts are created immediately without verifying the email address. Enable to prevent typo'd or fake emails.
             </p>
           </div>
         )}
