@@ -3,6 +3,7 @@ import { DateTime } from "luxon";
 import { CFG } from "../config.js";
 import { writeOutbox } from "../events/outbox.js";
 import { pool, withTxn } from "../lib/db.js";
+import { toPaise } from "../lib/money.js";
 
 // Windows run Saturday 18:00:00 IST → next Saturday 17:59:59 IST (exactly 7 days).
 // nextWindowStart: the new window starts the instant the previous one ends (no hour override).
@@ -116,8 +117,9 @@ export async function closeAndOpenCutoff(): Promise<void> {
        WHERE a.kind='wallet' AND wb.balance > 0`,
 		);
 		for (const row of walletSnapshot) {
-			// Convert NUMERIC balance (rupees) to paise for the event payload.
-			const amountPaise = Math.round(parseFloat(row.balance) * 100);
+			// Convert NUMERIC balance (rupees) to integer paise for the event payload.
+			// Use toPaise (exact decimal parse), never float arithmetic on money.
+			const amountPaise = Number(toPaise(row.balance));
 			if (amountPaise <= 0) continue;
 			await writeOutbox(c, {
 				event_id: randomUUID(),

@@ -84,7 +84,6 @@
     "withdrawableSub": "Available to withdraw",
     "lifetimeEarned": "Lifetime Earned",
     "lifetimeEarnedSub": "All bonuses ever released",
-    "deferred": "Deferred Balance",
     "networkOverview": "My Network Overview",
     "pairSummary": "Pair Match Summary",
     "recentTransactions": "Recent Transactions",
@@ -150,6 +149,7 @@
     "basePrice": "Base Price",
     "total": "Total Amount",
     "buyNow": "Buy Now",
+    "documents": "Documents",
     "viewDetails": "View details →",
     "backToCatalog": "Back to catalog",
     "paymentMethod": "Payment Method",
@@ -196,7 +196,10 @@
     "uploading": "Uploading…",
     "remove": "Remove image",
     "tooLarge": "Image is too large (max 5 MB)",
-    "badType": "Only JPG, PNG or WebP images are allowed"
+    "badType": "Only JPG, PNG or WebP images are allowed",
+    "addPdf": "Add PDF",
+    "tooLargePdf": "PDF is too large (max 50 MB)",
+    "badPdfType": "Only PDF files are allowed"
   },
   "admin": {
     "products": {
@@ -210,6 +213,8 @@
       "active": "Status",
       "activeHint": "Visible on the member Buy Product page",
       "images": "Images",
+      "documents": "PDF documents",
+      "docsHint": "Datasheets, brochures or manuals (PDF, max 50 MB each). Members can download these on the product page.",
       "save": "Save product",
       "nameRequired": "Product name is required",
       "priceInvalid": "Enter a valid price in rupees",
@@ -378,7 +383,6 @@
     "earningsHint": "Current week earnings",
     "withdrawable": "Withdrawable",
     "withdrawableHint": "Ready to withdraw",
-    "deferredHint": "Carried to next week",
     "currentWindow": "Current Window",
     "capOf": "of {{cap}} cap",
     "requestWithdrawal": "Request Withdrawal",
@@ -392,6 +396,8 @@
     "kycBankRequired": "KYC verification and bank details must be verified before you can withdraw.",
     "kycRequired": "KYC verification is required before you can withdraw.",
     "bankRequired": "Bank details must be verified before you can withdraw.",
+    "noWithdrawableFunds": "No withdrawable balance yet. Your earnings become available to withdraw after the weekly cutoff.",
+    "exceedsBalance": "Amount exceeds your withdrawable balance of {{balance}}.",
     "withdrawalHistory": "Withdrawal History",
     "noWithdrawals": "No withdrawal requests yet.",
     "ledger": "Transaction Ledger",
@@ -402,8 +408,7 @@
     "amount": "Amount",
     "net": "Net",
     "status": "Status",
-    "capNote": "Weekly cap: ₹1,00,000. Earnings above the cap are forfeited (not carried to next week).",
-    "deferred": "Deferred (carried to next week)"
+    "capNote": "Weekly cap: ₹1,00,000. Earnings above the cap are forfeited (not carried to next week)."
   },
   "tree": {
     "back": "Back",

@@ -18,6 +18,63 @@ interface Alert {
 	computed: string;
 }
 
+// Sample up to `limit` accounts of one kind and flag any whose stored
+// wallet_balances balance disagrees with SUM(ledger_entries). Uses a single
+// set-based SUM…GROUP BY over the sampled account ids rather than one query
+// per account.
+async function sampleBalanceDrift(
+	kind: "wallet" | "withdrawable",
+	alertType: string,
+	limit = 200,
+): Promise<Alert[]> {
+	const { rows: sample } = await pool().query<{
+		account_id: string;
+		member_code: string;
+		balance: string;
+	}>(
+		`SELECT wb.account_id, m.member_code, wb.balance
+     FROM wallet_balances wb
+     JOIN accounts a ON a.id = wb.account_id
+     JOIN members m ON m.id = a.owner_id
+     WHERE a.kind=$1
+     ORDER BY random()
+     LIMIT $2`,
+		[kind, limit],
+	);
+	if (sample.length === 0) return [];
+
+	const accountIds = sample.map((r) => r.account_id);
+	const { rows: netRows } = await pool().query<{
+		account_id: string;
+		net: string;
+	}>(
+		`SELECT account_id,
+            COALESCE(SUM(CASE WHEN direction='C' THEN amount ELSE -amount END), 0) AS net
+       FROM ledger_entries
+      WHERE account_id = ANY($1::bigint[])
+      GROUP BY account_id`,
+		[accountIds],
+	);
+	const netByAccount = new Map(netRows.map((r) => [r.account_id, r.net]));
+
+	const alerts: Alert[] = [];
+	for (const row of sample) {
+		// Accounts with no ledger entries won't appear in the GROUP BY → net 0.
+		const computedBalance = toPaise(netByAccount.get(row.account_id) ?? "0");
+		if (computedBalance !== toPaise(row.balance)) {
+			alerts.push({
+				type: alertType,
+				memberId: row.account_id,
+				memberCode: row.member_code,
+				field: "balance",
+				stored: row.balance,
+				computed: String(computedBalance),
+			});
+		}
+	}
+	return alerts;
+}
+
 export async function reconcile(): Promise<Alert[]> {
 	const alerts: Alert[] = [];
 
@@ -130,79 +187,11 @@ export async function reconcile(): Promise<Alert[]> {
 		});
 	}
 
-	// Sample 200 random wallet balances vs SUM(ledger)
-	const { rows: walletSample } = await pool().query<{
-		account_id: string;
-		member_code: string;
-		balance: string;
-	}>(
-		`SELECT wb.account_id, m.member_code, wb.balance
-     FROM wallet_balances wb
-     JOIN accounts a ON a.id = wb.account_id
-     JOIN members m ON m.id = a.owner_id
-     WHERE a.kind='wallet'
-     ORDER BY random()
-     LIMIT 200`,
+	// Sample wallet + withdrawable balances vs SUM(ledger) for drift.
+	alerts.push(...(await sampleBalanceDrift("wallet", "wallet_drift")));
+	alerts.push(
+		...(await sampleBalanceDrift("withdrawable", "withdrawable_drift")),
 	);
-
-	for (const row of walletSample) {
-		const { rows: ledgerRows } = await pool().query<{ net: string }>(
-			`SELECT COALESCE(
-         SUM(CASE WHEN direction='C' THEN amount ELSE -amount END), 0
-       ) AS net
-       FROM ledger_entries WHERE account_id=$1`,
-			[row.account_id],
-		);
-		const computedBalance = toPaise(ledgerRows[0].net);
-		const storedBalance = toPaise(row.balance);
-		if (computedBalance !== storedBalance) {
-			alerts.push({
-				type: "wallet_drift",
-				memberId: row.account_id,
-				memberCode: row.member_code,
-				field: "balance",
-				stored: row.balance,
-				computed: String(computedBalance),
-			});
-		}
-	}
-
-	// Sample 200 random withdrawable balances vs SUM(ledger)
-	const { rows: withdrawableSample } = await pool().query<{
-		account_id: string;
-		member_code: string;
-		balance: string;
-	}>(
-		`SELECT wb.account_id, m.member_code, wb.balance
-     FROM wallet_balances wb
-     JOIN accounts a ON a.id = wb.account_id
-     JOIN members m ON m.id = a.owner_id
-     WHERE a.kind='withdrawable'
-     ORDER BY random()
-     LIMIT 200`,
-	);
-
-	for (const row of withdrawableSample) {
-		const { rows: ledgerRows } = await pool().query<{ net: string }>(
-			`SELECT COALESCE(
-         SUM(CASE WHEN direction='C' THEN amount ELSE -amount END), 0
-       ) AS net
-       FROM ledger_entries WHERE account_id=$1`,
-			[row.account_id],
-		);
-		const computedBalance = toPaise(ledgerRows[0].net);
-		const storedBalance = toPaise(row.balance);
-		if (computedBalance !== storedBalance) {
-			alerts.push({
-				type: "withdrawable_drift",
-				memberId: row.account_id,
-				memberCode: row.member_code,
-				field: "balance",
-				stored: row.balance,
-				computed: String(computedBalance),
-			});
-		}
-	}
 
 	if (alerts.length > 0) {
 		console.error(

@@ -113,18 +113,28 @@ export async function creditBonusWithCap(
 		`SELECT id, kind FROM accounts WHERE owner_id=$1 AND kind='wallet'`,
 		[memberId],
 	);
-	const walletAccId = BigInt(accs.find((a) => a.kind === "wallet")!.id);
+	const walletAcc = accs.find((a) => a.kind === "wallet");
+	if (!walletAcc)
+		throw new Error(`Member ${memberId} has no wallet account`);
+	const walletAccId = BigInt(walletAcc.id);
 
-	// System bonus_expense (debit) + bonus_forfeited (overage sink) accounts
+	// System bonus_expense (debit) + bonus_forfeited (overage sink) accounts.
+	// bonus_forfeited is created by migration 036 — surface a clear error if it's
+	// missing (code deployed ahead of the migration) rather than a raw TypeError
+	// that would stall the ledger consumer on an opaque `.find(...)!` crash.
 	const { rows: sysAcc } = await c.query<{ id: string; kind: string }>(
 		`SELECT id, kind FROM accounts WHERE owner_type='system' AND kind IN ('bonus_expense','bonus_forfeited')`,
 	);
-	const expenseAccId = BigInt(
-		sysAcc.find((a) => a.kind === "bonus_expense")!.id,
-	);
-	const forfeitedAccId = BigInt(
-		sysAcc.find((a) => a.kind === "bonus_forfeited")!.id,
-	);
+	const expenseAcc = sysAcc.find((a) => a.kind === "bonus_expense");
+	const forfeitedAcc = sysAcc.find((a) => a.kind === "bonus_forfeited");
+	if (!expenseAcc)
+		throw new Error("System bonus_expense account missing (run migrations)");
+	if (!forfeitedAcc)
+		throw new Error(
+			"System bonus_forfeited account missing — run migration 036 before starting the ledger worker",
+		);
+	const expenseAccId = BigInt(expenseAcc.id);
+	const forfeitedAccId = BigInt(forfeitedAcc.id);
 
 	// Get or create cutoff_earnings for open cutoff
 	const { rows: cutoffRows } = await c.query<{ id: string }>(

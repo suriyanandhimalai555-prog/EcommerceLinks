@@ -86,7 +86,16 @@ export interface ProductImage {
   sortOrder: number
 }
 
-// Served by both GET /products (list) and GET /products/:id (detail)
+// PDF attachments (datasheets/brochures). Only returned by GET /products/:id.
+export interface ProductDocument {
+  id: string
+  name: string
+  url: string
+  sortOrder: number
+}
+
+// Served by both GET /products (list) and GET /products/:id (detail).
+// `documents` is populated on the detail endpoint only.
 export interface Product {
   id: number
   name: string
@@ -96,6 +105,7 @@ export interface Product {
   totalPaise: number
   badges: string[]
   images: ProductImage[]
+  documents?: ProductDocument[]
 }
 
 export interface Order {
@@ -482,6 +492,16 @@ export interface AuditRow {
   createdAt: string
 }
 
+// Admin editing needs the S3 key + original name for each document so the
+// uploader can round-trip the current set on edit.
+export interface AdminProductDocument {
+  id: string
+  key: string
+  name: string
+  url: string
+  sortOrder: number
+}
+
 export interface AdminProduct {
   id: number
   name: string
@@ -489,6 +509,7 @@ export interface AdminProduct {
   basePricePaise: number
   active: boolean
   images: ProductImage[]
+  documents: AdminProductDocument[]
 }
 
 // ---- uploads (S3 presigned POST) ----

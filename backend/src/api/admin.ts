@@ -11,7 +11,9 @@ import { fromPaise, pctRoundUp, toPaise } from "../lib/money.js";
 import {
 	buildKey,
 	deleteObject,
+	DOCUMENT_CONTENT_TYPES,
 	IMAGE_CONTENT_TYPES,
+	MAX_DOCUMENT_BYTES,
 	MAX_UPLOAD_BYTES,
 	objectExists,
 	paymentProofKeyRe,
@@ -67,12 +69,35 @@ export async function adminRoutes(app: FastifyInstance) {
 		return presignUpload(key, body.data.contentType);
 	});
 
+	const DocPresignBody = z.object({
+		contentType: z.enum(DOCUMENT_CONTENT_TYPES),
+		sizeBytes: z.number().int().positive().max(MAX_DOCUMENT_BYTES),
+	});
+
+	app.post("/products/documents/presign", auth, async (req, reply) => {
+		const body = DocPresignBody.safeParse(req.body);
+		if (!body.success)
+			return reply.status(400).send({ error: body.error.flatten() });
+		const actor = req.user as { sub: string };
+		if (!(await isManagement(actor.sub)))
+			return reply.status(403).send({ error: "Management only" });
+		if (!s3Configured())
+			return reply.status(503).send({ error: "S3_NOT_CONFIGURED" });
+
+		const key = buildKey("product-docs", body.data.contentType);
+		return presignUpload(key, body.data.contentType, MAX_DOCUMENT_BYTES);
+	});
+
 	const ProductBody = z.object({
 		name: z.string().min(1).max(120),
 		description: z.string().max(5000).default(""),
 		basePricePaise: z.number().int().positive(),
 		active: z.boolean().default(true),
 		imageKeys: z.array(z.string()).max(8).default([]),
+		documents: z
+			.array(z.object({ key: z.string(), name: z.string().max(255) }))
+			.max(10)
+			.default([]),
 	});
 
 	app.post("/products", auth, async (req, reply) => {
@@ -419,12 +444,15 @@ export async function adminRoutes(app: FastifyInstance) {
 			status?: string;
 			page?: string;
 			limit?: string;
+			q?: string;
 		};
 		const statusFilter = query.status ?? "requested";
+		const search = (query.q ?? "").trim();
 		const limit = Math.min(Math.max(1, Number(query.limit ?? "20")), 100);
 		const page = Math.max(1, Number(query.page ?? "1"));
 		const offset = (page - 1) * limit;
 
+		// $2 = search term; empty string disables the member code/name filter.
 		const { rows } = await pool().query<{
 			id: string;
 			member_code: string;
@@ -442,14 +470,19 @@ export async function adminRoutes(app: FastifyInstance) {
        FROM withdrawals w
        JOIN members m ON m.id = w.member_id
        WHERE ($1 = 'all' OR w.status = $1)
+         AND ($2 = '' OR m.member_code ILIKE '%' || $2 || '%' OR m.name ILIKE '%' || $2 || '%')
        ORDER BY w.id DESC
-       LIMIT $2 OFFSET $3`,
-			[statusFilter, limit, offset],
+       LIMIT $3 OFFSET $4`,
+			[statusFilter, search, limit, offset],
 		);
 
 		const { rows: countRows } = await pool().query<{ total: string }>(
-			`SELECT COUNT(*) AS total FROM withdrawals WHERE ($1 = 'all' OR status = $1)`,
-			[statusFilter],
+			`SELECT COUNT(*) AS total
+       FROM withdrawals w
+       JOIN members m ON m.id = w.member_id
+       WHERE ($1 = 'all' OR w.status = $1)
+         AND ($2 = '' OR m.member_code ILIKE '%' || $2 || '%' OR m.name ILIKE '%' || $2 || '%')`,
+			[statusFilter, search],
 		);
 
 		return {
@@ -513,13 +546,17 @@ export async function adminRoutes(app: FastifyInstance) {
 			const { rows: sysAccs } = await c.query<{ id: string; kind: string }>(
 				`SELECT id, kind FROM accounts WHERE owner_type='system' AND kind IN ('payout_clearing','tds_payable','bank')`,
 			);
-			const payoutClearingId = BigInt(
-				sysAccs.find((a) => a.kind === "payout_clearing")!.id,
-			);
-			const tdsPayableId = BigInt(
-				sysAccs.find((a) => a.kind === "tds_payable")!.id,
-			);
-			const bankAccId = BigInt(sysAccs.find((a) => a.kind === "bank")!.id);
+			const payoutClearing = sysAccs.find((a) => a.kind === "payout_clearing");
+			const tdsPayable = sysAccs.find((a) => a.kind === "tds_payable");
+			const bank = sysAccs.find((a) => a.kind === "bank");
+			if (!payoutClearing || !tdsPayable || !bank)
+				throw Object.assign(
+					new Error("A system payout account is missing"),
+					{ statusCode: 500 },
+				);
+			const payoutClearingId = BigInt(payoutClearing.id);
+			const tdsPayableId = BigInt(tdsPayable.id);
+			const bankAccId = BigInt(bank.id);
 
 			// Pay: D payout_clearing / C bank(net) + C tds_payable(tds)
 			await postLedgerTxn(
@@ -611,12 +648,22 @@ export async function adminRoutes(app: FastifyInstance) {
 			const { rows: sysAccs } = await c.query<{ id: string }>(
 				`SELECT id FROM accounts WHERE owner_type='system' AND kind='payout_clearing'`,
 			);
+			if (!sysAccs[0])
+				throw Object.assign(
+					new Error("System payout_clearing account missing"),
+					{ statusCode: 500 },
+				);
 			const payoutClearingId = BigInt(sysAccs[0].id);
 
 			const { rows: memberAccs } = await c.query<{ id: string }>(
 				`SELECT id FROM accounts WHERE owner_id=$1 AND kind='withdrawable'`,
 				[wdRows[0].member_id],
 			);
+			if (!memberAccs[0])
+				throw Object.assign(
+					new Error("Member has no withdrawable account"),
+					{ statusCode: 409 },
+				);
 			const withdrawableAccId = BigInt(memberAccs[0].id);
 
 			// Refund: D payout_clearing / C withdrawable
@@ -1221,6 +1268,11 @@ export async function adminRoutes(app: FastifyInstance) {
 	app.delete("/network/:memberCode", auth, async (req, reply) => {
 		const { memberCode } = req.params as { memberCode: string };
 		const actor = req.user as { sub: string };
+		// Hard-delete is irreversible — management only, like every other
+		// destructive endpoint (withdrawals, product delete). requireAdmin alone
+		// would let an appointed staff `admin` permanently delete members.
+		if (!(await isManagement(actor.sub)))
+			return reply.status(403).send({ error: "Management only" });
 		try {
 			await deleteInactiveMember(actor.sub, memberCode);
 		} catch (e: unknown) {

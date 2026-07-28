@@ -35,7 +35,7 @@ export function WithdrawalsTab() {
     queryKey: ['admin-withdrawals', statusFilter, q, page],
     queryFn: () =>
       api
-        .get(`/admin/withdrawals?status=${statusFilter}&page=${page}&limit=${PAGE_SIZE}`)
+        .get(`/admin/withdrawals?status=${statusFilter}&page=${page}&limit=${PAGE_SIZE}&q=${encodeURIComponent(q)}`)
         .then((r) => r.data),
     placeholderData: keepPreviousData,
   })

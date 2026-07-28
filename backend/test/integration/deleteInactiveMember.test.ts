@@ -9,6 +9,7 @@
  *   404 — unknown member code
  *   403 — trying to delete the management account itself
  *   403 — non-admin caller (regular member) is rejected
+ *   403 — plain admin (non-management) caller is rejected (management-only op)
  *   409 — member is active (has confirmed order)
  *   409 — member has their own downline (is not a leaf)
  *   409 — member has a live (created) order
@@ -94,6 +95,33 @@ describe('DELETE /admin/network/:memberCode', () => {
     })
     expect(res.statusCode).toBe(403)
     expect(JSON.parse(res.body).error).toMatch(/management/i)
+  })
+
+  it('403 — plain admin (non-management) caller is rejected', async () => {
+    if (!mgmtToken) return
+    // Appoint a member as plain `admin` (limited staff). Hard-delete is
+    // management-only, so requireAdmin passing must NOT be enough.
+    const staffAnchor = await registerAnchor('DelStaffAnchor')
+    const staff = await registerLeaf(staffAnchor.memberCode, 'DelStaff')
+    await pool().query("UPDATE members SET role='admin' WHERE id=$1", [staff.memberId])
+    const adminToken = signToken(staff.memberId, staff.memberCode, 'DelStaff')
+
+    // A deletable inactive leaf that the admin will (fail to) delete.
+    const victimAnchor = await registerAnchor('DelVictimAnchor')
+    const victim = await registerLeaf(victimAnchor.memberCode, 'DelVictim')
+
+    const res = await app.inject({
+      method: 'DELETE', url: `/admin/network/${victim.memberCode}`,
+      headers: { authorization: `Bearer ${adminToken}` },
+    })
+    expect(res.statusCode).toBe(403)
+    expect(JSON.parse(res.body).error).toMatch(/management/i)
+
+    // And confirm the victim still exists (was not deleted).
+    const { rows } = await pool().query(
+      'SELECT 1 FROM members WHERE id=$1', [victim.memberId],
+    )
+    expect(rows.length).toBe(1)
   })
 
   it('409 — active member cannot be deleted', async () => {

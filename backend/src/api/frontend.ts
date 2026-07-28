@@ -25,7 +25,10 @@ import {
 	s3Configured,
 } from "../lib/s3.js";
 import { confirmOrder, createOrder } from "../services/orderService.js";
-import { imagesByProduct } from "../services/productService.js";
+import {
+	documentsByProduct,
+	imagesByProduct,
+} from "../services/productService.js";
 import { getSetting } from "../services/settings.js";
 import { postLedgerTxn } from "../workers/ledger.js";
 
@@ -604,7 +607,10 @@ export async function frontendRoutes(app: FastifyInstance) {
 			[idNum],
 		);
 		if (!rows[0]) return reply.status(404).send({ error: "Not found" });
-		const images = await imagesByProduct([idNum]);
+		const [images, documents] = await Promise.all([
+			imagesByProduct([idNum]),
+			documentsByProduct([idNum]),
+		]);
 		const p = rows[0];
 		const base = toPaise(p.base_price);
 		return {
@@ -616,6 +622,14 @@ export async function frontendRoutes(app: FastifyInstance) {
 			totalPaise: Number(base),
 			badges: PRODUCT_BADGES[Number(p.id)] ?? [],
 			images: images.get(Number(p.id)) ?? [],
+			// Member-facing shape: expose only what the download list needs; the
+			// raw S3 key stays server-side (only the admin editor receives it).
+			documents: (documents.get(Number(p.id)) ?? []).map((d) => ({
+				id: d.id,
+				name: d.name,
+				url: d.url,
+				sortOrder: d.sortOrder,
+			})),
 		};
 	});
 

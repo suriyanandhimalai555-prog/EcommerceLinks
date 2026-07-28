@@ -278,6 +278,23 @@ export async function deleteInactiveMember(
 				{ statusCode: 409 },
 			);
 
+		// Guard: no one sponsored by this member (sponsor_id is a NO-ACTION self-FK
+		// with no cascade). Since the July-2026 cap, sponsor_id = parent_id for new
+		// rows so the check above already covers them, but pre-cap rows can have
+		// sponsor_id ≠ parent_id — without this guard the final DELETE FROM members
+		// would raise FK 23503 (uncaught 500) instead of this clean 409.
+		const { rows: sponsoredRows } = await c.query<{ cnt: string }>(
+			"SELECT COUNT(*) AS cnt FROM members WHERE sponsor_id = $1",
+			[target.id],
+		);
+		if (Number(sponsoredRows[0].cnt) > 0)
+			throw Object.assign(
+				new Error(
+					"Member has sponsored others — remove those first",
+				),
+				{ statusCode: 409 },
+			);
+
 		// Guard: no live orders (created / paid / confirmed).
 		const { rows: orderRows } = await c.query<{ cnt: string }>(
 			`SELECT COUNT(*) AS cnt FROM orders

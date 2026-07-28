@@ -5,13 +5,23 @@ import {
 	deleteObject,
 	objectExists,
 	presignGet,
+	PRODUCT_DOC_KEY_RE,
 	PRODUCT_KEY_RE,
 	s3Configured,
+	sanitizeDownloadName,
 } from "../lib/s3.js";
 
 export interface ProductImage {
 	id: string;
 	key: string;
+	url: string;
+	sortOrder: number;
+}
+
+export interface ProductDocument {
+	id: string;
+	key: string;
+	name: string;
 	url: string;
 	sortOrder: number;
 }
@@ -23,6 +33,7 @@ export interface AdminProduct {
 	basePricePaise: number;
 	active: boolean;
 	images: ProductImage[];
+	documents: ProductDocument[];
 }
 
 function httpError(message: string, statusCode: number): Error {
@@ -62,6 +73,47 @@ export async function imagesByProduct(
 	return map;
 }
 
+/** Ordered PDF documents for a set of products, keyed by product id. */
+export async function documentsByProduct(
+	productIds: number[],
+): Promise<Map<number, ProductDocument[]>> {
+	const map = new Map<number, ProductDocument[]>();
+	if (productIds.length === 0 || !s3Configured()) return map;
+	const { rows } = await pool().query<{
+		id: string;
+		product_id: number;
+		s3_key: string;
+		original_name: string;
+		sort_order: number;
+	}>(
+		`SELECT id, product_id, s3_key, original_name, sort_order FROM product_documents
+     WHERE product_id = ANY($1) ORDER BY product_id, sort_order`,
+		[productIds],
+	);
+	const presignedRows = await Promise.all(
+		rows.map(async (r) => ({
+			id: String(r.id),
+			product_id: Number(r.product_id),
+			key: r.s3_key,
+			name: r.original_name,
+			url: await presignGet(r.s3_key, 3600, r.original_name),
+			sortOrder: Number(r.sort_order),
+		})),
+	);
+	for (const r of presignedRows) {
+		const list = map.get(r.product_id) ?? [];
+		list.push({
+			id: r.id,
+			key: r.key,
+			name: r.name,
+			url: r.url,
+			sortOrder: r.sortOrder,
+		});
+		map.set(r.product_id, list);
+	}
+	return map;
+}
+
 export async function listAdminProducts(): Promise<AdminProduct[]> {
 	const { rows } = await pool().query<{
 		id: number;
@@ -72,7 +124,11 @@ export async function listAdminProducts(): Promise<AdminProduct[]> {
 	}>(
 		"SELECT id, name, description, base_price, active FROM products ORDER BY id",
 	);
-	const images = await imagesByProduct(rows.map((p) => Number(p.id)));
+	const ids = rows.map((p) => Number(p.id));
+	const [images, documents] = await Promise.all([
+		imagesByProduct(ids),
+		documentsByProduct(ids),
+	]);
 	return rows.map((p) => ({
 		id: Number(p.id),
 		name: p.name,
@@ -80,6 +136,7 @@ export async function listAdminProducts(): Promise<AdminProduct[]> {
 		basePricePaise: Number(toPaise(p.base_price)),
 		active: p.active,
 		images: images.get(Number(p.id)) ?? [],
+		documents: documents.get(Number(p.id)) ?? [],
 	}));
 }
 
@@ -94,6 +151,20 @@ async function assertValidImageKeys(keys: string[]): Promise<void> {
 	}
 	if (new Set(keys).size !== keys.length)
 		throw httpError("Duplicate image keys", 400);
+}
+
+// Same guard as images, plus each document carries an original filename that is
+// sanitized before it ever reaches the DB / a Content-Disposition header.
+async function assertValidDocs(docs: ProductDocumentInput[]): Promise<void> {
+	for (const d of docs) {
+		if (!PRODUCT_DOC_KEY_RE.test(d.key))
+			throw httpError(`Invalid document key: ${d.key}`, 400);
+		if (!(await objectExists(d.key)))
+			throw httpError(`Document not found in storage: ${d.key}`, 400);
+	}
+	const keys = docs.map((d) => d.key);
+	if (new Set(keys).size !== keys.length)
+		throw httpError("Duplicate document keys", 400);
 }
 
 async function writeAudit(
@@ -112,12 +183,18 @@ async function writeAudit(
 	);
 }
 
+export interface ProductDocumentInput {
+	key: string;
+	name: string;
+}
+
 export interface ProductInput {
 	name: string;
 	description: string;
 	basePricePaise: number;
 	active: boolean;
 	imageKeys: string[];
+	documents: ProductDocumentInput[];
 }
 
 export async function createProduct(
@@ -125,6 +202,7 @@ export async function createProduct(
 	d: ProductInput,
 ): Promise<number> {
 	await assertValidImageKeys(d.imageKeys);
+	await assertValidDocs(d.documents);
 	return withTxn(async (c) => {
 		const { rows } = await c.query<{ id: number }>(
 			`INSERT INTO products (name, description, base_price, active)
@@ -138,12 +216,24 @@ export async function createProduct(
 				[id, d.imageKeys[i], i],
 			);
 		}
+		for (let i = 0; i < d.documents.length; i++) {
+			await c.query(
+				"INSERT INTO product_documents (product_id, s3_key, original_name, sort_order) VALUES ($1,$2,$3,$4)",
+				[
+					id,
+					d.documents[i].key,
+					sanitizeDownloadName(d.documents[i].name),
+					i,
+				],
+			);
+		}
 		await writeAudit(c, actorId, "create_product", String(id), null, {
 			name: d.name,
 			description: d.description,
 			basePricePaise: d.basePricePaise,
 			active: d.active,
 			imageKeys: d.imageKeys,
+			documentKeys: d.documents.map((doc) => doc.key),
 		});
 		return id;
 	});
@@ -190,14 +280,19 @@ export async function deleteProduct(
 			);
 		}
 
-		// Collect image keys for post-commit S3 cleanup.
+		// Collect image + document keys for post-commit S3 cleanup.
 		const { rows: imgRows } = await c.query<{ s3_key: string }>(
 			"SELECT s3_key FROM product_images WHERE product_id=$1",
 			[id],
 		);
 		for (const r of imgRows) removedKeys.push(r.s3_key);
+		const { rows: docRows } = await c.query<{ s3_key: string }>(
+			"SELECT s3_key FROM product_documents WHERE product_id=$1",
+			[id],
+		);
+		for (const r of docRows) removedKeys.push(r.s3_key);
 
-		// The DELETE cascades product_images rows.
+		// The DELETE cascades product_images + product_documents rows.
 		await c.query("DELETE FROM products WHERE id=$1", [id]);
 
 		await writeAudit(c, actorId, "delete_product", String(id), {
@@ -219,6 +314,7 @@ export async function updateProduct(
 	d: Partial<ProductInput>,
 ): Promise<void> {
 	if (d.imageKeys !== undefined) await assertValidImageKeys(d.imageKeys);
+	if (d.documents !== undefined) await assertValidDocs(d.documents);
 
 	// S3 deletes cannot join the txn — collect and delete only after commit.
 	const removedKeys: string[] = [];
@@ -269,6 +365,30 @@ export async function updateProduct(
 				await c.query(
 					"INSERT INTO product_images (product_id, s3_key, sort_order) VALUES ($1,$2,$3)",
 					[id, d.imageKeys[i], i],
+				);
+			}
+		}
+
+		if (d.documents !== undefined) {
+			// documents is the full ordered replacement set.
+			const { rows: existing } = await c.query<{ s3_key: string }>(
+				"SELECT s3_key FROM product_documents WHERE product_id=$1",
+				[id],
+			);
+			const next = new Set(d.documents.map((doc) => doc.key));
+			for (const r of existing) {
+				if (!next.has(r.s3_key)) removedKeys.push(r.s3_key);
+			}
+			await c.query("DELETE FROM product_documents WHERE product_id=$1", [id]);
+			for (let i = 0; i < d.documents.length; i++) {
+				await c.query(
+					"INSERT INTO product_documents (product_id, s3_key, original_name, sort_order) VALUES ($1,$2,$3,$4)",
+					[
+						id,
+						d.documents[i].key,
+						sanitizeDownloadName(d.documents[i].name),
+						i,
+					],
 				);
 			}
 		}

@@ -15,12 +15,16 @@ export const IMAGE_CONTENT_TYPES = [
 	"image/webp",
 ] as const;
 
+export const DOCUMENT_CONTENT_TYPES = ["application/pdf"] as const;
+
 export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
+export const MAX_DOCUMENT_BYTES = 50 * 1024 * 1024;
 
 const EXT_BY_CONTENT_TYPE: Record<string, string> = {
 	"image/jpeg": "jpg",
 	"image/png": "png",
 	"image/webp": "webp",
+	"application/pdf": "pdf",
 };
 
 export function s3Configured(): boolean {
@@ -67,6 +71,9 @@ export function buildKey(prefix: string, contentType: string): string {
 export const PRODUCT_KEY_RE =
 	/^products\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(jpg|png|webp)$/;
 
+export const PRODUCT_DOC_KEY_RE =
+	/^product-docs\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.pdf$/;
+
 export function kycKeyRe(memberId: string): RegExp {
 	return new RegExp(
 		`^kyc/${memberId}/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.(jpg|png|webp)$`,
@@ -82,12 +89,13 @@ export function paymentProofKeyRe(memberId: string): RegExp {
 export async function presignUpload(
 	key: string,
 	contentType: string,
+	maxBytes: number = MAX_UPLOAD_BYTES,
 ): Promise<{ key: string; url: string; fields: Record<string, string> }> {
 	const { url, fields } = await createPresignedPost(s3Client(), {
 		Bucket: CFG.AWS_BUCKET_NAME,
 		Key: key,
 		Conditions: [
-			["content-length-range", 1, MAX_UPLOAD_BYTES],
+			["content-length-range", 1, maxBytes],
 			["eq", "$Content-Type", contentType],
 			["eq", "$key", key],
 		],
@@ -97,12 +105,61 @@ export async function presignUpload(
 	return { key, url, fields };
 }
 
-export async function presignGet(key: string, expiresSec = 900): Promise<string> {
+/**
+ * Presigned GET URL. When `downloadName` is given (used for PDFs) the response
+ * carries `Content-Disposition: inline; filename="…"` so browsers render the
+ * file inline but keep the real filename if the user downloads it.
+ */
+export async function presignGet(
+	key: string,
+	expiresSec = 900,
+	downloadName?: string,
+): Promise<string> {
 	return getSignedUrl(
 		s3Client(),
-		new GetObjectCommand({ Bucket: CFG.AWS_BUCKET_NAME, Key: key }),
+		new GetObjectCommand({
+			Bucket: CFG.AWS_BUCKET_NAME,
+			Key: key,
+			...(downloadName
+				? { ResponseContentDisposition: contentDisposition(downloadName) }
+				: {}),
+		}),
 		{ expiresIn: expiresSec },
 	);
+}
+
+/**
+ * RFC 6266 Content-Disposition with both an ASCII `filename` fallback and an
+ * RFC 5987 `filename*` (UTF-8) so non-ASCII names (e.g. Tamil) survive download
+ * without emitting a malformed header value.
+ */
+export function contentDisposition(name: string): string {
+	const safe = sanitizeDownloadName(name);
+	const ascii = safe.replace(/[^\x20-\x7e]/g, "_");
+	const encoded = encodeURIComponent(safe).replace(
+		/['()*]/g,
+		(c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
+	);
+	return `inline; filename="${ascii}"; filename*=UTF-8''${encoded}`;
+}
+
+/**
+ * Strip characters that would break the Content-Disposition header or allow
+ * header injection (quotes, backslashes, control chars, path separators), and
+ * cap the length. Falls back to a generic name if nothing usable remains.
+ */
+export function sanitizeDownloadName(name: string): string {
+	const cleaned = Array.from(name)
+		// Drop path separators, quotes, and any control chars (code < 0x20) that
+		// would break the Content-Disposition header or allow header injection.
+		.filter((ch) => {
+			const code = ch.codePointAt(0) ?? 0;
+			return code >= 0x20 && ch !== "\\" && ch !== "/" && ch !== '"';
+		})
+		.join("")
+		.trim()
+		.slice(0, 200);
+	return cleaned || "document.pdf";
 }
 
 export async function objectExists(key: string): Promise<boolean> {

@@ -3,7 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { isAxiosError } from 'axios'
 import { useTranslation } from 'react-i18next'
-import { AlertTriangle, ArrowLeft, CheckCircle2, Clock, Copy, Loader2, ShoppingBag, Upload } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, CheckCircle2, Clock, Copy, FileText, Loader2, ShoppingBag, Upload } from 'lucide-react'
 import api from '../lib/api'
 import { formatINR } from '../lib/format'
 import { ImageGallery } from '../components/ui/ImageGallery'
@@ -289,6 +289,9 @@ export default function ProductDetail() {
   }
 
   // ── Product detail + buy form ─────────────────────────────────────────────
+  // Desktop: two columns — image/info left, purchase card right (sticky).
+  // Mobile: the grid collapses to one column, so the reading order becomes
+  // Image → Name → Buy Now → Documents → Description (description sits below).
   return (
     <div className="max-w-5xl mx-auto space-y-6">
       <Link to="/buy" className="inline-flex items-center gap-1.5 text-sm text-ink-muted hover:text-ink transition-colors">
@@ -298,8 +301,8 @@ export default function ProductDetail() {
 
       {kycRequired && <KycRequiredBanner />}
 
-      <div className="grid lg:grid-cols-[1fr_380px] gap-6 items-start">
-        {/* Left: gallery + info */}
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-6 lg:items-start">
+        {/* Left: gallery + name */}
         <div className="avg-card p-5 space-y-4">
           <ImageGallery images={product.images} alt={product.name} />
           {product.badges.length > 0 && (
@@ -312,12 +315,9 @@ export default function ProductDetail() {
             </div>
           )}
           <h1 className="text-xl font-bold text-ink">{product.name}</h1>
-          {product.description && (
-            <p className="text-sm text-ink-muted whitespace-pre-line">{product.description}</p>
-          )}
         </div>
 
-        {/* Right: purchase card */}
+        {/* Right: purchase card + documents */}
         <div className="avg-card p-5 space-y-5 lg:sticky lg:top-4">
           {/* Pricing */}
           <div className="space-y-2">
@@ -355,8 +355,39 @@ export default function ProductDetail() {
             )}
             {t('buy.buyNow')} — {formatINR(product.totalPaise)}
           </button>
+
+          {/* Downloadable PDF documents (datasheets/brochures). Opens in a new tab. */}
+          {product.documents && product.documents.length > 0 && (
+            <div className="space-y-2 border-t border-surface-line pt-4">
+              <h3 className="text-xs font-semibold text-ink-muted uppercase tracking-wider">
+                {t('buy.documents')}
+              </h3>
+              <ul className="space-y-1.5">
+                {product.documents.map((doc) => (
+                  <li key={doc.id}>
+                    <a
+                      href={doc.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="flex items-center gap-2 text-sm text-primary hover:underline"
+                    >
+                      <FileText size={14} className="shrink-0" />
+                      <span className="truncate">{doc.name}</span>
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
       </div>
+
+      {/* Description: full-width below both columns (and last on mobile) */}
+      {product.description && (
+        <div className="avg-card p-5">
+          <p className="text-sm text-ink-muted whitespace-pre-line">{product.description}</p>
+        </div>
+      )}
     </div>
   )
 }

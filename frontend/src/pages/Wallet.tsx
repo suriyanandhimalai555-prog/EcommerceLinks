@@ -81,12 +81,21 @@ export default function WalletPage() {
   const onSubmit = (data: WithdrawForm) => {
     setWithdrawSuccess(false)
     setWithdrawError(null)
+    // Friendly client-side guard so the user never hits the server's 409.
+    if (data.amountPaise > withdrawablePaise) {
+      setWithdrawError(t('wallet.exceedsBalance', { balance: formatINR(withdrawablePaise) }))
+      return
+    }
     requestWithdrawal.mutate(data)
   }
 
   const kycOk = me?.kycStatus === 'verified'
   const bankOk = me?.bankStatus === 'verified'
   const canWithdraw = kycOk && bankOk
+  // Withdrawals draw from the withdrawable balance (funded at each weekly cutoff).
+  // Below the ₹500 minimum there is nothing to withdraw yet.
+  const withdrawablePaise = wallet?.withdrawablePaise ?? 0
+  const hasFunds = withdrawablePaise >= MIN_PAISE
 
   const ledgerCols: Column<LedgerEntry>[] = [
     { key: 'date', header: t('wallet.date'), render: r => <span className="text-xs text-ink-muted">{formatDateTime(r.at)}</span> },
@@ -207,6 +216,13 @@ export default function WalletPage() {
           </div>
         )}
 
+        {canWithdraw && !hasFunds && (
+          <div className="flex items-start gap-2 bg-warning/10 border border-warning/20 rounded-xl p-3">
+            <AlertCircle size={14} className="text-warning shrink-0 mt-0.5" />
+            <p className="text-xs text-ink-muted">{t('wallet.noWithdrawableFunds')}</p>
+          </div>
+        )}
+
         {withdrawSuccess && (
           <div className="flex items-center gap-2 bg-success/10 text-success text-sm p-3 rounded-lg border border-success/20">
             {t('wallet.withdrawSuccess')}
@@ -230,7 +246,7 @@ export default function WalletPage() {
                 step="1"
                 min={MIN_PAISE / 100}
                 placeholder="500"
-                disabled={!canWithdraw || isSubmitting}
+                disabled={!canWithdraw || !hasFunds || isSubmitting}
                 className="w-full rounded-lg border border-surface-line bg-[#10141F] pl-7 pr-3 py-2.5 text-sm text-ink placeholder:text-ink-muted/60 outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary disabled:opacity-50"
                 {...register('amountPaise', {
                   setValueAs: (v) => v === '' ? undefined : Math.round(Number(v) * 100),
@@ -246,7 +262,7 @@ export default function WalletPage() {
           </div>
           <button
             type="submit"
-            disabled={!canWithdraw || isSubmitting}
+            disabled={!canWithdraw || !hasFunds || isSubmitting}
             className="avg-btn-primary py-2.5 px-5 flex items-center gap-1.5 whitespace-nowrap"
           >
             {isSubmitting ? <Loader2 size={14} className="animate-spin" /> : <ArrowDownToLine size={14} />}

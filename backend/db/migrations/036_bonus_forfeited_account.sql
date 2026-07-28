@@ -17,6 +17,12 @@ ALTER TABLE accounts
     CHECK (kind IN ('wallet','deferred_bonus','bonus_expense','payout_clearing',
                     'tds_payable','bank','adjustment','withdrawable','bonus_forfeited'));
 
+-- NOTE: cutoff_earnings.deferred is now inert — creditBonusWithCap no longer
+-- writes it and nothing reads it. It is NOT dropped here: pre-036 workers still
+-- write it, and destructive schema changes must ship a release behind the code
+-- change (rollback safety). Drop it in a later migration once no pre-036 worker
+-- can run.
+
 -- One singleton system account that accumulates all forfeited overage.
 INSERT INTO accounts (owner_type, owner_id, kind)
 SELECT 'system', NULL, 'bonus_forfeited'

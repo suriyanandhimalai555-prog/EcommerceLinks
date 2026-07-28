@@ -9,6 +9,7 @@ import { Badge } from '../../components/ui/Badge'
 import { Modal } from '../../components/ui/Modal'
 import { FormField } from '../../components/ui/FormField'
 import { ImageUploader, type UploadedImage } from '../../components/ui/ImageUploader'
+import { DocumentUploader, type UploadedDocument } from '../../components/ui/DocumentUploader'
 import { Tabs, TabList, TabTrigger, TabContent } from '../../components/ui/Tabs'
 import type { AdminProduct, PresignRes } from '../../types/api'
 
@@ -19,6 +20,7 @@ interface FormState {
   priceRupees: string
   active: boolean
   images: UploadedImage[]
+  documents: UploadedDocument[]
 }
 
 const emptyForm: FormState = {
@@ -28,11 +30,21 @@ const emptyForm: FormState = {
   priceRupees: '',
   active: true,
   images: [],
+  documents: [],
 }
 
 function getPresign(file: File): Promise<PresignRes> {
   return api
     .post('/admin/products/images/presign', {
+      contentType: file.type,
+      sizeBytes: file.size,
+    })
+    .then((r) => r.data)
+}
+
+function getDocPresign(file: File): Promise<PresignRes> {
+  return api
+    .post('/admin/products/documents/presign', {
       contentType: file.type,
       sizeBytes: file.size,
     })
@@ -70,6 +82,7 @@ export function ProductsTab() {
         basePricePaise: rupeesToPaise(f.priceRupees),
         active: f.active,
         imageKeys: f.images.map((i) => i.key),
+        documents: f.documents.map((d) => ({ key: d.key, name: d.name })),
       }
       return f.id === null
         ? api.post('/admin/products', payload)
@@ -117,6 +130,7 @@ export function ProductsTab() {
       priceRupees: (p.basePricePaise / 100).toFixed(2),
       active: p.active,
       images: p.images.map((img) => ({ key: img.key, previewUrl: img.url })),
+      documents: p.documents.map((d) => ({ key: d.key, name: d.name })),
     })
   }
 
@@ -269,6 +283,13 @@ export function ProductsTab() {
               value={form.images}
               onChange={(images) => setForm({ ...form, images })}
               getPresign={getPresign}
+            />
+            <DocumentUploader
+              label={t('admin.products.documents')}
+              hint={t('admin.products.docsHint')}
+              value={form.documents}
+              onChange={(documents) => setForm({ ...form, documents })}
+              getPresign={getDocPresign}
             />
             <label className="flex items-center gap-2 text-sm text-ink cursor-pointer">
               <input
