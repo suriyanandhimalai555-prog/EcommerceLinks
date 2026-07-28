@@ -13,45 +13,45 @@ describe('creditBonusWithCap cap-boundary arithmetic (G-15)', () => {
   const split = (alreadyEarned: bigint) => splitAgainstCap(bonus, alreadyEarned, cap)
 
   it('first pair (earned=0): full bonus goes to wallet', () => {
-    const { walletAmt, defAmt } = split(0n)
+    const { walletAmt, overflowAmt } = split(0n)
     expect(walletAmt).toBe(100_000n)
-    expect(defAmt).toBe(0n)
+    expect(overflowAmt).toBe(0n)
   })
 
   it('partial cap remaining (earned=9_950_000): splits correctly', () => {
     // ₹99,500 earned, ₹500 remaining before cap, pair bonus = ₹1,000
     const earned = 9_950_000n
-    const { walletAmt, defAmt } = split(earned)
+    const { walletAmt, overflowAmt } = split(earned)
     expect(walletAmt).toBe(50_000n)   // ₹500 to wallet
-    expect(defAmt).toBe(50_000n)      // ₹500 to deferred
+    expect(overflowAmt).toBe(50_000n) // ₹500 forfeited (above cap)
   })
 
-  it('cap already hit (earned=cap): full bonus deferred', () => {
-    const { walletAmt, defAmt } = split(cap)
+  it('cap already hit (earned=cap): full bonus forfeited', () => {
+    const { walletAmt, overflowAmt } = split(cap)
     expect(walletAmt).toBe(0n)
-    expect(defAmt).toBe(bonus)
+    expect(overflowAmt).toBe(bonus)
   })
 
   it('earned beyond cap (defensive): nothing to wallet, no negative amounts', () => {
-    const { walletAmt, defAmt } = split(cap + 100_000n)
+    const { walletAmt, overflowAmt } = split(cap + 100_000n)
     expect(walletAmt).toBe(0n)
-    expect(defAmt).toBe(bonus)
+    expect(overflowAmt).toBe(bonus)
   })
 
-  it('101 pairs from zero → wallet = cap, deferred = 1 bonus', () => {
-    let totalWallet  = 0n
-    let totalDeferred = 0n
+  it('101 pairs from zero → wallet = cap, overage (forfeited) = 1 bonus', () => {
+    let totalWallet   = 0n
+    let totalOverflow = 0n
     let earned = 0n
 
     for (let i = 0; i < 101; i++) {
-      const { walletAmt, defAmt } = split(earned)
-      totalWallet  += walletAmt
-      totalDeferred += defAmt
+      const { walletAmt, overflowAmt } = split(earned)
+      totalWallet   += walletAmt
+      totalOverflow += overflowAmt
       earned += walletAmt
     }
 
     expect(totalWallet).toBe(cap)             // 10_000_000
-    expect(totalDeferred).toBe(bonus)          // 100_000
+    expect(totalOverflow).toBe(bonus)          // 100_000 forfeited above the cap
     expect(earned).toBe(cap)
   })
 })

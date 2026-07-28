@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Wallet as WalletIcon, Clock, ArrowDownToLine, TrendingUp, Loader2, AlertCircle } from 'lucide-react'
+import { Wallet as WalletIcon, ArrowDownToLine, TrendingUp, Loader2, AlertCircle } from 'lucide-react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
@@ -146,11 +146,11 @@ export default function WalletPage() {
       </div>
 
       {walletLoading ? (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <SkeletonCard /><SkeletonCard /><SkeletonCard /><SkeletonCard />
+        <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+          <SkeletonCard /><SkeletonCard /><SkeletonCard />
         </div>
       ) : (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
           <StatCard
             label={t('wallet.earnings')}
             value={orDash(wallet?.balancePaise, formatINR)}
@@ -164,13 +164,6 @@ export default function WalletPage() {
             icon={<ArrowDownToLine />}
             tint="success"
             sub={t('wallet.withdrawableHint')}
-          />
-          <StatCard
-            label={t('wallet.deferred')}
-            value={orDash(wallet?.deferredPaise, formatINR)}
-            icon={<Clock />}
-            tint="warning"
-            sub={t('wallet.deferredHint')}
           />
           <div className="avg-card p-5">
             <div className="flex items-center justify-between mb-3">

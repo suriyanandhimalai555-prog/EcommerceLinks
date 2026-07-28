@@ -219,24 +219,25 @@ describe('T9 – Qualification BR-5', () => {
 
 // T10: ledger cap
 describe('T10 – Ledger BR-4 cap', () => {
-  it('101 pairs → wallet +100000, deferred +1000', async () => {
-    // This is an arithmetic assertion; real ledger posting requires DB setup
+  it('101 pairs → wallet +100000, forfeited +1000', async () => {
+    // This is an arithmetic assertion; real ledger posting requires DB setup.
+    // The overage above the weekly cap is forfeited (not deferred).
     const cap   = 10_000_000n  // ₹1,00,000 in paise
     const bonus = 100_000n     // ₹1,000 in paise
-    let earned  = 0n
-    let wallet  = 0n
-    let deferred = 0n
+    let earned    = 0n
+    let wallet    = 0n
+    let forfeited = 0n
 
     for (let i = 0; i < 101; i++) {
-      const walletAmt = bonus < cap - earned ? bonus : (cap - earned > 0n ? cap - earned : 0n)
-      const defAmt    = bonus - walletAmt
-      wallet  += walletAmt
-      deferred += defAmt
-      earned  += walletAmt
+      const walletAmt   = bonus < cap - earned ? bonus : (cap - earned > 0n ? cap - earned : 0n)
+      const overflowAmt = bonus - walletAmt
+      wallet    += walletAmt
+      forfeited += overflowAmt
+      earned    += walletAmt
     }
 
     expect(wallet).toBe(10_000_000n)   // ₹1,00,000
-    expect(deferred).toBe(100_000n)     // ₹1,000
+    expect(forfeited).toBe(100_000n)    // ₹1,000 forfeited above the cap
     expect(earned).toBe(10_000_000n)
   })
 })

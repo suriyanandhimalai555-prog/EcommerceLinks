@@ -12,7 +12,7 @@
 This repository contains a **full-stack member platform for Agila Vetri Groups (AVG)**, a binary pair-match MLM (multi-level marketing) business operating in Tamil Nadu, India. Members join under a sponsor, buy a product package to "activate", recruit others into a binary tree (left leg / right leg), and earn:
 
 - **Pair bonuses (2-Direct Pair Matching, since migration 020)**: a *pair* completes at a member when **both of their two direct referrals activate**. Each completed pair pays ₹1,000 to that member **and ₹1,000 to every ancestor above** — every member earns on every pair completed anywhere in their subtree ("everyone is the root of their own subtree"). All earnings are held (`pair_accruals.status='pending'`) until the earner is **qualified** (3-generation gate, tightened July 2026: **both** direct referrals active AND at least one active grandchild under an active direct — one active direct no longer qualifies), then released retroactively.
-- **Weekly cap with carry-forward**: released pair income is capped at ₹1,00,000 per weekly cutoff window; the excess goes to a "deferred" balance and is swept into the wallet when the next window opens.
+- **Weekly cap with forfeiture** (since migration 036): released pair income is capped at ₹1,00,000 per weekly cutoff window; **any excess above the cap is forfeited** — credited to a system `bonus_forfeited` account, never paid to the member (previously it was deferred and carried into the next window; that carry-forward path now only drains pre-036 balances).
 - **12-level rank ladder**: ranks 1–4 are earned by accumulating "qualified" members on both legs (25/50/100/250 each side); ranks 5–12 are earned by having at least one achiever of the previous rank in each leg. Rewards range from a Kodaikanal tour to a Rolls Royce.
 - **Qualification gate** (tightened July 2026): a member becomes "qualified" only when they are active AND **both** direct referrals are active AND at least one active direct referral has an active direct referral of their own (3 generations in the *sponsor* tree).
 - **Weekly payouts**: every Saturday, KYC+bank-verified members with wallet ≥ ₹500 have their full wallet balance paid out via a bank CSV file, minus 5% TDS. Products are **flat-priced — no GST** is added (GST was removed for flat pricing, July 2026).
@@ -122,10 +122,10 @@ Each member stores denormalized ancestry: `placement_path` (array of ancestor id
   immediately if earner qualified,     emit RankAchieved — which loops back
   else pending until                   through fanout for levels 4–11)
   PendingBonusReleaseRequested;
-  cap split wallet vs deferred;
-  sweepDeferred on new window)
+  cap split wallet vs bonus_forfeited;
+  overage forfeited, not deferred)
  
- worker: cutoff    — cron Sat 18:00 IST: close window, open next, emit DeferredSweepRequested per member
+ worker: cutoff    — cron Sat 18:00 IST: close window, open next (legacy DeferredSweepRequested still emitted to drain any pre-036 deferred balances)
  worker: payout    — cron Sat 18:30 IST: build payout batch, debit wallets, write bank CSV to backend/out/payouts/
  worker: reconciler— cron 02:00 IST: sample-recompute counters/pairs/balances from source-of-truth tables, alert on drift
 ```
@@ -134,9 +134,9 @@ Each member stores denormalized ancestry: `placement_path` (array of ancestor id
 
 ### 4.3 Double-entry ledger
 
-`accounts` (member wallet, member deferred_bonus, and four system accounts: bonus_expense, payout_clearing, tds_payable, bank) + `ledger_txns` + `ledger_entries`. `postLedgerTxn()` in `workers/ledger.ts` enforces sum(debits) === sum(credits) > 0 and is idempotent on an idempotency key. `wallet_balances` is a materialized running balance updated in the same transaction; the reconciler cross-checks it nightly against SUM(ledger_entries).
+`accounts` (member wallet, member withdrawable, legacy member deferred_bonus, and system accounts: bonus_expense, bonus_forfeited, payout_clearing, tds_payable, bank) + `ledger_txns` + `ledger_entries`. `postLedgerTxn()` in `workers/ledger.ts` enforces sum(debits) === sum(credits) > 0 and is idempotent on an idempotency key. `wallet_balances` is a materialized running balance updated in the same transaction; the reconciler cross-checks it nightly against SUM(ledger_entries).
 
-**Pair bonus flow:** accrual first (`pair_accruals`, no ledger entries while pending); on release: D bonus_expense ₹1,000 → C wallet (up to the weekly cap room) + C deferred_bonus (overflow), idempotency key `pairbonus:{pair_id}:{beneficiary_id}`.
+**Pair bonus flow:** accrual first (`pair_accruals`, no ledger entries while pending); on release: D bonus_expense ₹1,000 → C wallet (up to the weekly cap room) + C **bonus_forfeited** (overage above the ₹1 lakh weekly cap — forfeited, not carried forward; since migration 036), idempotency key `pairbonus:{pair_id}:{beneficiary_id}`. The `deferred_bonus` account and `sweepDeferred` remain only to drain pre-036 balances.
 **Payout flow:** D wallet gross → C payout_clearing net + C tds_payable tds; on bank settlement, D payout_clearing → C bank; on failure, D payout_clearing → C wallet (re-credit).
 
 ### 4.4 Frontend architecture
@@ -153,7 +153,7 @@ Each member stores denormalized ancestry: `placement_path` (array of ancestor id
 
 1. **Counters over recomputation.** `member_counters` is a hot denormalized row per member (fillfactor 70 for HOT updates). Recomputing left/right active counts from the tree on every read would be O(subtree); instead each activation fans out one increment per ancestor. `leg_activations (ancestor_id, side, seq)` records *which* member was the Nth activation on each side (audit trail for the counters; since 020 no longer consulted for income).
 2. **Pair completion is a local check, not leg arithmetic** (since migration 020): on every activation, `pairComplete` locks the parent row and checks whether both direct children are active — at most one pair per member (`uq_pairs_one_per_member`), replay-safe via `ON CONFLICT DO NOTHING` + only-the-inserter emits. Income = `pair_accruals` (owner + every ancestor per pair), gated per-beneficiary by qualification and released retroactively on `MemberQualified`. `member_counters.pairs_matched` is deprecated (frozen at 0; drop in a later release).
-3. **Cap enforcement at credit time, not payout time.** The ledger worker consults the open cutoff's `cutoff_earnings` row under lock and splits the credit between wallet and deferred. A DB check (`earned <= 100000.00`) backstops it.
+3. **Cap enforcement at credit time, not payout time.** The ledger worker consults the open cutoff's `cutoff_earnings` row under lock and splits the credit between the wallet (up to the cap) and the system `bonus_forfeited` account (the overage is forfeited, not carried forward; since migration 036). A DB check (`earned <= 100000.00`) backstops it.
 4. **Rank evaluation is strictly ordered** (level N can only be achieved after N−1; the loop `break`s at the first unmet level), and rank achievements for levels 4–11 fan back out as `rank_achiever` counter increments to power the level 5–12 gates.
 5. **One squashed commit** — the git history carries no archaeology; this document and the code are all you have.
 6. **The frontend mock layer is the contract.** `frontend/src/mocks/handlers.ts` + `frontend/src/types/api.ts` define exactly what every page expects. When connecting the backend, make the backend speak *that* dialect rather than editing 15 pages (this is the strategy `INTEGRATION.md` takes).

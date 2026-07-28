@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Search, Loader2, ShieldCheck, ShieldOff, KeyRound, Wallet, UserCog, AlertTriangle } from 'lucide-react'
+import { Search, Loader2, ShieldCheck, ShieldOff, KeyRound, Wallet, UserCog, AlertTriangle, Trash2 } from 'lucide-react'
 import api from '../../lib/api'
 import { apiErrorMessage } from '../../lib/apiError'
 import { isManagement } from '../../lib/roles'
@@ -30,11 +30,20 @@ export function MembersTab() {
   // final grant is disabled until the operator types the member's code.
   const [grantConfirm, setGrantConfirm] = useState(false)
   const [confirmCode, setConfirmCode] = useState('')
+  // Delete-member confirmation modal (inactive members only)
+  const [deleteConfirm, setDeleteConfirm] = useState(false)
+
+  const manageScrollRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     const t = setTimeout(() => { setQ(input); setPage(1) }, 350)
     return () => clearTimeout(t)
   }, [input])
+
+  // Scroll the Manage modal body to top whenever a msg banner appears so it's always visible.
+  useEffect(() => {
+    if (msg) manageScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
+  }, [msg])
 
   const { data: me } = useQuery<Me>({ queryKey: ['me'], queryFn: () => api.get('/me').then((r) => r.data) })
   const { data: kycDocs } = useQuery<KycDocument[]>({
@@ -136,6 +145,16 @@ export function MembersTab() {
     },
     onError: fail,
   })
+  const del = useMutation({
+    mutationFn: () => api.delete(`/admin/network/${selected!.memberCode}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin-members'] })
+      qc.invalidateQueries({ queryKey: ['admin-overview'] })
+      setDeleteConfirm(false)
+      setMsg({ ok: true, text: 'Member permanently deleted. You can now close this panel.' })
+    },
+    onError: (err) => { setDeleteConfirm(false); fail(err) },
+  })
 
   const columns: Column<AdminMemberRow>[] = [
     { key: 'code', header: 'Code', render: (r) => <span className="font-mono text-xs font-semibold text-ink">{r.memberCode}</span> },
@@ -221,7 +240,7 @@ export function MembersTab() {
 
       <Modal open={!!selected} onClose={() => setSelected(null)} title={selected ? `${selected.name} — ${selected.memberCode}` : ''} size="lg">
         {selected && (
-          <div className="space-y-5 max-h-[65vh] overflow-y-auto pr-1">
+          <div ref={manageScrollRef} className="space-y-5 max-h-[65vh] overflow-y-auto pr-1">
             {msg && (
               <div className={`text-sm rounded-lg px-3 py-2 ${msg.ok ? 'bg-success/10 text-success' : 'bg-danger/10 text-danger'}`}>
                 {msg.text}
@@ -373,6 +392,20 @@ export function MembersTab() {
                 </div>
               )}
             </section>
+
+            {/* Danger zone — only for inactive non-management members */}
+            {selected.role !== 'management' && !selected.isActive && (
+              <section className="space-y-2 border-t border-danger/20 pt-4">
+                <h3 className="text-xs font-semibold text-danger uppercase tracking-wider">{t('admin.members.dangerZone')}</h3>
+                <p className="text-xs text-ink-muted">{t('admin.members.deleteHint')}</p>
+                <button
+                  onClick={() => setDeleteConfirm(true)}
+                  className="avg-btn-danger"
+                >
+                  <Trash2 size={12} /> {t('tree.delete')}
+                </button>
+              </section>
+            )}
           </div>
         )}
       </Modal>
@@ -406,6 +439,36 @@ export function MembersTab() {
               >
                 {setRole.isPending ? <Loader2 size={12} className="animate-spin inline mr-1" /> : null}
                 Grant admin
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* Delete-member confirmation: plain confirm (no type-to-confirm) — backend guards active/downline/live-orders */}
+      <Modal open={deleteConfirm && !!selected} onClose={() => setDeleteConfirm(false)} title={t('tree.deleteConfirmTitle')} size="sm">
+        {selected && (
+          <div className="space-y-4">
+            <p className="text-sm text-ink-muted">
+              {t('tree.deleteConfirmBody', { name: selected.name })}
+            </p>
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                className="avg-btn-secondary py-2 px-4 text-xs"
+                onClick={() => setDeleteConfirm(false)}
+                disabled={del.isPending}
+              >
+                {t('common.cancel')}
+              </button>
+              <button
+                type="button"
+                className="flex items-center gap-1.5 bg-danger hover:bg-danger/90 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors disabled:opacity-50"
+                onClick={() => del.mutate()}
+                disabled={del.isPending}
+              >
+                {del.isPending ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                {t('tree.delete')}
               </button>
             </div>
           </div>

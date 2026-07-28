@@ -202,7 +202,7 @@ describe('Pair completion – concurrency and idempotency', () => {
 })
 
 describe('Retroactive release respects the per-cutoff cap', () => {
-  it('₹500 headroom + two ₹1000 accruals → wallet +500, deferred +1500', async () => {
+  it('₹500 headroom + two ₹1000 accruals → wallet +500, forfeited +1500', async () => {
     await ensureCutoffExists()
     const ts = (Date.now() + 9).toString().slice(-6)
     const { memberId: bId, memberCode: bCode } = await registerAnchor(`CApx${ts}`)
@@ -237,18 +237,35 @@ describe('Retroactive release respects the per-cutoff cap', () => {
     )
 
     await pool().query('UPDATE members SET is_qualified=TRUE WHERE id=$1', [bId])
+
+    // Snapshot the system forfeited-account balance (ledger sum) before release,
+    // so we assert the delta from THIS release (the account is shared DB-wide).
+    const forfeitedSum = async () => {
+      const { rows } = await pool().query<{ net: string }>(
+        `SELECT COALESCE(SUM(CASE WHEN le.direction='C' THEN le.amount ELSE -le.amount END),0) AS net
+           FROM ledger_entries le
+           JOIN accounts a ON a.id = le.account_id
+          WHERE a.owner_type='system' AND a.kind='bonus_forfeited'`,
+      )
+      return toPaise(rows[0].net)
+    }
+    const forfeitedBefore = await forfeitedSum()
+
     await releasePendingBonuses({
       event_id: randomUUID(), event_type: 'PendingBonusReleaseRequested',
       occurred_at: new Date().toISOString(), schema_version: 1, member_id: Number(bId),
     })
 
     expect(await walletPaise(bId)).toBe(50_000n) // ₹500 fit under the cap
+
+    // Overage is FORFEITED to the system account, NOT deferred to the member.
+    expect(await forfeitedSum() - forfeitedBefore).toBe(150_000n) // ₹1,500 forfeited
     const { rows: def } = await pool().query<{ balance: string }>(
       `SELECT wb.balance FROM wallet_balances wb
         JOIN accounts a ON a.id = wb.account_id
        WHERE a.owner_id=$1 AND a.kind='deferred_bonus'`, [bId],
     )
-    expect(toPaise(def[0].balance)).toBe(150_000n) // ₹1,500 deferred
+    expect(toPaise(def[0].balance)).toBe(0n) // member deferred stays zero (no carry-forward)
     const { rows: ce } = await pool().query<{ earned: string }>(
       `SELECT earned FROM cutoff_earnings WHERE member_id=$1 AND cutoff_id=$2`,
       [bId, co[0].id],

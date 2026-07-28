@@ -303,7 +303,9 @@
     },
     "members": {
       "noDocsWarning": "No KYC documents uploaded yet — verify only if documents were checked another way.",
-      "kycReadOnly": "KYC decisions are made by management on the KYC Approvals page."
+      "kycReadOnly": "KYC decisions are made by management on the KYC Approvals page.",
+      "dangerZone": "Danger zone",
+      "deleteHint": "Permanently remove this inactive member. Active members, members with referrals, or members with live orders cannot be deleted."
     },
     "recordPayment": {
       "title": "Record Payment",
@@ -400,7 +402,7 @@
     "amount": "Amount",
     "net": "Net",
     "status": "Status",
-    "capNote": "Weekly cap: ₹1,00,000. Excess is deferred to next week.",
+    "capNote": "Weekly cap: ₹1,00,000. Earnings above the cap are forfeited (not carried to next week).",
     "deferred": "Deferred (carried to next week)"
   },
   "tree": {
@@ -411,7 +413,11 @@
     "copyLink": "Copy referral link",
     "copied": "Copied!",
     "expand": "Expand",
-    "exitFullscreen": "Close"
+    "exitFullscreen": "Close",
+    "delete": "Delete",
+    "deleteConfirmTitle": "Delete inactive member?",
+    "deleteConfirmBody": "This will permanently remove {{name}} from the tree. The slot will become vacant. This cannot be undone.",
+    "deleteFailed": "Failed to delete member"
   },
   "downline": {
     "searchPlaceholder": "Search by name or member code…",

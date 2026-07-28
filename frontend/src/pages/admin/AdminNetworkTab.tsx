@@ -1,6 +1,12 @@
+import { useState } from 'react'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
+import { Loader2, Trash2 } from 'lucide-react'
 import { BinaryTree } from '../../components/tree/BinaryTree'
 import { useTreeDrilldown } from '../../components/tree/useTreeDrilldown'
+import { Modal } from '../../components/ui/Modal'
+import api from '../../lib/api'
+import { apiErrorMessage } from '../../lib/apiError'
 
 /**
  * Management-only full-tree view. Reuses the same server-side drill-down hook
@@ -8,14 +14,38 @@ import { useTreeDrilldown } from '../../components/tree/useTreeDrilldown'
  * the backend resolves root='me' to the true tree root and skips the downline
  * authorization, so this renders the entire placement tree with drill-down.
  *
- * Scope is intentionally the binary tree only — the member Network page's
- * summary/donut/list widgets are downline-scoped and empty for an off-tree
- * management account.
+ * Delete affordance: inactive (orange) nodes show a trash icon. Clicking opens
+ * a confirmation modal; on confirm the member is hard-deleted via
+ * DELETE /admin/network/:memberCode (backend guards: not active, no downline,
+ * no live orders). The tree cache is busted server-side so the Vacant slot
+ * appears immediately.
  */
 export function AdminNetworkTab() {
   const { t } = useTranslation()
+  const qc = useQueryClient()
   const { root: tree, isFetching, depth, requestDeeper, drillTo, back, backToMe, canGoBack } =
     useTreeDrilldown(3)
+
+  const [deleteTarget, setDeleteTarget] = useState<{ code: string; name: string } | null>(null)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+
+  const del = useMutation({
+    mutationFn: (code: string) => api.delete(`/admin/network/${code}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['tree'] })
+      qc.invalidateQueries({ queryKey: ['admin-overview'] })
+      setDeleteTarget(null)
+      setDeleteError(null)
+    },
+    onError: (err) => {
+      setDeleteError(apiErrorMessage(err, t, t('tree.deleteFailed')))
+    },
+  })
+
+  const handleDeleteRequest = (code: string, name: string) => {
+    setDeleteError(null)
+    setDeleteTarget({ code, name })
+  }
 
   return (
     <div className="space-y-6">
@@ -35,11 +65,53 @@ export function AdminNetworkTab() {
             canGoBack={canGoBack}
             isFetching={isFetching}
             requestDeeper={requestDeeper}
+            onDelete={handleDeleteRequest}
           />
         ) : (
           <div className="py-10 text-center text-sm text-ink-muted">Loading tree…</div>
         )}
       </div>
+
+      {/* Delete confirmation modal */}
+      <Modal
+        open={!!deleteTarget}
+        title={t('tree.deleteConfirmTitle')}
+        onClose={() => { setDeleteTarget(null); setDeleteError(null) }}
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-ink-muted">
+            {t('tree.deleteConfirmBody', { name: deleteTarget?.name ?? '' })}
+          </p>
+
+          {deleteError && (
+            <div className="flex items-start gap-2 bg-danger/10 border border-danger/20 rounded-lg p-3">
+              <p className="text-xs text-danger">{deleteError}</p>
+            </div>
+          )}
+
+          <div className="flex gap-3 justify-end pt-2">
+            <button
+              type="button"
+              className="avg-btn-secondary px-4 py-2 text-sm"
+              onClick={() => { setDeleteTarget(null); setDeleteError(null) }}
+              disabled={del.isPending}
+            >
+              {t('common.cancel')}
+            </button>
+            <button
+              type="button"
+              className="flex items-center gap-1.5 bg-danger hover:bg-danger/90 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors disabled:opacity-50"
+              onClick={() => deleteTarget && del.mutate(deleteTarget.code)}
+              disabled={del.isPending}
+            >
+              {del.isPending
+                ? <Loader2 size={14} className="animate-spin" />
+                : <Trash2 size={14} />}
+              {t('tree.delete')}
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   )
 }

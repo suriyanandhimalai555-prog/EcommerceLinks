@@ -108,18 +108,6 @@ export default function Dashboard() {
           icon={<ArrowUpRight />}
           tint="success"
         />
-        <StatCard
-          label={t('dashboard.deferred')}
-          value={formatINR(d.deferredBalancePaise)}
-          sub={
-            <span className="flex items-center gap-1">
-              {t('wallet.deferred')}
-              <Info size={10} className="cursor-help" aria-label={t('wallet.capNote')} />
-            </span>
-          }
-          icon={<Clock />}
-          tint="warning"
-        />
       </div>
 
       {/* Row 2: Network + Pair Match Summary */}

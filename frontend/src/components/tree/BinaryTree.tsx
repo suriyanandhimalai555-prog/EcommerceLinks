@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { TransformWrapper, TransformComponent, type ReactZoomPanPinchRef } from 'react-zoom-pan-pinch'
-import { ZoomIn, ZoomOut, Maximize2, Expand, Minimize2, ChevronLeft, UserPlus, Loader2, Link2, Check, Crown } from 'lucide-react'
+import { ZoomIn, ZoomOut, Maximize2, Expand, Minimize2, ChevronLeft, UserPlus, Loader2, Link2, Check, Crown, Trash2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { TreeNode } from '../../types/api'
 import { computeLayout, type LayoutNode } from './useTreeLayout'
@@ -26,9 +26,11 @@ interface NodeCardProps {
   onClick: (code: string) => void
   /** True when the pointer travelled far enough that this "click" was a pan/pinch. */
   wasDragged: () => boolean
+  /** When provided, a trash icon is shown on inactive (not yet active) real nodes. */
+  onDelete?: (code: string, name: string) => void
 }
 
-function NodeCard({ ln, onClick, wasDragged }: NodeCardProps) {
+function NodeCard({ ln, onClick, wasDragged, onDelete }: NodeCardProps) {
   const { t } = useTranslation()
   const { node, x, y, parentCode } = ln
   const isVacant = node.name === 'Vacant'
@@ -136,9 +138,9 @@ function NodeCard({ ln, onClick, wasDragged }: NodeCardProps) {
           {node.position}
         </text>
       )}
-      {/* Copy referral link for this member */}
+      {/* Copy referral link for this member — shifts left when delete affordance is shown */}
       <g
-        transform={`translate(${NODE_W - 24}, ${NODE_H - 24})`}
+        transform={`translate(${onDelete && !node.isActive ? NODE_W - 46 : NODE_W - 24}, ${NODE_H - 24})`}
         onClick={(e) => { e.stopPropagation(); if (!wasDragged()) copyReferral(node.memberCode) }}
         className="cursor-pointer"
       >
@@ -148,6 +150,18 @@ function NodeCard({ ln, onClick, wasDragged }: NodeCardProps) {
           ? <Check x={4} y={4} width={10} height={10} color="#34D399" />
           : <Link2 x={4} y={4} width={10} height={10} color="#98A2B8" />}
       </g>
+      {/* Delete button — only shown on inactive nodes when the admin passes onDelete */}
+      {onDelete && !node.isActive && (
+        <g
+          transform={`translate(${NODE_W - 24}, ${NODE_H - 24})`}
+          onClick={(e) => { e.stopPropagation(); if (!wasDragged()) onDelete(node.memberCode, node.name) }}
+          className="cursor-pointer"
+        >
+          <title>{t('tree.delete')}</title>
+          <rect width={18} height={18} rx={5} fill="#2D1010" stroke="#4A1A1A" strokeWidth={1} />
+          <Trash2 x={4} y={4} width={10} height={10} color="#F87171" />
+        </g>
+      )}
     </g>
   )
 }
@@ -166,6 +180,8 @@ interface Props {
   /** When provided, zooming out past the fit scale loads one more level.
    *  Omitted by the compact Dashboard tree, which stays at a fixed depth. */
   requestDeeper?: () => void
+  /** When provided, a trash icon is shown on inactive nodes (admin view only). */
+  onDelete?: (code: string, name: string) => void
 }
 
 export function BinaryTree({
@@ -178,6 +194,7 @@ export function BinaryTree({
   canGoBack = false,
   isFetching = false,
   requestDeeper,
+  onDelete,
 }: Props) {
   const { t } = useTranslation()
   const containerRef = useRef<HTMLDivElement>(null)
@@ -459,6 +476,7 @@ export function BinaryTree({
                         ln={ln}
                         onClick={handleNodeClick}
                         wasDragged={() => dragRef.current.moved}
+                        onDelete={onDelete}
                       />
                     ))}
                   </svg>

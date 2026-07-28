@@ -28,6 +28,7 @@ import {
 } from "../services/productService.js";
 import { postLedgerTxn } from "../workers/ledger.js";
 import { confirmOrder, createOrder } from "../services/orderService.js";
+import { deleteInactiveMember } from "../services/placement.js";
 
 export async function adminRoutes(app: FastifyInstance) {
 	const auth = { preHandler: [app.requireAdmin] };
@@ -1209,6 +1210,25 @@ export async function adminRoutes(app: FastifyInstance) {
 				],
 			);
 		});
+		return { ok: true };
+	});
+
+	// ===== Network tree — admin tree management =====
+
+	// DELETE /admin/network/:memberCode — hard-delete an inactive, childless leaf.
+	// Guards: not management, not active, no downline, no live orders (409 for each).
+	// See services/placement.ts deleteInactiveMember for the FK-ordered cleanup.
+	app.delete("/network/:memberCode", auth, async (req, reply) => {
+		const { memberCode } = req.params as { memberCode: string };
+		const actor = req.user as { sub: string };
+		try {
+			await deleteInactiveMember(actor.sub, memberCode);
+		} catch (e: unknown) {
+			const err = e as Error & { statusCode?: number };
+			return reply
+				.status(err.statusCode ?? 500)
+				.send({ error: err.message });
+		}
 		return { ok: true };
 	});
 

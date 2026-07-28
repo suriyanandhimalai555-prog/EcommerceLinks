@@ -81,21 +81,24 @@ export async function postLedgerTxn(
 	return true;
 }
 
-// Split a bonus into the amount that fits under the per-cutoff cap (wallet)
-// and the overage (deferred_bonus). Pure — unit-tested in test/unit/ledger.test.ts.
+// Split a bonus into the amount that fits under the per-cutoff cap (wallet) and
+// the overage above the cap. Pure — unit-tested in test/unit/ledger.test.ts.
+// The overage is forfeited by creditBonusWithCap (see below).
 export function splitAgainstCap(
 	bonusPaise: bigint,
 	alreadyEarnedPaise: bigint,
 	capPaise: bigint,
-): { walletAmt: bigint; defAmt: bigint } {
+): { walletAmt: bigint; overflowAmt: bigint } {
 	const headroom = capPaise - alreadyEarnedPaise;
 	const walletAmt =
 		bonusPaise < headroom ? bonusPaise : headroom > 0n ? headroom : 0n;
-	return { walletAmt, defAmt: bonusPaise - walletAmt };
+	return { walletAmt, overflowAmt: bonusPaise - walletAmt };
 }
 
 // Credit a bonus to a member with per-cutoff cap enforcement: wallet up to the
-// cap, overage to deferred_bonus. Runs inside the caller's transaction.
+// cap, and the overage above the ₹1 lakh weekly cap FORFEITED to the system
+// bonus_forfeited account (it never reaches the member, but stays auditable).
+// Runs inside the caller's transaction.
 // Returns postLedgerTxn's result (false = idempotency-key hit, money already moved).
 export async function creditBonusWithCap(
 	c: pg.PoolClient,
@@ -105,21 +108,23 @@ export async function creditBonusWithCap(
 	referenceType: string,
 	referenceId: bigint | null,
 ): Promise<boolean> {
-	// Get member's wallet + deferred accounts
+	// Get member's wallet account
 	const { rows: accs } = await c.query<{ id: string; kind: string }>(
-		`SELECT id, kind FROM accounts WHERE owner_id=$1 AND kind IN ('wallet','deferred_bonus')`,
+		`SELECT id, kind FROM accounts WHERE owner_id=$1 AND kind='wallet'`,
 		[memberId],
 	);
 	const walletAccId = BigInt(accs.find((a) => a.kind === "wallet")!.id);
-	const deferredAccId = BigInt(
-		accs.find((a) => a.kind === "deferred_bonus")!.id,
-	);
 
-	// System bonus_expense account
-	const { rows: sysAcc } = await c.query<{ id: string }>(
-		`SELECT id FROM accounts WHERE owner_type='system' AND kind='bonus_expense'`,
+	// System bonus_expense (debit) + bonus_forfeited (overage sink) accounts
+	const { rows: sysAcc } = await c.query<{ id: string; kind: string }>(
+		`SELECT id, kind FROM accounts WHERE owner_type='system' AND kind IN ('bonus_expense','bonus_forfeited')`,
 	);
-	const expenseAccId = BigInt(sysAcc[0].id);
+	const expenseAccId = BigInt(
+		sysAcc.find((a) => a.kind === "bonus_expense")!.id,
+	);
+	const forfeitedAccId = BigInt(
+		sysAcc.find((a) => a.kind === "bonus_forfeited")!.id,
+	);
 
 	// Get or create cutoff_earnings for open cutoff
 	const { rows: cutoffRows } = await c.query<{ id: string }>(
@@ -139,12 +144,16 @@ export async function creditBonusWithCap(
 		[memberId, cutoffId],
 	);
 	const alreadyEarned = toPaise(ceRows[0].earned);
-	const { walletAmt, defAmt } = splitAgainstCap(
+	const { walletAmt, overflowAmt } = splitAgainstCap(
 		bonusPaise,
 		alreadyEarned,
 		BigInt(CFG.CUTOFF_CAP_PAISE),
 	);
 
+	// Double-entry: expense debited the full bonus; the part that fits under the
+	// cap credits the member's wallet, the overage is forfeited to the system
+	// bonus_forfeited account (D total === C total, always non-zero since bonuses
+	// are ≥ ₹1000, so postLedgerTxn's idempotency behaves exactly as before).
 	const legs: LedgerLeg[] = [
 		{ accountId: expenseAccId, direction: "D", amountPaise: bonusPaise },
 	];
@@ -154,17 +163,18 @@ export async function creditBonusWithCap(
 			direction: "C",
 			amountPaise: walletAmt,
 		});
-	if (defAmt > 0n)
+	if (overflowAmt > 0n)
 		legs.push({
-			accountId: deferredAccId,
+			accountId: forfeitedAccId,
 			direction: "C",
-			amountPaise: defAmt,
+			amountPaise: overflowAmt,
 		});
 
 	// Phase 0.2: only update cutoff_earnings when the ledger txn is new.
 	// If postLedgerTxn returns false (idempotency hit) the earnings row has already
 	// been incremented by the original execution — updating again would double-count
-	// against the cap on XAUTOCLAIM re-delivery.
+	// against the cap on XAUTOCLAIM re-delivery. Only walletAmt counts toward the
+	// cap; the forfeited overage is discarded and never tallied.
 	const posted = await postLedgerTxn(
 		c,
 		idempotencyKey,
@@ -174,11 +184,9 @@ export async function creditBonusWithCap(
 	);
 	if (posted) {
 		await c.query(
-			`UPDATE cutoff_earnings
-           SET earned   = earned   + $1,
-               deferred = deferred + $2
-         WHERE member_id=$3 AND cutoff_id=$4`,
-			[fromPaise(walletAmt), fromPaise(defAmt), memberId, cutoffId],
+			`UPDATE cutoff_earnings SET earned = earned + $1
+         WHERE member_id=$2 AND cutoff_id=$3`,
+			[fromPaise(walletAmt), memberId, cutoffId],
 		);
 	}
 	return posted;
