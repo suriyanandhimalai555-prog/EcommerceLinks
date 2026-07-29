@@ -42,7 +42,7 @@ export default function Support() {
             <div className="space-y-1.5">
               <label className="text-sm font-medium text-ink">Message <span className="text-danger">*</span></label>
               <textarea
-                className="w-full rounded-lg border border-surface-line px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-all h-32 resize-none"
+                className="w-full rounded-lg border border-surface-line bg-[#10141F] px-3 py-2.5 text-sm text-ink placeholder:text-ink-muted/60 outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-all h-32 resize-none"
                 placeholder="Describe your issue in detail..."
                 {...register('message')}
               />
