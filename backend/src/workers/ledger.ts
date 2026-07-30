@@ -83,7 +83,7 @@ export async function postLedgerTxn(
 
 // Split a bonus into the amount that fits under the per-cutoff cap (wallet) and
 // the overage above the cap. Pure — unit-tested in test/unit/ledger.test.ts.
-// The overage is forfeited by creditBonusWithCap (see below).
+// The disposition of the overage depends on the caller's mode parameter.
 export function splitAgainstCap(
 	bonusPaise: bigint,
 	alreadyEarnedPaise: bigint,
@@ -95,9 +95,18 @@ export function splitAgainstCap(
 	return { walletAmt, overflowAmt: bonusPaise - walletAmt };
 }
 
-// Credit a bonus to a member with per-cutoff cap enforcement: wallet up to the
-// cap, and the overage above the ₹1 lakh weekly cap FORFEITED to the system
-// bonus_forfeited account (it never reaches the member, but stays auditable).
+// Credit a bonus to a member with per-cutoff cap enforcement.
+//
+// mode="forfeit" (ongoing/immediate accruals, BR-12):
+//   Overage above the ₹1 lakh weekly cap is FORFEITED to the system
+//   bonus_forfeited account. It never reaches the member but stays auditable.
+//
+// mode="defer" (qualification-backlog release, BR-13):
+//   Overage above the cap is credited to the member's own deferred_bonus
+//   account. sweepDeferred drains it at ₹1 lakh per subsequent cutoff window
+//   until exhausted. This avoids forfeiting money the member had already earned
+//   but was held behind the qualification gate.
+//
 // Runs inside the caller's transaction.
 // Returns postLedgerTxn's result (false = idempotency-key hit, money already moved).
 export async function creditBonusWithCap(
@@ -107,10 +116,11 @@ export async function creditBonusWithCap(
 	idempotencyKey: string,
 	referenceType: string,
 	referenceId: bigint | null,
+	mode: "forfeit" | "defer" = "forfeit",
 ): Promise<boolean> {
 	// Get member's wallet account
 	const { rows: accs } = await c.query<{ id: string; kind: string }>(
-		`SELECT id, kind FROM accounts WHERE owner_id=$1 AND kind='wallet'`,
+		`SELECT id, kind FROM accounts WHERE owner_id=$1 AND kind IN ('wallet','deferred_bonus')`,
 		[memberId],
 	);
 	const walletAcc = accs.find((a) => a.kind === "wallet");
@@ -118,7 +128,7 @@ export async function creditBonusWithCap(
 		throw new Error(`Member ${memberId} has no wallet account`);
 	const walletAccId = BigInt(walletAcc.id);
 
-	// System bonus_expense (debit) + bonus_forfeited (overage sink) accounts.
+	// System bonus_expense (debit) + bonus_forfeited (overage sink when mode="forfeit").
 	// bonus_forfeited is created by migration 036 — surface a clear error if it's
 	// missing (code deployed ahead of the migration) rather than a raw TypeError
 	// that would stall the ledger consumer on an opaque `.find(...)!` crash.
@@ -135,6 +145,12 @@ export async function creditBonusWithCap(
 		);
 	const expenseAccId = BigInt(expenseAcc.id);
 	const forfeitedAccId = BigInt(forfeitedAcc.id);
+
+	// Member's deferred_bonus account (used when mode="defer").
+	const deferredAcc = accs.find((a) => a.kind === "deferred_bonus");
+	if (mode === "defer" && !deferredAcc)
+		throw new Error(`Member ${memberId} has no deferred_bonus account`);
+	const deferredAccId = deferredAcc ? BigInt(deferredAcc.id) : null;
 
 	// Get or create cutoff_earnings for open cutoff
 	const { rows: cutoffRows } = await c.query<{ id: string }>(
@@ -161,9 +177,10 @@ export async function creditBonusWithCap(
 	);
 
 	// Double-entry: expense debited the full bonus; the part that fits under the
-	// cap credits the member's wallet, the overage is forfeited to the system
-	// bonus_forfeited account (D total === C total, always non-zero since bonuses
-	// are ≥ ₹1000, so postLedgerTxn's idempotency behaves exactly as before).
+	// cap credits the member's wallet; the overage goes to either bonus_forfeited
+	// (mode="forfeit") or deferred_bonus (mode="defer").
+	// D total === C total always; bonuses are ≥ ₹1000 so postLedgerTxn's
+	// idempotency check works correctly.
 	const legs: LedgerLeg[] = [
 		{ accountId: expenseAccId, direction: "D", amountPaise: bonusPaise },
 	];
@@ -173,18 +190,29 @@ export async function creditBonusWithCap(
 			direction: "C",
 			amountPaise: walletAmt,
 		});
-	if (overflowAmt > 0n)
-		legs.push({
-			accountId: forfeitedAccId,
-			direction: "C",
-			amountPaise: overflowAmt,
-		});
+	if (overflowAmt > 0n) {
+		if (mode === "defer" && deferredAccId !== null) {
+			// BR-13: backlog overage deferred to drain over subsequent windows
+			legs.push({
+				accountId: deferredAccId,
+				direction: "C",
+				amountPaise: overflowAmt,
+			});
+		} else {
+			// BR-12: ongoing overage forfeited to system
+			legs.push({
+				accountId: forfeitedAccId,
+				direction: "C",
+				amountPaise: overflowAmt,
+			});
+		}
+	}
 
 	// Phase 0.2: only update cutoff_earnings when the ledger txn is new.
 	// If postLedgerTxn returns false (idempotency hit) the earnings row has already
 	// been incremented by the original execution — updating again would double-count
 	// against the cap on XAUTOCLAIM re-delivery. Only walletAmt counts toward the
-	// cap; the forfeited overage is discarded and never tallied.
+	// cap; overflow (forfeited or deferred) is never tallied against it.
 	const posted = await postLedgerTxn(
 		c,
 		idempotencyKey,
@@ -216,7 +244,11 @@ interface AccrualRow {
 // posted=false means a prior partial delivery already moved it.
 // release_seq > 0 means an earlier release was clawed back (qualification
 // revert); the key gains a :seq suffix so the old txn doesn't block re-credit.
-async function releaseAccrual(c: pg.PoolClient, a: AccrualRow): Promise<void> {
+async function releaseAccrual(
+	c: pg.PoolClient,
+	a: AccrualRow,
+	mode: "forfeit" | "defer",
+): Promise<void> {
 	const key =
 		a.release_seq > 0
 			? `pairbonus:${a.pair_id}:${a.beneficiary_id}:${a.release_seq}`
@@ -228,6 +260,7 @@ async function releaseAccrual(c: pg.PoolClient, a: AccrualRow): Promise<void> {
 		key,
 		"pair",
 		BigInt(a.id),
+		mode,
 	);
 	await c.query(
 		`UPDATE pair_accruals SET status='released', released_at=now()
@@ -239,6 +272,8 @@ async function releaseAccrual(c: pg.PoolClient, a: AccrualRow): Promise<void> {
 // Record the accrual for one beneficiary of a completed pair; pay immediately
 // if the beneficiary is already qualified, otherwise leave it pending for
 // releasePendingBonuses.
+// BR-12: ongoing/immediate releases use mode="forfeit" — overage above the cap
+// is discarded to the system, not carried forward.
 export async function accruePairBonus(e: PairBonusAccrued): Promise<void> {
 	await withTxn(async (c) => {
 		const { rows: done } = await c.query(
@@ -278,7 +313,9 @@ export async function accruePairBonus(e: PairBonusAccrued): Promise<void> {
 				"SELECT is_qualified FROM members WHERE id=$1",
 				[e.beneficiary_id],
 			);
-			if (q[0]?.is_qualified) await releaseAccrual(c, accrual);
+			// Immediate release for already-qualified member uses "forfeit" (BR-12):
+			// this is an ongoing accrual, not a qualification-backlog release.
+			if (q[0]?.is_qualified) await releaseAccrual(c, accrual, "forfeit");
 		}
 
 		await c.query(
@@ -289,6 +326,10 @@ export async function accruePairBonus(e: PairBonusAccrued): Promise<void> {
 }
 
 // Retroactive payout: the member just qualified — release everything pending.
+// BR-13: backlog releases use mode="defer" — cap overage is credited to the
+// member's deferred_bonus account (not forfeited) and drains over subsequent
+// cutoff windows via sweepDeferred. This avoids losing money that was already
+// earned but held behind the qualification gate.
 export async function releasePendingBonuses(
 	e: PendingBonusReleaseRequested,
 ): Promise<void> {
@@ -310,7 +351,7 @@ export async function releasePendingBonuses(
 		// Large backlogs make a large txn; per-accrual ledger idempotency keys
 		// keep a mid-txn crash + re-delivery safe. Acceptable at current scale.
 		for (const a of pending) {
-			await releaseAccrual(c, a);
+			await releaseAccrual(c, a, "defer");
 		}
 
 		await c.query(

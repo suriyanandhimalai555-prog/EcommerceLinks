@@ -5,8 +5,6 @@ import type {
 	CounterIncrement,
 	MemberActivated,
 	MemberQualified,
-	PairBonusAccrued,
-	PairCompleted,
 	RankAchieved,
 } from "../events/types.js";
 import { pool, withTxn } from "../lib/db.js";
@@ -67,26 +65,10 @@ export function fanOut(
 	return increments;
 }
 
-// A completed pair pays the pair owner AND every placement ancestor ₹1000 each
-// ("every member is the root of their own subtree"). One PairBonusAccrued per
-// beneficiary; deterministic ids make XAUTOCLAIM re-delivery safe.
-export function fanOutPairBonus(
-	e: PairCompleted,
-	ownerPlacementPath: bigint[],
-): PairBonusAccrued[] {
-	const beneficiaries = [BigInt(e.member_id), ...ownerPlacementPath];
-	return beneficiaries.map((beneficiaryId) => ({
-		event_id: deterministicIncrementId(e.event_id, beneficiaryId),
-		event_type: "PairBonusAccrued",
-		occurred_at: e.occurred_at,
-		schema_version: 1,
-		beneficiary_id: Number(beneficiaryId),
-		pair_id: e.pair_id,
-		pair_member_id: e.member_id,
-		amount_paise: e.amount_paise,
-		source_event_id: e.event_id,
-	}));
-}
+// Note: fanOutPairBonus was removed in income model v2 (carry-forward, BR-7).
+// Under v2, pair bonus accrues only to the node that matched the pair, not its
+// ancestors. The PairBonusAccrued event is now written via writeOutbox inside
+// counterPair.ts, eliminating the direct-publish exception that existed here.
 
 export async function run() {
 	await startConsumer({
@@ -96,11 +78,13 @@ export async function run() {
 		onMessage: async (value) => {
 			const e = JSON.parse(value) as AvgEvent;
 
+			// PairCompleted is now written by counterPair.ts for audit/observability;
+			// fanout no longer fans out pair bonuses (BR-7). Only counter increments
+			// and qualification signals are produced here.
 			if (
 				e.event_type !== "MemberActivated" &&
 				e.event_type !== "MemberQualified" &&
-				e.event_type !== "RankAchieved" &&
-				e.event_type !== "PairCompleted"
+				e.event_type !== "RankAchieved"
 			)
 				return;
 
@@ -126,25 +110,15 @@ export async function run() {
 			const placementPath = (mRows[0].placement_path ?? []).map(BigInt);
 			const placementSides = mRows[0].placement_sides ?? [];
 
-			// Produce first, then record — at-least-once is safe; downstream dedupes via
-			// deterministic uuidv5 ids (sourceEventId:ancestorId).
-			if (e.event_type === "PairCompleted") {
-				// For PairCompleted, member_id is the pair owner: bonus accruals go to
-				// the owner + every placement ancestor, straight to the ledger stream
-				// (sanctioned direct-publish exception, same as increments).
-				const accruals = fanOutPairBonus(e, placementPath);
-				for (const acc of accruals) {
-					await publishToStream(TOPICS.ledger.name, JSON.stringify(acc));
-				}
-			} else {
-				const increments = fanOut(
-					e as MemberActivated | MemberQualified | RankAchieved,
-					placementPath,
-					placementSides,
-				);
-				for (const inc of increments) {
-					await publishToStream(TOPICS.increments.name, JSON.stringify(inc));
-				}
+			// Produce increments, then record — at-least-once is safe; downstream dedupes
+			// via deterministic uuidv5 ids (sourceEventId:ancestorId).
+			const increments = fanOut(
+				e as MemberActivated | MemberQualified | RankAchieved,
+				placementPath,
+				placementSides,
+			);
+			for (const inc of increments) {
+				await publishToStream(TOPICS.increments.name, JSON.stringify(inc));
 			}
 
 			await withTxn(async (c) => {

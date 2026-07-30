@@ -3,7 +3,6 @@ import { run as cutoffRun } from "./cutoff.js";
 import { run as fanoutRun } from "./fanout.js";
 import { run as ledgerRun } from "./ledger.js";
 import { run as outboxRelayRun } from "./outboxRelay.js";
-import { run as pairCompleteRun } from "./pairComplete.js";
 import { run as qualificationRun } from "./qualification.js";
 import { run as rankRun } from "./rank.js";
 import { run as reconcilerRun } from "./reconciler.js";
@@ -15,14 +14,15 @@ import { run as reconcilerRun } from "./reconciler.js";
 //
 // Note: the auto-payout worker (payout.ts run()) has been removed. Payouts are
 // now member-initiated withdrawals reviewed and approved by an admin.
+// Note: pairComplete.ts was removed in income-model v2 (carry-forward). Pair
+// detection now happens inside counterPair.ts using the set-to-target algorithm.
 
-console.log("[avg-workers] starting nine worker loops");
+console.log("[avg-workers] starting eight worker loops");
 
 Promise.all([
 	outboxRelayRun(),
 	fanoutRun(),
 	counterPairRun(),
-	pairCompleteRun(),
 	qualificationRun(),
 	ledgerRun(),
 	rankRun(),

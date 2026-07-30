@@ -20,7 +20,7 @@ describe('Config constants match DB schema constants (G-8)', () => {
   })
 
   it('PairCompleted outbox event amount_paise comes from CFG (regression guard)', () => {
-    // The value used in pairComplete.ts writeOutbox must equal CFG.PAIR_BONUS_PAISE
+    // The value used in counterPair.ts writeOutbox (PairCompleted + PairBonusAccrued) must equal CFG.PAIR_BONUS_PAISE
     const amountUsedInOutbox = Number(CFG.PAIR_BONUS_PAISE)
     expect(amountUsedInOutbox).toBe(100_000)
   })

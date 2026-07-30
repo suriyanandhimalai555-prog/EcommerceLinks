@@ -1072,8 +1072,9 @@ export async function frontendRoutes(app: FastifyInstance) {
 				right_active: string;
 				left_qualified: string;
 				right_qualified: string;
+				pairs_matched: string;
 			}>(
-				"SELECT left_active, right_active, left_qualified, right_qualified FROM member_counters WHERE member_id = $1",
+				"SELECT left_active, right_active, left_qualified, right_qualified, pairs_matched FROM member_counters WHERE member_id = $1",
 				[memberId],
 			),
 			pool().query<{ balance: string }>(
@@ -1091,13 +1092,11 @@ export async function frontendRoutes(app: FastifyInstance) {
          WHERE a.owner_id = $1 AND a.kind = 'withdrawable'`,
 				[memberId],
 			),
-			// Income = released accruals; pending = accrued but awaiting the
-			// member's own qualification. pairs_matched (deprecated) is replaced by
-			// the count of pairs completed anywhere in the member's subtree.
-			pool().query<{ released: string; pending: string; cnt: string }>(
+			// Income = released accruals for M's own pairs (v2: one accrual per pair,
+			// owner only). pairs_matched is sourced from member_counters (live since 038).
+			pool().query<{ released: string; pending: string }>(
 				`SELECT COALESCE(SUM(amount) FILTER (WHERE status='released'),0) AS released,
-                COALESCE(SUM(amount) FILTER (WHERE status='pending'),0)  AS pending,
-                COUNT(*) AS cnt
+                COALESCE(SUM(amount) FILTER (WHERE status='pending'),0)  AS pending
          FROM pair_accruals WHERE beneficiary_id = $1`,
 				[memberId],
 			),
@@ -1129,10 +1128,12 @@ export async function frontendRoutes(app: FastifyInstance) {
 			right_active: "0",
 			left_qualified: "0",
 			right_qualified: "0",
+			pairs_matched: "0",
 		};
 		const leftActive = parseInt(c.left_active);
 		const rightActive = parseInt(c.right_active);
-		const pairsMatched = parseInt(accrualRes.rows[0]?.cnt ?? "0");
+		// v2: pairs_matched = LEAST(left_active, right_active), live in member_counters.
+		const pairsMatched = parseInt(c.pairs_matched ?? "0");
 		const leftQ = parseInt(c.left_qualified);
 		const rightQ = parseInt(c.right_qualified);
 
@@ -1172,12 +1173,17 @@ export async function frontendRoutes(app: FastifyInstance) {
 				rightQualified: rightQ,
 				pairsMatched,
 			},
-			// Display-only: which leg has more activations and by how much.
-			// (Income no longer depends on leg balance.)
-			carryForward: {
-				side: leftActive > rightActive ? "L" : "R",
-				excess: Math.abs(leftActive - rightActive),
-			},
+			// v2: carry-forward is the sole income driver. carryLeft/carryRight show
+			// the unmatched surplus on each leg. By invariant LEAST(L,R)=pairsMatched,
+			// so at most one leg has surplus; the other is always 0.
+			carryForward: (() => {
+				const carryLeft = leftActive - pairsMatched;
+				const carryRight = rightActive - pairsMatched;
+				return {
+					side: carryLeft >= carryRight ? "L" : "R",
+					excess: Math.max(carryLeft, carryRight),
+				};
+			})(),
 			todayPairBonusPaise: Number(toPaise(todayRes.rows[0]?.total ?? "0")),
 			rank: {
 				current: currentRank,

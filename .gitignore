@@ -22,3 +22,4 @@ node_modules/
 .vitest/
 coverage/
 .gstack/
+scripts/out/*.csv

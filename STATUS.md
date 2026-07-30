@@ -20,7 +20,7 @@
 | Area | Status |
 |---|---|
 | `src/lib/streams.ts` — Redis Streams transport (`publishToStream`, `startConsumer`, `XAUTOCLAIM` recovery) | ✅ Done |
-| `workers/all.ts` — all nine worker loops in one `avg-workers` process | ✅ Done |
+| `workers/all.ts` — all eight worker loops in one `avg-workers` process | ✅ Done |
 | `outboxRelay`, `fanout`, `counterPair`, `qualification`, `ledger`, `rank` — Kafka replaced with Redis Streams | ✅ Done |
 | `cutoff`, `payout`, `reconciler` — timer workers; no transport change needed | ✅ Done |
 | `kafkajs` dependency removed | ✅ Done |
@@ -394,3 +394,36 @@ Then refresh the browser — real counts should replace zeros on Dashboard, Netw
 - **`POST /auth/register` accepts an optional `leg` (`L`/`R`)** again — but link-driven, not a form selector (the Phase 7 removal of `preferredLeg` still stands for the UI). Omitted → auto-fill (first referral → L, second → R, third → 409), the member's generic share link and the `simulate.ts`/test path — unchanged. Sent → the recruit is **pinned** to that slot, or **409 "Left/Right position already filled"** if taken (no silent fallback to the other leg). `nextChildPosition` → `resolvePosition(sponsorId, leg, c)` in `services/placement.ts`, under the existing sponsor `FOR UPDATE` lock; the `uq_placement_slot` retry branch is untouched (the preferred-taken error is a `statusCode` 409, not a `23505` conflict, so it propagates instead of retrying into the other leg).
 - **Tree UI:** tapping a **vacant** slot now copies a leg-specific link (`?sponsor=CODE&leg=L|R`) using the slot's own side (`useTreeLayout.ts` already tags vacant nodes `L`/`R`); a member's own node copy button stays generic (auto-fill). `frontend/src/components/tree/BinaryTree.tsx`, `pages/auth/Register.tsx` (reads+forwards `leg`), `types/api.ts` (`RegisterReq.leg?`).
 - **Tests:** new **LEG** suite in `test/integration/http.test.ts` — `leg=R` lands R with L still open; `leg=L` when L filled → 409 with R untouched; invalid `leg` → 400. Existing CAP + concurrent-race tests unchanged.
+
+## 2026-07-29 — Income model v2: carry-forward pair matching (PR1 — migration 038)
+
+Replaces the "2 Direct Pair Matching" model (migration 020) with unbounded carry-forward matching. Worker count: nine → **eight** (`pairComplete.ts` deleted).
+
+| Area | Change | Files |
+|---|---|---|
+| Migration 038 | `DROP INDEX uq_pairs_one_per_member`; `CREATE INDEX idx_pairs_member_seq ON pairs (member_id, sequence_no)`; `COMMENT ON COLUMN member_counters.pairs_matched` updated (live, not deprecated) | `db/migrations/038_multi_pair_carry_forward.sql` |
+| `counterPair.ts` rewritten | Reads `pairs_matched` under `FOR UPDATE`; mints pairs to target via `INSERT … ON CONFLICT DO NOTHING`; writes `PairCompleted` (audit, random UUID) and `PairBonusAccrued` (deterministic `pairAccrualEventId`) per pair inside the existing txn; sets `pairs_matched=target` in the final UPDATE (D-3 set-to-target) | `src/workers/counterPair.ts` |
+| `pairComplete.ts` deleted | Pair detection now inside `counterPair.ts`; `avg-pair-complete` consumer group is now dead history | `src/workers/pairComplete.ts` (deleted) |
+| `fanout.ts` stripped of pair-bonus fan-out | `fanOutPairBonus` and `PairCompleted` branch removed; only `MemberActivated`/`MemberQualified`/`RankAchieved` counter-increment fan-out remains | `src/workers/fanout.ts` |
+| `ledger.ts` cap mode split | `creditBonusWithCap(mode)`: `"forfeit"` → immediate overage to `bonus_forfeited` (BR-12); `"defer"` → overage to `deferred_bonus` (BR-13, backlog release via `releasePendingBonuses`) | `src/workers/ledger.ts` |
+| `reconciler.ts` extended | `pairs_drift` check: asserts `pairs_matched = LEAST(L,R)`, pair row count, and `COUNT(pair_accruals per pair) = 1` (BR-7 invariant) | `src/workers/reconciler.ts` |
+| `lib/ids.ts` | Added `pairAccrualEventId(pairId, beneficiaryId)` — `uuidv5("pairbonus:…", FANOUT_NS)` (D-9 deterministic event id) | `src/lib/ids.ts` |
+| Tests | Unit: carry-forward target math, idempotency, chk_pairs_le_min invariant; Integration: pairAccrual (BR-7 no fan-out, worked example, idempotency, cap BR-12/BR-13), qualificationRevert (v2 own-pair scenario) | `test/unit/counterPair.test.ts`, `test/integration/pairAccrual.test.ts`, `test/integration/qualificationRevert.test.ts` |
+
+**Worked example (ground truth under v2):** 02 earns ₹1,000 from its own pair (L=03, R=04) when both activate and 02 qualifies. 03's pair (05, 06) accrues ₹1,000 to 03 only — 02 receives nothing from 03's pair. All accruals pend until earner qualifies; backlog release defers overage to `deferred_bonus`, immediate release forfeits overage to `bonus_forfeited`.
+
+**Migration to apply (dev copy):** `npm run migrate` (applies `038_multi_pair_carry_forward.sql`).
+
+**⚠ Production deploy requires the T6 backfill script (PR2) and D-7 gate:** `pairComplete.ts` must stop before migration; run `backfillPairsV2.ts --dry-run` before `--execute`; resume workers only after backfill confirms zero drift.
+
+## 2026-07-29 — Income model v2 surfaces + backfill script (PR2 — T6, T7)
+
+| Area | Change | Files |
+|---|---|---|
+| T6 — Backfill script | `scripts/backfillPairsV2.ts` (`npm run backfill:pairs`): dry-run default; per-member txn; re-runnable (ON CONFLICT DO NOTHING); production-host guard (`hayabusa.proxy.rlwy.net` blocked unless `--i-know`); blocking precheck on `release_seq > 0`; deletes pending v1 ancestor fan-out accruals; inserts v2 pairs + accruals; sets `pairs_matched=target`; emits `PendingBonusReleaseRequested` for qualified members | `scripts/backfillPairsV2.ts`, `package.json` |
+| T7 — API: pairsMatched source | `/dashboard` now reads `pairs_matched` from `member_counters` (live, since 038) — not `COUNT(*) FROM pair_accruals` (v1 count) | `src/api/frontend.ts` |
+| T7 — API: carryForward v2 | `carryForward.{side,excess}` now computed as `left_active-pairs_matched` / `right_active-pairs_matched`; by invariant LEAST(L,R)=pairs_matched so at most one leg has surplus | `src/api/frontend.ts` |
+| T7 — Frontend: deferredBalancePaise | Dashboard Pair Summary card shows `deferredBalancePaise` row when non-zero (BR-13 backlog releases defer overage there; meaningful again under v2) | `frontend/src/pages/Dashboard.tsx` |
+| T7 — i18n | `pairs.subtitle` updated (no more "and every upline"); `pairs.legBalance` → "Carry Forward"; `pairs.legBalanceNote` updated for v2 semantics; `pairs.deferredBonus` added | `frontend/src/i18n/en.json`, `ta.json` |
+| T7 — API contract | `DashboardCounters.pairsMatched` and `Dashboard.carryForward` doc comments updated | `frontend/src/types/api.ts` |
+| T9 — E2E integration test | 10-member binary tree with scripted activation order; asserts per-node `pairs_matched`, total 9 pairs, BR-7 (one accrual per pair), qualification+release for M0/P1/P2, BR-14 reconciler invariants | `test/integration/e2e.test.ts` |

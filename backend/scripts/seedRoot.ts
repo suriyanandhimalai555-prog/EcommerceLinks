@@ -57,9 +57,13 @@ export async function seedRoot(): Promise<void> {
       `INSERT INTO accounts (owner_type, owner_id, kind) VALUES ('member',$1,'deferred_bonus') RETURNING id`,
       [rootId]
     )
+    const { rows: xRows } = await c.query<{ id: string }>(
+      `INSERT INTO accounts (owner_type, owner_id, kind) VALUES ('member',$1,'withdrawable') RETURNING id`,
+      [rootId]
+    )
     await c.query(
-      'INSERT INTO wallet_balances (account_id, balance) VALUES ($1,0),($2,0)',
-      [wRows[0].id, dRows[0].id]
+      'INSERT INTO wallet_balances (account_id, balance) VALUES ($1,0),($2,0),($3,0)',
+      [wRows[0].id, dRows[0].id, xRows[0].id]
     )
 
     console.log(`Root member created: ${rootCode} (${ROOT_SEED_EMAIL})`)

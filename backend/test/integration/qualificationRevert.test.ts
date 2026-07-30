@@ -1,14 +1,17 @@
 /**
- * Integration test for the 2026-07 qualification revert
- * (scripts/revertQualification.ts) and the tightened gate.
+ * Integration test for the qualification revert
+ * (scripts/revertQualification.ts) — v2 income model.
  *
- * Recreates the production bug state: P qualified under the old one-child rule
- * (one active direct + active grandchild) with a released pair bonus, then:
- *   revert  → unqualified, money clawed back, accrual pending (release_seq+1),
- *             upline qualified counters restored, audit row written
- *   re-qualify (second direct activates) → pending accrual re-releases under
- *             the :seq idempotency key — the original ledger txn must NOT
- *             swallow the re-credit.
+ * Scenario under v2 (carry-forward pairs, no fan-out):
+ *   P → L (left), R (right); L → G1 (left)
+ *   All four activate → P mints pair seq=1 (L vs R), P qualifies,
+ *   pair accrual releases → P wallet = ₹1,000.
+ *
+ *   revert → P unqualified, money clawed back, accrual pending (release_seq=1),
+ *            upline qualified counters restored, audit row written.
+ *
+ *   re-qualify (conditions still hold) → pending accrual re-releases under
+ *   the :1 idempotency key so the original txn does NOT swallow the re-credit.
  *
  * Requires: Postgres + Redis, migrations applied, root + management seeded.
  */
@@ -17,15 +20,14 @@ import { randomUUID } from 'crypto'
 import { pool, withTxn } from '../../src/lib/db.js'
 import { registerMember } from '../../src/services/placement.js'
 import { evaluateQualification } from '../../src/services/qualification.js'
-import { detectPairCompletion } from '../../src/workers/pairComplete.js'
-import { fanOut, fanOutPairBonus } from '../../src/workers/fanout.js'
+import { fanOut } from '../../src/workers/fanout.js'
 import { applyIncrements } from '../../src/workers/counterPair.js'
-import { accruePairBonus, releasePendingBonuses } from '../../src/workers/ledger.js'
+import { releasePendingBonuses } from '../../src/workers/ledger.js'
 import { writeOutbox } from '../../src/events/outbox.js'
 import { ensureCutoffExists } from '../../src/workers/cutoff.js'
 import { toPaise } from '../../src/lib/money.js'
 import { CFG } from '../../src/config.js'
-import type { MemberQualified, PairCompleted, PendingBonusReleaseRequested } from '../../src/events/types.js'
+import type { MemberQualified, PairBonusAccrued, PendingBonusReleaseRequested } from '../../src/events/types.js'
 import { revertQualifications } from '../../scripts/revertQualification.js'
 import { registerAnchor, uniqueEmail, uniquePhone } from './helpers.js'
 
@@ -37,11 +39,26 @@ async function register(sponsorCode: string, name: string) {
   })
 }
 
+/**
+ * v2 activate: set is_active, then send a CounterIncrement to each ancestor.
+ */
 async function activate(memberId: bigint) {
-  await pool().query(
-    'UPDATE members SET is_active=TRUE, activated_at=now() WHERE id=$1', [memberId],
+  await pool().query('UPDATE members SET is_active=TRUE, activated_at=now() WHERE id=$1', [memberId])
+  const { rows: m } = await pool().query<{ placement_path: number[]; placement_sides: string[] }>(
+    'SELECT placement_path, placement_sides FROM members WHERE id=$1', [memberId],
   )
-  await detectPairCompletion(memberId, randomUUID())
+  if (!m[0] || !m[0].placement_path?.length) return
+  for (let i = 0; i < m[0].placement_path.length; i++) {
+    const ancestorId = BigInt(m[0].placement_path[i])
+    const side = m[0].placement_sides[i] as 'L' | 'R'
+    const eventId = randomUUID()
+    await applyIncrements(ancestorId, [{
+      event_id: eventId, event_type: 'CounterIncrement',
+      occurred_at: new Date().toISOString(), schema_version: 1,
+      ancestor_id: Number(ancestorId), side, counter_type: 'active',
+      source_member_id: Number(memberId), source_event_id: eventId,
+    }])
+  }
 }
 
 async function walletPaise(memberId: bigint): Promise<bigint> {
@@ -53,7 +70,7 @@ async function walletPaise(memberId: bigint): Promise<bigint> {
   return toPaise(rows[0]?.balance ?? '0')
 }
 
-async function qualifiedCounters(memberIds: string[]) {
+async function qualifiedCounters(memberIds: number[]) {
   const { rows } = await pool().query<{ member_id: string; left_qualified: string; right_qualified: string }>(
     'SELECT member_id, left_qualified, right_qualified FROM member_counters WHERE member_id = ANY($1)',
     [memberIds],
@@ -61,63 +78,80 @@ async function qualifiedCounters(memberIds: string[]) {
   return new Map(rows.map((r) => [r.member_id, `${r.left_qualified}/${r.right_qualified}`]))
 }
 
-async function deliverAccruals(ownerId: bigint) {
-  const { rows } = await pool().query<{ payload: PairCompleted }>(
-    `SELECT payload FROM events_outbox WHERE event_type='PairCompleted' AND aggregate_id=$1`,
-    [ownerId],
+/** Deliver PairBonusAccrued events written by counterPair for the matching node. */
+async function deliverAccruals(matchingNodeId: bigint) {
+  const { rows } = await pool().query<{ payload: PairBonusAccrued }>(
+    `SELECT payload::jsonb AS payload FROM events_outbox
+      WHERE event_type='PairBonusAccrued' AND aggregate_id=$1`,
+    [matchingNodeId],
   )
-  expect(rows.length).toBe(1)
-  const { rows: m } = await pool().query<{ placement_path: string[] }>(
-    'SELECT placement_path FROM members WHERE id=$1', [ownerId],
-  )
-  const accruals = fanOutPairBonus(rows[0].payload, (m[0].placement_path ?? []).map(BigInt))
-  for (const a of accruals) await accruePairBonus(a)
+  for (const r of rows) {
+    // accruePairBonus via re-import avoids circular reference with the ledger worker
+    const { accruePairBonus } = await import('../../src/workers/ledger.js')
+    await accruePairBonus(r.payload)
+  }
 }
 
-describe('Qualification revert + tightened gate round trip', () => {
-  it('claws back, restores counters, and re-releases after real re-qualification', async () => {
+/** Feed the PendingBonusReleaseRequested written by evaluateQualification. */
+async function deliverRelease(memberId: bigint) {
+  const { rows } = await pool().query<{ payload: PendingBonusReleaseRequested }>(
+    `SELECT payload::jsonb AS payload FROM events_outbox
+      WHERE event_type='PendingBonusReleaseRequested' AND aggregate_id=$1`,
+    [memberId],
+  )
+  expect(rows.length).toBeGreaterThanOrEqual(1)
+  for (const r of rows) await releasePendingBonuses(r.payload)
+}
+
+describe('Qualification revert + re-release round trip (v2 — own pair, no fan-out)', () => {
+  it('claws back, restores qualified counters, and re-releases after re-qualification', async () => {
     await ensureCutoffExists()
     const ts = Date.now().toString().slice(-6)
 
-    // P → directs L,R; L → directs G1,G2 (P's grandchildren)
+    // P → L (left), R (right); L → G1 (left)
+    // All four activate → P mints pair seq=1 (L vs R); P qualifies (2 directs + G1 grandchild)
     const { memberId: pId, memberCode: pCode } = await registerAnchor(`RVPx${ts}`)
     const { memberId: lId, memberCode: lCode } = await register(pCode, `RVLx${ts}`)
     const { memberId: rId } = await register(pCode, `RVRx${ts}`)
     const { memberId: g1 } = await register(lCode, `RVG1x${ts}`)
-    const { memberId: g2 } = await register(lCode, `RVG2x${ts}`)
 
+    // P must be active to qualify
     await activate(pId)
-    await activate(lId)
-    await activate(g1)
+    await activate(lId)   // P.leftActive=1
+    await activate(g1)    // P.leftActive=2 (G1 on P's left via L); L.leftActive=1
+    await activate(rId)   // P.rightActive=1 → P mints pair seq=1 (L vs R)
 
-    // New rule: one active direct + grandchild does NOT qualify P
-    const underNewRule = await withTxn(async (c) => evaluateQualification(pId, c))
-    expect(underNewRule).toBe(false)
+    // P's pair accrual is in the outbox; deliver it (P not qualified yet → pending)
+    await deliverAccruals(pId)
+    expect(await walletPaise(pId)).toBe(0n)
 
-    // Recreate the legacy state exactly as the old pipeline left it:
-    // flag + MemberQualified outbox event + processed counter fan-out.
-    const qualEvent: MemberQualified = {
-      event_id: randomUUID(), event_type: 'MemberQualified',
-      occurred_at: new Date().toISOString(), schema_version: 1,
-      member_id: Number(pId), via_child_id: Number(lId), via_grandchild_id: Number(g1),
-    }
-    await withTxn(async (c) => {
-      await c.query('UPDATE members SET is_qualified=TRUE, qualified_at=now() WHERE id=$1', [pId])
-      await writeOutbox(c, qualEvent)
-    })
-    const { rows: pm } = await pool().query<{ placement_path: string[]; placement_sides: string[] }>(
+    // Evaluate qualification: P has 2 active directs (L, R) + grandchild G1 → qualifies
+    const qualified = await withTxn(async (c) => evaluateQualification(pId, c))
+    expect(qualified).toBe(true)
+
+    // Simulate the MemberQualified fan-out to update upline qualified counters.
+    // Read the MemberQualified event written by evaluateQualification.
+    const { rows: mqRows } = await pool().query<{ payload: MemberQualified }>(
+      `SELECT payload::jsonb AS payload FROM events_outbox
+        WHERE event_type='MemberQualified' AND aggregate_id=$1`, [pId],
+    )
+    expect(mqRows.length).toBe(1)
+    const qualEvent = mqRows[0].payload
+
+    const { rows: pm } = await pool().query<{ placement_path: number[]; placement_sides: string[] }>(
       'SELECT placement_path, placement_sides FROM members WHERE id=$1', [pId],
     )
-    const path = (pm[0].placement_path ?? [])
+    const path = pm[0].placement_path ?? []
+    // Capture before-fanout state of upline qualified counters
     const before = await qualifiedCounters(path)
+    // Apply qualified fan-out (mirrors what fanout.ts + counterPair.ts would do)
     for (const inc of fanOut(qualEvent, path.map(BigInt), pm[0].placement_sides ?? [])) {
       await applyIncrements(BigInt(inc.ancestor_id), [inc])
     }
 
-    // G2 activates → pair completes at L → P (qualified) is paid immediately
-    await activate(g2)
-    await deliverAccruals(lId)
-    expect(await walletPaise(pId)).toBe(BONUS)
+    // Release the pending pair accrual (P is now qualified)
+    await deliverRelease(pId)
+    expect(await walletPaise(pId)).toBe(BONUS) // ₹1,000
 
     // ── The revert ──
     const summary = await revertQualifications({ execute: true, memberIds: [pId] })
@@ -140,7 +174,7 @@ describe('Qualification revert + tightened gate round trip', () => {
     expect(acc[0].release_seq).toBe(1)
     expect(acc[0].released_at).toBeNull()
 
-    // Upline qualified counters restored to their pre-qualification values
+    // Upline qualified counters restored to pre-fanout values
     expect(await qualifiedCounters(path)).toEqual(before)
 
     const { rows: audit } = await pool().query(
@@ -148,26 +182,27 @@ describe('Qualification revert + tightened gate round trip', () => {
     )
     expect(audit.length).toBe(1)
 
-    // ── Legitimate re-qualification: second direct activates ──
-    await activate(rId) // also completes P's own pair (L,R)
+    // ── Legitimate re-qualification: conditions still hold (L, R, G1 still active) ──
     const requalified = await withTxn(async (c) => evaluateQualification(pId, c))
     expect(requalified).toBe(true)
 
     const { rows: rel } = await pool().query<{ payload: PendingBonusReleaseRequested }>(
-      `SELECT payload FROM events_outbox
-        WHERE event_type='PendingBonusReleaseRequested' AND aggregate_id=$1`, [pId],
+      `SELECT payload::jsonb AS payload FROM events_outbox
+        WHERE event_type='PendingBonusReleaseRequested' AND aggregate_id=$1
+        ORDER BY id DESC LIMIT 1`, [pId],
     )
     expect(rel.length).toBe(1)
     await releasePendingBonuses(rel[0].payload)
 
-    // Money is back — the re-release posted under the :1 key, not swallowed by
-    // the original txn's idempotency.
+    // Money is back — the re-release posted under the :1 key, not swallowed by the original txn
     expect(await walletPaise(pId)).toBe(BONUS)
     const { rows: reAcc } = await pool().query<{ status: string; release_seq: number }>(
       'SELECT status, release_seq FROM pair_accruals WHERE beneficiary_id=$1', [pId],
     )
     expect(reAcc[0].status).toBe('released')
     expect(reAcc[0].release_seq).toBe(1)
+
+    // Three distinct ledger txn keys: original release, revert, re-release
     const { rows: txns } = await pool().query<{ idempotency_key: string }>(
       `SELECT idempotency_key FROM ledger_txns
         WHERE idempotency_key IN ($1, $2, $3)`,

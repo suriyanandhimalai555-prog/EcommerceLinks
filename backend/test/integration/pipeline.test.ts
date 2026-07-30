@@ -92,7 +92,7 @@ describe('T5 – Order webhook idempotency', () => {
 })
 
 // T8: counters are maintained but no income mints here (since 020 the pair
-// income path is workers/pairComplete.ts + pair_accruals, not counter matching)
+// income path is workers/counterPair.ts set-to-target matching + pair_accruals)
 describe('T8 – applyIncrements maintains counters, never mints pairs', () => {
   it('L+R increments update counters and leg_activations; pairs stays empty', async () => {
     const ts = Date.now().toString().slice(-7)

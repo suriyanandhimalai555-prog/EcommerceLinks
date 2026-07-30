@@ -159,7 +159,7 @@ export interface DashboardCounters {
   rightActive: number
   leftQualified: number
   rightQualified: number
-  /** Pairs completed anywhere in the member's subtree (own pair included). */
+  /** Pairs matched at this member's own node (v2: LEAST(leftActive, rightActive)). */
   pairsMatched: number
 }
 
@@ -193,7 +193,7 @@ export interface Dashboard {
   /** Balance in the withdrawable wallet (swept from earnings at each cutoff). */
   withdrawablePaise: number
   counters: DashboardCounters
-  /** Display-only leg imbalance; income no longer depends on leg balance. */
+  /** Leg carry-forward surplus. Leg balance is the sole income driver (v2). excess=0 means equal legs. */
   carryForward: { side: 'L' | 'R'; excess: number }
   todayPairBonusPaise: number
   rank: DashboardRank

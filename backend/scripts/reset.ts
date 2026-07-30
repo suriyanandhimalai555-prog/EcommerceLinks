@@ -98,14 +98,18 @@ async function reset() {
 	await pool().query(
 		"INSERT INTO member_code_counter (id, next_val) VALUES (1, 1)",
 	);
-	// System accounts from 004_ledger.sql — wiped by CASCADE above.
+	// System accounts — wiped by CASCADE above.
+	// Full set bounded by accounts_kind_check in migration 036:
+	//   bonus_expense (004), payout_clearing (004), tds_payable (004),
+	//   bank (004), adjustment (004), bonus_forfeited (036).
 	await pool().query(`
     INSERT INTO accounts (owner_type, owner_id, kind) VALUES
       ('system', NULL, 'bonus_expense'),
       ('system', NULL, 'payout_clearing'),
       ('system', NULL, 'tds_payable'),
       ('system', NULL, 'bank'),
-      ('system', NULL, 'adjustment')
+      ('system', NULL, 'adjustment'),
+      ('system', NULL, 'bonus_forfeited')
   `);
 	console.log("  ✓ system accounts + member code counter restored");
 
@@ -146,9 +150,13 @@ async function reset() {
 				`INSERT INTO accounts (owner_type, owner_id, kind) VALUES ('member',$1,'deferred_bonus') RETURNING id`,
 				[MGMT_RESERVED_ID],
 			);
+			const { rows: xRows } = await c.query<{ id: string }>(
+				`INSERT INTO accounts (owner_type, owner_id, kind) VALUES ('member',$1,'withdrawable') RETURNING id`,
+				[MGMT_RESERVED_ID],
+			);
 			await c.query(
-				"INSERT INTO wallet_balances (account_id, balance) VALUES ($1,0),($2,0)",
-				[wRows[0].id, dRows[0].id],
+				"INSERT INTO wallet_balances (account_id, balance) VALUES ($1,0),($2,0),($3,0)",
+				[wRows[0].id, dRows[0].id, xRows[0].id],
 			);
 		});
 		console.log(`  ✓ management account restored (${mgmt.email}, reserved id=${MGMT_RESERVED_ID})`);

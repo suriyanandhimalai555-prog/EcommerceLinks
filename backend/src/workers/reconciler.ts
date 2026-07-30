@@ -84,8 +84,9 @@ export async function reconcile(): Promise<Alert[]> {
 		member_code: string;
 		left_active: string;
 		right_active: string;
+		pairs_matched: string;
 	}>(
-		`SELECT m.id, m.member_code, mc.left_active, mc.right_active
+		`SELECT m.id, m.member_code, mc.left_active, mc.right_active, mc.pairs_matched
      FROM members m
      JOIN member_counters mc ON mc.member_id = m.id
      WHERE m.is_active = TRUE
@@ -131,6 +132,69 @@ export async function reconcile(): Promise<Alert[]> {
 			});
 		}
 
+		// BR-14 — pairs_drift: pairs_matched must equal LEAST(left_active, right_active).
+		// Also verify that the pairs table row count matches pairs_matched.
+		const computedPairs = Math.min(computedLeft, computedRight);
+		const storedPairs = Number(row.pairs_matched);
+		if (computedPairs !== storedPairs) {
+			alerts.push({
+				type: "pairs_drift",
+				memberId: row.id,
+				memberCode: row.member_code,
+				field: "pairs_matched",
+				stored: row.pairs_matched,
+				computed: String(computedPairs),
+			});
+		} else if (storedPairs > 0) {
+			// Verify pairs table row count matches pairs_matched (sample check).
+			const { rows: pairCount } = await pool().query<{ cnt: string }>(
+				`SELECT COUNT(*) AS cnt FROM pairs WHERE member_id=$1`,
+				[row.id],
+			);
+			const actualPairRows = Number(pairCount[0]?.cnt ?? "0");
+			if (actualPairRows !== storedPairs) {
+				alerts.push({
+					type: "pairs_drift",
+					memberId: row.id,
+					memberCode: row.member_code,
+					field: "pairs_row_count",
+					stored: String(storedPairs),
+					computed: String(actualPairRows),
+				});
+			}
+		}
+
+	}
+
+	// BR-14 — pairs_drift: each pair must have exactly one pair_accruals row.
+	// Sample up to 200 pairs and assert the one-beneficiary invariant (BR-7).
+	const { rows: pairSample } = await pool().query<{
+		id: string;
+		member_id: string;
+		member_code: string;
+		accrual_count: string;
+	}>(
+		`SELECT p.id, p.member_id, m.member_code,
+            COUNT(pa.id) AS accrual_count
+       FROM pairs p
+       JOIN members m ON m.id = p.member_id
+       LEFT JOIN pair_accruals pa ON pa.pair_id = p.id
+       GROUP BY p.id, p.member_id, m.member_code
+       ORDER BY random()
+       LIMIT 200`,
+	);
+	for (const pr of pairSample) {
+		const count = Number(pr.accrual_count);
+		if (count !== 1) {
+			alerts.push({
+				type: "pairs_drift",
+				memberId: pr.member_id,
+				memberCode: pr.member_code,
+				field: `pair_accruals_count(pair_id=${pr.id})`,
+				stored: String(count),
+				computed: "1",
+			});
+		}
 	}
 
 	// Every released accrual must have its ledger txn (pairbonus:{pair_id}:{beneficiary_id})

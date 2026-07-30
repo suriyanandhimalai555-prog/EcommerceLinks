@@ -199,6 +199,18 @@ export default function Dashboard() {
               </span>
             </div>
 
+            {/* Deferred balance — cap overflow held for next cutoff sweep (v2 BR-13) */}
+            {(d.deferredBalancePaise ?? 0) > 0 && (
+              <div className="flex items-center justify-between py-2.5 border-b border-surface-line">
+                <span className="text-sm text-ink-muted flex items-center gap-2">
+                  <Clock size={14} className="text-primary" /> {t('pairs.deferredBonus')}
+                </span>
+                <span className="text-sm font-semibold text-primary">
+                  {formatINR(d.deferredBalancePaise)}
+                </span>
+              </div>
+            )}
+
             {/* Today's bonus */}
             <div className="flex items-center justify-between py-2.5">
               <span className="text-sm text-ink-muted flex items-center gap-2">
