@@ -2177,4 +2177,258 @@ export async function adminRoutes(app: FastifyInstance) {
 
 		return { ok: true, orderId, activated };
 	});
+
+	// ===== Earnings overview (management-only read pages) =====
+
+	// GET /admin/cutoffs — list cutoff windows for the week selector on the earnings export
+	app.get("/cutoffs", auth, async (req, reply) => {
+		const actor = req.user as { sub: string };
+		if (!(await isManagement(actor.sub)))
+			return reply.status(403).send({ error: "Management only" });
+
+		const { rows } = await pool().query<{
+			id: string;
+			window_start: string;
+			window_end: string;
+			status: string;
+		}>(
+			`SELECT id, window_start, window_end, status
+			 FROM cutoffs
+			 ORDER BY id DESC
+			 LIMIT 52`,
+		);
+
+		return {
+			items: rows.map((r) => ({
+				id: r.id,
+				windowStart: new Date(r.window_start).toISOString(),
+				windowEnd: new Date(r.window_end).toISOString(),
+				status: r.status,
+			})),
+		};
+	});
+
+	// GET /admin/earnings?q=&page=&limit= — paginated member earnings list
+	app.get("/earnings", auth, async (req, reply) => {
+		const actor = req.user as { sub: string };
+		if (!(await isManagement(actor.sub)))
+			return reply.status(403).send({ error: "Management only" });
+
+		const query = req.query as {
+			q?: string;
+			page?: string;
+			limit?: string;
+		};
+		const search = (query.q ?? "").trim();
+		const limit = Math.min(Math.max(1, Number(query.limit ?? "20")), 100);
+		const page = Math.max(1, Number(query.page ?? "1"));
+		const offset = (page - 1) * limit;
+
+		const [{ rows }, { rows: countRows }] = await Promise.all([
+			pool().query<{
+				id: string;
+				member_code: string;
+				name: string;
+				net_earned: string;
+				pairs_matched: string;
+				withdrawn: string;
+			}>(
+				`SELECT m.id, m.member_code, m.name,
+				        COALESCE(ce.net_earned, 0) AS net_earned,
+				        COALESCE(pa.pairs_matched, 0) AS pairs_matched,
+				        COALESCE(wd.withdrawn, 0) AS withdrawn
+				 FROM members m
+				 LEFT JOIN (
+				   SELECT member_id, SUM(earned) AS net_earned
+				   FROM cutoff_earnings GROUP BY member_id
+				 ) ce ON ce.member_id = m.id
+				 LEFT JOIN (
+				   SELECT beneficiary_id, COUNT(*) AS pairs_matched
+				   FROM pair_accruals GROUP BY beneficiary_id
+				 ) pa ON pa.beneficiary_id = m.id
+				 LEFT JOIN (
+				   SELECT member_id, SUM(amount) AS withdrawn
+				   FROM withdrawals WHERE status = 'paid' GROUP BY member_id
+				 ) wd ON wd.member_id = m.id
+				 WHERE m.role <> 'management'
+				   AND ($1 = '' OR m.member_code ILIKE '%' || $1 || '%' OR m.name ILIKE '%' || $1 || '%')
+				 ORDER BY m.member_code
+				 LIMIT $2 OFFSET $3`,
+				[search, limit, offset],
+			),
+			pool().query<{ total: string }>(
+				`SELECT COUNT(*) AS total
+				 FROM members m
+				 WHERE m.role <> 'management'
+				   AND ($1 = '' OR m.member_code ILIKE '%' || $1 || '%' OR m.name ILIKE '%' || $1 || '%')`,
+				[search],
+			),
+		]);
+
+		return {
+			items: rows.map((r) => ({
+				id: r.id,
+				memberCode: r.member_code,
+				name: r.name,
+				netEarnedPaise: Number(toPaise(r.net_earned)),
+				pairsMatched: Number(r.pairs_matched),
+				withdrawnPaise: Number(toPaise(r.withdrawn)),
+			})),
+			total: Number(countRows[0]?.total ?? 0),
+			page,
+			limit,
+		};
+	});
+
+	// GET /admin/earnings/export?cutoffId= — full export dataset for a chosen cutoff week
+	// Must be registered before /earnings/:id so Fastify's trie router matches "export" as static.
+	app.get("/earnings/export", auth, async (req, reply) => {
+		const actor = req.user as { sub: string };
+		if (!(await isManagement(actor.sub)))
+			return reply.status(403).send({ error: "Management only" });
+
+		const query = req.query as { cutoffId?: string };
+		const requestedId = query.cutoffId?.trim();
+
+		type CutoffRow = {
+			id: string;
+			window_start: string;
+			window_end: string;
+			status: string;
+		};
+
+		let cutoffRow: CutoffRow | undefined;
+
+		if (requestedId) {
+			// Explicit cutoff requested
+			const { rows } = await pool().query<CutoffRow>(
+				`SELECT id, window_start, window_end, status FROM cutoffs WHERE id = $1`,
+				[requestedId],
+			);
+			if (!rows[0])
+				return reply.status(404).send({ error: "Cutoff not found" });
+			cutoffRow = rows[0];
+		} else {
+			// Default: last completed week (status='closed', most recent window_end).
+			// Nothing sets 'paid' in current code so 'closed' covers all finished weeks.
+			const { rows: closedRows } = await pool().query<CutoffRow>(
+				`SELECT id, window_start, window_end, status FROM cutoffs
+				 WHERE status = 'closed' ORDER BY window_end DESC LIMIT 1`,
+			);
+			if (closedRows[0]) {
+				cutoffRow = closedRows[0];
+			} else {
+				// No closed week yet — fall back to the current open (in-progress) window
+				const { rows: openRows } = await pool().query<CutoffRow>(
+					`SELECT id, window_start, window_end, status FROM cutoffs
+					 WHERE status = 'open' LIMIT 1`,
+				);
+				if (!openRows[0])
+					return reply
+						.status(404)
+						.send({ error: "No cutoff window found" });
+				cutoffRow = openRows[0];
+			}
+		}
+
+		const { rows: earnedRows } = await pool().query<{
+			member_code: string;
+			name: string;
+			earned: string;
+		}>(
+			`SELECT m.member_code, m.name, ce.earned
+			 FROM cutoff_earnings ce
+			 JOIN members m ON m.id = ce.member_id
+			 WHERE ce.cutoff_id = $1
+			 ORDER BY m.member_code`,
+			[cutoffRow.id],
+		);
+
+		return {
+			cutoffId: cutoffRow.id,
+			windowStart: new Date(cutoffRow.window_start).toISOString(),
+			windowEnd: new Date(cutoffRow.window_end).toISOString(),
+			status: cutoffRow.status,
+			rows: earnedRows.map((r) => ({
+				memberCode: r.member_code,
+				name: r.name,
+				earnedPaise: Number(toPaise(r.earned)),
+			})),
+		};
+	});
+
+	// GET /admin/earnings/:id — per-member detail (net/gross/forfeited, pairs, withdrawals)
+	app.get("/earnings/:id", auth, async (req, reply) => {
+		const actor = req.user as { sub: string };
+		if (!(await isManagement(actor.sub)))
+			return reply.status(403).send({ error: "Management only" });
+
+		const { id } = req.params as { id: string };
+
+		const [memberRes, netRes, pairsRes, wdRes] = await Promise.all([
+			pool().query<{
+				id: string;
+				member_code: string;
+				name: string;
+				is_active: boolean;
+				is_qualified: boolean;
+			}>(
+				`SELECT id, member_code, name, is_active, is_qualified
+				 FROM members WHERE id = $1 AND role <> 'management'`,
+				[id],
+			),
+			pool().query<{ net_earned: string }>(
+				`SELECT COALESCE(SUM(earned), 0) AS net_earned
+				 FROM cutoff_earnings WHERE member_id = $1`,
+				[id],
+			),
+			pool().query<{
+				pairs_matched: string;
+				gross_earned: string;
+			}>(
+				`SELECT COUNT(*) AS pairs_matched,
+				        COALESCE(SUM(amount), 0) AS gross_earned
+				 FROM pair_accruals
+				 WHERE beneficiary_id = $1 AND status = 'released'`,
+				[id],
+			),
+			pool().query<{
+				withdrawn_gross: string;
+				withdrawn_net: string;
+				withdrawal_count: string;
+				pending_withdrawal: string;
+			}>(
+				`SELECT
+				   COALESCE(SUM(amount) FILTER (WHERE status = 'paid'), 0) AS withdrawn_gross,
+				   COALESCE(SUM(net)    FILTER (WHERE status = 'paid'), 0) AS withdrawn_net,
+				   COUNT(*)             FILTER (WHERE status = 'paid')     AS withdrawal_count,
+				   COALESCE(SUM(amount) FILTER (WHERE status = 'requested'), 0) AS pending_withdrawal
+				 FROM withdrawals WHERE member_id = $1`,
+				[id],
+			),
+		]);
+
+		const m = memberRes.rows[0];
+		if (!m) return reply.status(404).send({ error: "Member not found" });
+
+		const netEarnedPaise = Number(toPaise(netRes.rows[0]?.net_earned ?? "0"));
+		const grossEarnedPaise = Number(toPaise(pairsRes.rows[0]?.gross_earned ?? "0"));
+
+		return {
+			id: m.id,
+			memberCode: m.member_code,
+			name: m.name,
+			isActive: m.is_active,
+			isQualified: m.is_qualified,
+			netEarnedPaise,
+			grossEarnedPaise,
+			// Forfeiture is the cap-overage; gross ≥ net always (credits never exceed what was generated)
+			forfeitedPaise: Math.max(0, grossEarnedPaise - netEarnedPaise),
+			pairsMatched: Number(pairsRes.rows[0]?.pairs_matched ?? "0"),
+			withdrawnGrossPaise: Number(toPaise(wdRes.rows[0]?.withdrawn_gross ?? "0")),
+			withdrawnNetPaise: Number(toPaise(wdRes.rows[0]?.withdrawn_net ?? "0")),
+			withdrawalCount: Number(wdRes.rows[0]?.withdrawal_count ?? "0"),
+			pendingWithdrawalPaise: Number(toPaise(wdRes.rows[0]?.pending_withdrawal ?? "0")),
+		};
+	});
 }

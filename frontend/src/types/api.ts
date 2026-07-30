@@ -527,6 +527,67 @@ export interface KycDocument {
   url: string
 }
 
+// ---- admin: earnings report ----
+export interface AdminEarningsRow {
+  id: string
+  memberCode: string
+  name: string
+  netEarnedPaise: number
+  pairsMatched: number
+  withdrawnPaise: number
+}
+
+export interface AdminEarningsPage {
+  items: AdminEarningsRow[]
+  total: number
+  page: number
+  limit: number
+}
+
+export interface AdminEarningsDetail {
+  id: string
+  memberCode: string
+  name: string
+  isActive: boolean
+  isQualified: boolean
+  /** Amount that actually landed in wallet after the weekly cap */
+  netEarnedPaise: number
+  /** Total pair bonuses generated (may exceed net due to cap forfeiture) */
+  grossEarnedPaise: number
+  /** grossEarned − netEarned: bonuses forfeited due to the ₹1 lakh weekly cap */
+  forfeitedPaise: number
+  /** Number of pair events this member benefited from (as beneficiary in pair_accruals) */
+  pairsMatched: number
+  /** Gross withdrawal amount for paid withdrawals */
+  withdrawnGrossPaise: number
+  /** Post-TDS net withdrawal amount for paid withdrawals */
+  withdrawnNetPaise: number
+  withdrawalCount: number
+  /** Amount held in-flight for requested (not yet paid) withdrawals */
+  pendingWithdrawalPaise: number
+}
+
+export interface AdminCutoff {
+  id: string
+  windowStart: string
+  windowEnd: string
+  status: 'open' | 'closed' | 'paid'
+}
+
+export interface AdminEarningsExportRow {
+  memberCode: string
+  name: string
+  earnedPaise: number
+}
+
+export interface AdminEarningsExport {
+  cutoffId: string
+  windowStart: string
+  windowEnd: string
+  status: string
+  rows: AdminEarningsExportRow[]
+}
+
 // ---- management: on-behalf payment ----
 export interface OnBehalfRes {
   ok: boolean
