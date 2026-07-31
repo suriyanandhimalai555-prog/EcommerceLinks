@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Loader2, Search, ShieldCheck } from 'lucide-react'
+import { Download, Loader2, Search, ShieldCheck } from 'lucide-react'
 import api from '../../lib/api'
+import { downloadCsv } from '../../lib/exportCsv'
 import { apiErrorMessage } from '../../lib/apiError'
 import { formatDate } from '../../lib/format'
 import { DataTable, type Column } from '../../components/ui/DataTable'
@@ -21,23 +22,29 @@ export function BankTab() {
   const { t } = useTranslation()
   const qc = useQueryClient()
   const [statusFilter, setStatusFilter] = useState<FilterStatus>('awaiting')
+  const [activeFilter, setActiveFilter] = useState<'all' | 'active' | 'inactive'>('all')
   const [input, setInput] = useState('')
   const [q, setQ] = useState('')
   const [page, setPage] = useState(1)
   const [selected, setSelected] = useState<AdminMemberRow | null>(null)
   const [notes, setNotes] = useState('')
   const [banner, setBanner] = useState<{ ok: boolean; text: string } | null>(null)
+  const [exporting, setExporting] = useState(false)
 
   useEffect(() => {
     const id = setTimeout(() => { setQ(input); setPage(1) }, 350)
     return () => clearTimeout(id)
   }, [input])
 
+  const activeParam =
+    activeFilter === 'active' ? '&active=true' :
+    activeFilter === 'inactive' ? '&active=false' : ''
+
   const { data: membersPage, isPending } = useQuery<AdminMembersPage>({
-    queryKey: ['admin-bank-queue', statusFilter, q, page],
+    queryKey: ['admin-bank-queue', statusFilter, activeFilter, q, page],
     queryFn: () =>
       api
-        .get(`/admin/members?bankStatus=${statusFilter}&q=${encodeURIComponent(q)}&page=${page}&limit=${PAGE_SIZE}`)
+        .get(`/admin/members?bankStatus=${statusFilter}${activeParam}&q=${encodeURIComponent(q)}&page=${page}&limit=${PAGE_SIZE}`)
         .then((r) => r.data),
     placeholderData: keepPreviousData,
   })
@@ -70,6 +77,49 @@ export function BankTab() {
       setBanner({ ok: false, text: apiErrorMessage(err, t, 'Action failed') }),
   })
 
+  const exportCSV = async () => {
+    setExporting(true)
+    try {
+      const all: AdminMemberRow[] = []
+      for (let p = 1; ; p++) {
+        const res: AdminMembersPage = await api
+          .get(`/admin/members?bankStatus=${statusFilter}${activeParam}&q=${encodeURIComponent(q)}&page=${p}&limit=100`)
+          .then((r) => r.data)
+        all.push(...res.items)
+        if (res.items.length === 0 || all.length >= res.total) break
+      }
+      const headers = [
+        t('admin.membersExport.colCode'),
+        t('admin.membersExport.colName'),
+        t('admin.membersExport.colPhone'),
+        t('admin.membersExport.colEmail'),
+        t('admin.membersExport.colRole'),
+        t('admin.membersExport.colActive'),
+        t('admin.membersExport.colQualified'),
+        t('admin.membersExport.colKyc'),
+        t('admin.membersExport.colBank'),
+        t('admin.membersExport.colBlocked'),
+        t('admin.membersExport.colDocs'),
+        t('admin.membersExport.colSponsorCode'),
+        t('admin.membersExport.colSponsorName'),
+        t('admin.membersExport.colJoined'),
+      ]
+      const rows = all.map((m) => [
+        m.memberCode, m.name, m.phone, m.email ?? '', m.role,
+        m.isActive ? 'Active' : 'Inactive',
+        m.isQualified ? 'Yes' : 'No',
+        m.kycStatus, m.bankStatus,
+        m.blocked ? 'Yes' : 'No',
+        m.hasDocuments ? 'Yes' : 'No',
+        m.sponsorCode ?? '', m.sponsorName ?? '',
+        formatDate(m.createdAt),
+      ])
+      downloadCsv(`bank-members-${new Date().toISOString().slice(0, 10)}.csv`, headers, rows)
+    } finally {
+      setExporting(false)
+    }
+  }
+
   const filterPills: { key: FilterStatus; label: string }[] = [
     { key: 'awaiting', label: t('admin.bank.filterAwaiting') },
     { key: 'pending', label: t('admin.bank.filterPending') },
@@ -97,6 +147,14 @@ export function BankTab() {
           <Badge size="sm" variant="neutral">{t('admin.bank.statusNotSubmitted')}</Badge>
         ),
     },
+    {
+      key: 'activation', header: t('admin.bank.colActive'),
+      render: (r) => (
+        <Badge size="sm" variant={r.isActive ? 'success' : 'neutral'}>
+          {r.isActive ? t('admin.bank.activationActive') : t('admin.bank.activationInactive')}
+        </Badge>
+      ),
+    },
     { key: 'joined', header: 'Joined', render: (r) => <span className="text-xs text-ink-muted">{formatDate(r.createdAt)}</span> },
     {
       key: 'action', header: '', align: 'right',
@@ -114,21 +172,59 @@ export function BankTab() {
   return (
     <div className="avg-card">
       <div className="p-5 pb-3">
-        <h2 className="text-sm font-semibold text-ink mb-3">{t('admin.bank.title')}</h2>
-        <div className="flex gap-1 bg-white/5 p-1 rounded-lg w-fit">
-          {filterPills.map((p) => (
-            <button
-              key={p.key}
-              onClick={() => { setStatusFilter(p.key); setPage(1) }}
-              className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all duration-200 cursor-pointer whitespace-nowrap ${
-                statusFilter === p.key
-                  ? 'bg-white/10 text-ink shadow-sm'
-                  : 'text-ink-muted hover:text-ink'
-              }`}
-            >
-              {p.label}
-            </button>
-          ))}
+        <div className="flex items-center justify-between gap-3 mb-3">
+          <h2 className="text-sm font-semibold text-ink">{t('admin.bank.title')}</h2>
+          <button
+            onClick={exportCSV}
+            disabled={exporting || total === 0}
+            className="avg-btn-secondary flex items-center gap-1.5 text-xs py-2 disabled:opacity-40"
+          >
+            {exporting ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
+            {exporting ? t('admin.membersExport.exporting') : t('admin.membersExport.button')}
+          </button>
+        </div>
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+          <div className="flex flex-col gap-1">
+            <span className="text-xs font-medium text-ink-muted uppercase tracking-wide">{t('admin.bank.filterGroupBank')}</span>
+            <div className="flex gap-1 bg-white/5 p-1 rounded-lg w-fit">
+              {filterPills.map((p) => (
+                <button
+                  key={p.key}
+                  onClick={() => { setStatusFilter(p.key); setPage(1) }}
+                  className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all duration-200 cursor-pointer whitespace-nowrap ${
+                    statusFilter === p.key
+                      ? 'bg-white/10 text-ink shadow-sm'
+                      : 'text-ink-muted hover:text-ink'
+                  }`}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <span className="text-xs font-medium text-ink-muted uppercase tracking-wide">{t('admin.bank.activationLabel')}</span>
+            <div className="flex gap-1 bg-white/5 p-1 rounded-lg w-fit">
+              {([
+                { key: 'all',      label: t('admin.bank.activationAll') },
+                { key: 'active',   label: t('admin.bank.activationActive') },
+                { key: 'inactive', label: t('admin.bank.activationInactive') },
+              ] as const).map((p) => (
+                <button
+                  key={p.key}
+                  onClick={() => { setActiveFilter(p.key); setPage(1) }}
+                  className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all duration-200 cursor-pointer whitespace-nowrap ${
+                    activeFilter === p.key
+                      ? 'bg-white/10 text-ink shadow-sm'
+                      : 'text-ink-muted hover:text-ink'
+                  }`}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
         <div className="relative max-w-md mt-3">
           <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted" />

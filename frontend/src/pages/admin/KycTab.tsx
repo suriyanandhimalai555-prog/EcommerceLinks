@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { ExternalLink, Loader2, Search, ShieldCheck } from 'lucide-react'
+import { Download, ExternalLink, Loader2, Search, ShieldCheck } from 'lucide-react'
 import api from '../../lib/api'
+import { downloadCsv } from '../../lib/exportCsv'
 import { apiErrorMessage } from '../../lib/apiError'
 import { formatDate } from '../../lib/format'
 import { DataTable, type Column } from '../../components/ui/DataTable'
@@ -29,6 +30,7 @@ export function KycTab() {
   const [selected, setSelected] = useState<AdminMemberRow | null>(null)
   const [notes, setNotes] = useState('')
   const [banner, setBanner] = useState<{ ok: boolean; text: string } | null>(null)
+  const [exporting, setExporting] = useState(false)
 
   useEffect(() => {
     const id = setTimeout(() => { setQ(input); setPage(1) }, 350)
@@ -83,6 +85,49 @@ export function KycTab() {
       setBanner({ ok: false, text: apiErrorMessage(err, t, 'Action failed') }),
   })
 
+  const exportCSV = async () => {
+    setExporting(true)
+    try {
+      const all: AdminMemberRow[] = []
+      for (let p = 1; ; p++) {
+        const res: AdminMembersPage = await api
+          .get(`/admin/members?kycStatus=${statusFilter}${activeParam}&q=${encodeURIComponent(q)}&page=${p}&limit=100`)
+          .then((r) => r.data)
+        all.push(...res.items)
+        if (res.items.length === 0 || all.length >= res.total) break
+      }
+      const headers = [
+        t('admin.membersExport.colCode'),
+        t('admin.membersExport.colName'),
+        t('admin.membersExport.colPhone'),
+        t('admin.membersExport.colEmail'),
+        t('admin.membersExport.colRole'),
+        t('admin.membersExport.colActive'),
+        t('admin.membersExport.colQualified'),
+        t('admin.membersExport.colKyc'),
+        t('admin.membersExport.colBank'),
+        t('admin.membersExport.colBlocked'),
+        t('admin.membersExport.colDocs'),
+        t('admin.membersExport.colSponsorCode'),
+        t('admin.membersExport.colSponsorName'),
+        t('admin.membersExport.colJoined'),
+      ]
+      const rows = all.map((m) => [
+        m.memberCode, m.name, m.phone, m.email ?? '', m.role,
+        m.isActive ? 'Active' : 'Inactive',
+        m.isQualified ? 'Yes' : 'No',
+        m.kycStatus, m.bankStatus,
+        m.blocked ? 'Yes' : 'No',
+        m.hasDocuments ? 'Yes' : 'No',
+        m.sponsorCode ?? '', m.sponsorName ?? '',
+        formatDate(m.createdAt),
+      ])
+      downloadCsv(`kyc-members-${new Date().toISOString().slice(0, 10)}.csv`, headers, rows)
+    } finally {
+      setExporting(false)
+    }
+  }
+
   const filterPills: { key: FilterStatus; label: string }[] = [
     { key: 'awaiting', label: t('admin.kyc.filterAwaiting') },
     { key: 'pending', label: t('admin.kyc.filterPending') },
@@ -135,7 +180,17 @@ export function KycTab() {
   return (
     <div className="avg-card">
       <div className="p-5 pb-3">
-        <h2 className="text-sm font-semibold text-ink mb-3">{t('admin.kyc.title')}</h2>
+        <div className="flex items-center justify-between gap-3 mb-3">
+          <h2 className="text-sm font-semibold text-ink">{t('admin.kyc.title')}</h2>
+          <button
+            onClick={exportCSV}
+            disabled={exporting || total === 0}
+            className="avg-btn-secondary flex items-center gap-1.5 text-xs py-2 disabled:opacity-40"
+          >
+            {exporting ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
+            {exporting ? t('admin.membersExport.exporting') : t('admin.membersExport.button')}
+          </button>
+        </div>
         <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
           <div className="flex flex-col gap-1">
             <span className="text-xs font-medium text-ink-muted uppercase tracking-wide">{t('admin.kyc.filterGroupKyc')}</span>

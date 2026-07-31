@@ -283,7 +283,13 @@
       "emptyDesc": "இந்த நிலையில் வங்கி விவரங்கள் சமர்பித்த உறுப்பினர்கள் இல்லை.",
       "showingRange": "{{total}} இல் {{from}}–{{to}} காட்டப்படுகிறது",
       "prev": "‹ முந்தையது",
-      "next": "அடுத்தது ›"
+      "next": "அடுத்தது ›",
+      "filterGroupBank": "வங்கி நிலை",
+      "activationLabel": "செயல்பாடு",
+      "activationAll": "அனைத்தும்",
+      "activationActive": "செயலில்",
+      "activationInactive": "செயலற்று",
+      "colActive": "கணக்கு"
     },
     "withdrawals": {
       "title": "திரும்பப் பெறுதல் கோரிக்கைகள்",
@@ -423,6 +429,24 @@
       "editRefPlaceholder": "எ.கா. வங்கி பரிமாற்றத்திலிருந்து UTR எண்",
       "editSave": "மாற்றங்களை சேமி",
       "editSuccess": "ஆர்டர் வெற்றிகரமாக புதுப்பிக்கப்பட்டது."
+    },
+    "membersExport": {
+      "button": "CSV ஏற்றுமதி",
+      "exporting": "ஏற்றுமதி செய்கிறது…",
+      "colCode": "உறுப்பினர் குறியீடு",
+      "colName": "பெயர்",
+      "colPhone": "தொலைபேசி",
+      "colEmail": "மின்னஞ்சல்",
+      "colRole": "பங்கு",
+      "colActive": "செயலில்",
+      "colQualified": "தகுதி பெற்றது",
+      "colKyc": "KYC நிலை",
+      "colBank": "வங்கி நிலை",
+      "colBlocked": "தடுக்கப்பட்டது",
+      "colDocs": "ஆவணங்கள் உள்ளதா",
+      "colSponsorCode": "ஸ்பான்சர் குறியீடு",
+      "colSponsorName": "ஸ்பான்சர் பெயர்",
+      "colJoined": "சேர்ந்த தேதி"
     }
   },
   "payout": {

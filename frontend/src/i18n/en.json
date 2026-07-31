@@ -284,7 +284,13 @@
       "emptyDesc": "No members with submitted bank details in this status.",
       "showingRange": "Showing {{from}}–{{to}} of {{total}} members",
       "prev": "‹ Prev",
-      "next": "Next ›"
+      "next": "Next ›",
+      "filterGroupBank": "Bank Status",
+      "activationLabel": "Activation",
+      "activationAll": "All",
+      "activationActive": "Active",
+      "activationInactive": "Inactive",
+      "colActive": "Account"
     },
     "withdrawals": {
       "title": "Withdrawal Requests",
@@ -424,6 +430,24 @@
       "editRefPlaceholder": "e.g. UTR number from bank transfer",
       "editSave": "Save changes",
       "editSuccess": "Order updated successfully."
+    },
+    "membersExport": {
+      "button": "Export CSV",
+      "exporting": "Exporting…",
+      "colCode": "Member Code",
+      "colName": "Name",
+      "colPhone": "Phone",
+      "colEmail": "Email",
+      "colRole": "Role",
+      "colActive": "Active",
+      "colQualified": "Qualified",
+      "colKyc": "KYC Status",
+      "colBank": "Bank Status",
+      "colBlocked": "Blocked",
+      "colDocs": "Has Documents",
+      "colSponsorCode": "Sponsor Code",
+      "colSponsorName": "Sponsor Name",
+      "colJoined": "Joined"
     }
   },
   "payout": {
