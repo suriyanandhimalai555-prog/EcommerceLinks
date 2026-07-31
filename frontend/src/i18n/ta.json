@@ -258,7 +258,13 @@
       "prev": "‹ முந்தையது",
       "next": "அடுத்தது ›",
       "emptyTitle": "இந்த வரிசையில் உறுப்பினர்கள் இல்லை",
-      "emptyDesc": "அனைத்து KYC சமர்பிப்புகளும் மதிப்பாய்வு செய்யப்பட்டுள்ளன."
+      "emptyDesc": "அனைத்து KYC சமர்பிப்புகளும் மதிப்பாய்வு செய்யப்பட்டுள்ளன.",
+      "filterGroupKyc": "KYC நிலை",
+      "activationLabel": "செயல்பாடு",
+      "activationAll": "அனைத்தும்",
+      "activationActive": "செயலில்",
+      "activationInactive": "செயலற்று",
+      "colActive": "கணக்கு"
     },
     "bank": {
       "title": "வங்கி அனுமதிகள்",

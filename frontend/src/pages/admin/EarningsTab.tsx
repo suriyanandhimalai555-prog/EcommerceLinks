@@ -70,10 +70,11 @@ export function EarningsTab() {
   // Fall back to the open (in-progress) week only if nothing is closed yet.
   useEffect(() => {
     if (cutoffs.length > 0 && !selectedCutoffId) {
-      // cutoffs are ordered newest-first from the API; first 'closed' = last completed week
+      // Default to the current (open) week so "this week up to now" exports without an
+      // empty result; fall back to the last completed week, then the newest cutoff.
+      const openWeek = cutoffs.find((c) => c.status === 'open')
       const lastClosed = cutoffs.find((c) => c.status === 'closed')
-      const fallback = cutoffs.find((c) => c.status === 'open') ?? cutoffs[0]
-      setSelectedCutoffId((lastClosed ?? fallback).id)
+      setSelectedCutoffId((openWeek ?? lastClosed ?? cutoffs[0]).id)
     }
   }, [cutoffs, selectedCutoffId])
 

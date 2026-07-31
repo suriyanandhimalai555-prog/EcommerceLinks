@@ -259,7 +259,13 @@
       "prev": "‹ Prev",
       "next": "Next ›",
       "emptyTitle": "No members in this queue",
-      "emptyDesc": "All KYC submissions have been reviewed."
+      "emptyDesc": "All KYC submissions have been reviewed.",
+      "filterGroupKyc": "KYC Status",
+      "activationLabel": "Activation",
+      "activationAll": "All",
+      "activationActive": "Active",
+      "activationInactive": "Inactive",
+      "colActive": "Account"
     },
     "bank": {
       "title": "Bank Approvals",

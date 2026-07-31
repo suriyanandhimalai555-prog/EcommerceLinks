@@ -714,6 +714,7 @@ export async function adminRoutes(app: FastifyInstance) {
 			page?: string;
 			kycStatus?: string;
 			bankStatus?: string;
+			active?: string;
 		};
 		const q = query.q ?? "";
 		const limit = Math.min(Math.max(1, Number(query.limit ?? "20")), 100);
@@ -721,6 +722,7 @@ export async function adminRoutes(app: FastifyInstance) {
 		const offset = (page - 1) * limit;
 		const kycStatus = query.kycStatus;
 		const bankStatus = query.bankStatus;
+		const active = query.active;
 		if (
 			kycStatus !== undefined &&
 			!VALID_FILTERS.includes(kycStatus as (typeof VALID_FILTERS)[number])
@@ -736,6 +738,11 @@ export async function adminRoutes(app: FastifyInstance) {
 			return reply
 				.status(400)
 				.send({ error: "bankStatus must be one of: awaiting, pending, verified, rejected" });
+		}
+		if (active !== undefined && active !== "true" && active !== "false") {
+			return reply
+				.status(400)
+				.send({ error: "active must be true or false" });
 		}
 		const baseParams: unknown[] = [`%${q}%`, `%${q}%`, `%${q}%`];
 		let where = `WHERE (m.name ILIKE $1 OR m.phone LIKE $2 OR m.member_code ILIKE $3)`;
@@ -763,6 +770,10 @@ export async function adminRoutes(app: FastifyInstance) {
 				where += ` AND m.bank_status = $${baseParams.length} AND m.role <> 'management'`;
 			}
 		}
+		// Activation filter: true = money-pipeline activated, false = not yet activated.
+		// Uses boolean literals — no param push needed, keeps $n indexing stable.
+		if (active === "true")  where += ` AND m.is_active = true`;
+		if (active === "false") where += ` AND m.is_active = false`;
 		const { rows: countRows } = await pool().query<{ total: string }>(
 			`SELECT COUNT(*) AS total FROM members m ${where}`,
 			baseParams,

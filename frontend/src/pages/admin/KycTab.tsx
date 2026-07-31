@@ -22,6 +22,7 @@ export function KycTab() {
   const { t } = useTranslation()
   const qc = useQueryClient()
   const [statusFilter, setStatusFilter] = useState<FilterStatus>('awaiting')
+  const [activeFilter, setActiveFilter] = useState<'all' | 'active' | 'inactive'>('all')
   const [input, setInput] = useState('')
   const [q, setQ] = useState('')
   const [page, setPage] = useState(1)
@@ -34,11 +35,15 @@ export function KycTab() {
     return () => clearTimeout(id)
   }, [input])
 
+  const activeParam =
+    activeFilter === 'active' ? '&active=true' :
+    activeFilter === 'inactive' ? '&active=false' : ''
+
   const { data: membersPage, isPending } = useQuery<AdminMembersPage>({
-    queryKey: ['admin-kyc-queue', statusFilter, q, page],
+    queryKey: ['admin-kyc-queue', statusFilter, activeFilter, q, page],
     queryFn: () =>
       api
-        .get(`/admin/members?kycStatus=${statusFilter}&q=${encodeURIComponent(q)}&page=${page}&limit=${PAGE_SIZE}`)
+        .get(`/admin/members?kycStatus=${statusFilter}${activeParam}&q=${encodeURIComponent(q)}&page=${page}&limit=${PAGE_SIZE}`)
         .then((r) => r.data),
     placeholderData: keepPreviousData,
   })
@@ -105,6 +110,14 @@ export function KycTab() {
           <Badge size="sm" variant="neutral">{t('admin.kyc.statusNoDocs')}</Badge>
         ),
     },
+    {
+      key: 'activation', header: t('admin.kyc.colActive'),
+      render: (r) => (
+        <Badge size="sm" variant={r.isActive ? 'success' : 'neutral'}>
+          {r.isActive ? t('admin.kyc.activationActive') : t('admin.kyc.activationInactive')}
+        </Badge>
+      ),
+    },
     { key: 'joined', header: 'Joined', render: (r) => <span className="text-xs text-ink-muted">{formatDate(r.createdAt)}</span> },
     {
       key: 'action', header: '', align: 'right',
@@ -123,20 +136,48 @@ export function KycTab() {
     <div className="avg-card">
       <div className="p-5 pb-3">
         <h2 className="text-sm font-semibold text-ink mb-3">{t('admin.kyc.title')}</h2>
-        <div className="flex gap-1 bg-white/5 p-1 rounded-lg w-fit">
-          {filterPills.map((p) => (
-            <button
-              key={p.key}
-              onClick={() => { setStatusFilter(p.key); setPage(1) }}
-              className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all duration-200 cursor-pointer whitespace-nowrap ${
-                statusFilter === p.key
-                  ? 'bg-white/10 text-ink shadow-sm'
-                  : 'text-ink-muted hover:text-ink'
-              }`}
-            >
-              {p.label}
-            </button>
-          ))}
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+          <div className="flex flex-col gap-1">
+            <span className="text-xs font-medium text-ink-muted uppercase tracking-wide">{t('admin.kyc.filterGroupKyc')}</span>
+            <div className="flex gap-1 bg-white/5 p-1 rounded-lg w-fit">
+              {filterPills.map((p) => (
+                <button
+                  key={p.key}
+                  onClick={() => { setStatusFilter(p.key); setPage(1) }}
+                  className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all duration-200 cursor-pointer whitespace-nowrap ${
+                    statusFilter === p.key
+                      ? 'bg-white/10 text-ink shadow-sm'
+                      : 'text-ink-muted hover:text-ink'
+                  }`}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <span className="text-xs font-medium text-ink-muted uppercase tracking-wide">{t('admin.kyc.activationLabel')}</span>
+            <div className="flex gap-1 bg-white/5 p-1 rounded-lg w-fit">
+              {([
+                { key: 'all',      label: t('admin.kyc.activationAll') },
+                { key: 'active',   label: t('admin.kyc.activationActive') },
+                { key: 'inactive', label: t('admin.kyc.activationInactive') },
+              ] as const).map((p) => (
+                <button
+                  key={p.key}
+                  onClick={() => { setActiveFilter(p.key); setPage(1) }}
+                  className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all duration-200 cursor-pointer whitespace-nowrap ${
+                    activeFilter === p.key
+                      ? 'bg-white/10 text-ink shadow-sm'
+                      : 'text-ink-muted hover:text-ink'
+                  }`}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
         <div className="relative max-w-md mt-3">
           <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted" />
