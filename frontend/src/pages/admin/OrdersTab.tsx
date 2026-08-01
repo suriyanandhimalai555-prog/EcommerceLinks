@@ -4,11 +4,13 @@ import { useTranslation } from 'react-i18next'
 import { CheckCircle2, Loader2, Pencil, XCircle } from 'lucide-react'
 import api from '../../lib/api'
 import { formatINR, formatDate } from '../../lib/format'
+import { isManagement } from '../../lib/roles'
 import { DataTable, type Column } from '../../components/ui/DataTable'
 import { Badge } from '../../components/ui/Badge'
 import { Modal } from '../../components/ui/Modal'
 import { ImageUploader, type ImageUploaderHandle, type UploadedImage } from '../../components/ui/ImageUploader'
-import type { AdminOrder, AdminProduct, PresignRes } from '../../types/api'
+import type { AdminOrder, AdminProduct, Me, PresignRes } from '../../types/api'
+import { AllOrdersTab } from './AllOrdersTab'
 
 const PAGE = 50
 
@@ -24,6 +26,13 @@ export function OrdersTab() {
   const { t } = useTranslation()
   const qc = useQueryClient()
   const [filter, setFilter] = useState<Filter>('paid')
+  const [view, setView] = useState<'queue' | 'all'>('queue')
+
+  const { data: me } = useQuery<Me>({
+    queryKey: ['me'],
+    queryFn: () => api.get('/me').then((r) => r.data),
+    staleTime: 5 * 60_000,
+  })
 
   // Approve modal state
   const [selected, setSelected] = useState<AdminOrder | null>(null)
@@ -373,6 +382,32 @@ export function OrdersTab() {
 
   return (
     <div className="space-y-4">
+      {/* Top-level view switch — only management sees the "All Orders" tab */}
+      {isManagement(me) && (
+        <div className="flex gap-1 bg-white/5 p-1 rounded-lg w-fit">
+          <button
+            onClick={() => setView('queue')}
+            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all cursor-pointer whitespace-nowrap ${
+              view === 'queue' ? 'bg-white/10 text-ink shadow-sm' : 'text-ink-muted hover:text-ink'
+            }`}
+          >
+            {t('admin.orders.viewQueue')}
+          </button>
+          <button
+            onClick={() => setView('all')}
+            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all cursor-pointer whitespace-nowrap ${
+              view === 'all' ? 'bg-white/10 text-ink shadow-sm' : 'text-ink-muted hover:text-ink'
+            }`}
+          >
+            {t('admin.orders.viewAll')}
+          </button>
+        </div>
+      )}
+
+      {view === 'all' ? (
+        <AllOrdersTab />
+      ) : (
+      <>
       <div className="avg-card">
         <div className="p-5 pb-4 flex items-center justify-between gap-4 flex-wrap">
           <div>
@@ -634,6 +669,8 @@ export function OrdersTab() {
           </div>
         )}
       </Modal>
+      </>
+      )}
     </div>
   )
 }

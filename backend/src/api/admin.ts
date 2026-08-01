@@ -1981,6 +1981,158 @@ export async function adminRoutes(app: FastifyInstance) {
 		return { ok: true };
 	});
 
+	// GET /admin/orders/all — full order history, all statuses, with filters + pagination.
+	// Management-only: a plain admin only sees the review queue above.
+	// Registered before any GET /orders/:id route so Fastify's router matches "all" as static.
+	const VALID_ORDER_STATUSES_ALL = [
+		"created",
+		"paid",
+		"confirmed",
+		"rejected",
+		"failed",
+		"refunded",
+	] as const;
+
+	app.get("/orders/all", auth, async (req, reply) => {
+		const actor = req.user as { sub: string };
+		if (!(await isManagement(actor.sub)))
+			return reply.status(403).send({ error: "Management only" });
+
+		const query = req.query as {
+			q?: string;
+			status?: string;
+			from?: string;
+			to?: string;
+			productId?: string;
+			page?: string;
+			limit?: string;
+		};
+
+		const q = (query.q ?? "").trim();
+		const limit = Math.min(Math.max(1, Number(query.limit ?? "20")), 100);
+		const page = Math.max(1, Number(query.page ?? "1"));
+		const offset = (page - 1) * limit;
+
+		// Status: omitted / 'all' → no filter; otherwise validate against the enum.
+		const orderStatus =
+			query.status && query.status !== "all" ? query.status : undefined;
+		if (
+			orderStatus &&
+			!VALID_ORDER_STATUSES_ALL.includes(
+				orderStatus as (typeof VALID_ORDER_STATUSES_ALL)[number],
+			)
+		) {
+			return reply.status(400).send({
+				error: `status must be one of: ${VALID_ORDER_STATUSES_ALL.join(", ")}`,
+			});
+		}
+
+		// Date format: YYYY-MM-DD only.
+		const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+		const from = query.from?.trim();
+		const to = query.to?.trim();
+		if (from && !DATE_RE.test(from))
+			return reply.status(400).send({ error: "from must be YYYY-MM-DD" });
+		if (to && !DATE_RE.test(to))
+			return reply.status(400).send({ error: "to must be YYYY-MM-DD" });
+
+		const productId = query.productId ? Number(query.productId) : undefined;
+
+		// Build WHERE dynamically — same $n-indexed pattern as GET /members.
+		const baseParams: unknown[] = [];
+		const conditions: string[] = [];
+
+		if (q) {
+			baseParams.push(`%${q}%`, `%${q}%`, `%${q}%`);
+			conditions.push(
+				`(m.name ILIKE $${baseParams.length - 2} OR m.phone ILIKE $${baseParams.length - 1} OR m.member_code ILIKE $${baseParams.length})`,
+			);
+		}
+		if (orderStatus) {
+			baseParams.push(orderStatus);
+			conditions.push(`o.status = $${baseParams.length}`);
+		}
+		// Compare in Asia/Kolkata timezone so "from 2026-08-01" means IST midnight,
+		// not UTC midnight (which would be off by +5:30).
+		if (from) {
+			baseParams.push(from);
+			conditions.push(
+				`(o.created_at AT TIME ZONE 'Asia/Kolkata')::date >= $${baseParams.length}::date`,
+			);
+		}
+		if (to) {
+			baseParams.push(to);
+			conditions.push(
+				`(o.created_at AT TIME ZONE 'Asia/Kolkata')::date <= $${baseParams.length}::date`,
+			);
+		}
+		if (productId !== undefined && !Number.isNaN(productId)) {
+			baseParams.push(productId);
+			conditions.push(`o.product_id = $${baseParams.length}`);
+		}
+
+		const where =
+			conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+
+		const { rows: countRows } = await pool().query<{ total: string }>(
+			`SELECT COUNT(*) AS total
+			   FROM orders o
+			   JOIN members m  ON m.id = o.member_id
+			   JOIN products p ON p.id = o.product_id
+			   ${where}`,
+			baseParams,
+		);
+		const total = Number(countRows[0].total);
+
+		const dataParams = [...baseParams, limit, offset];
+		const { rows } = await pool().query<{
+			id: string;
+			member_code: string;
+			member_name: string;
+			member_phone: string;
+			product_id: string;
+			product_name: string;
+			total_amount: string;
+			status: string;
+			payment_ref: string | null;
+			rejection_reason: string | null;
+			created_at: string;
+			confirmed_at: string | null;
+		}>(
+			`SELECT o.id, m.member_code, m.name AS member_name, m.phone AS member_phone,
+			        o.product_id, p.name AS product_name,
+			        o.total_amount, o.status, o.payment_ref, o.rejection_reason,
+			        o.created_at, o.confirmed_at
+			   FROM orders o
+			   JOIN members m  ON m.id = o.member_id
+			   JOIN products p ON p.id = o.product_id
+			   ${where}
+			   ORDER BY o.created_at DESC
+			   LIMIT $${dataParams.length - 1} OFFSET $${dataParams.length}`,
+			dataParams,
+		);
+
+		return {
+			items: rows.map((r) => ({
+				orderId: r.id,
+				memberCode: r.member_code,
+				memberName: r.member_name,
+				memberPhone: r.member_phone,
+				productId: Number(r.product_id),
+				productName: r.product_name,
+				totalPaise: Number(toPaise(r.total_amount)),
+				status: r.status,
+				paymentRef: r.payment_ref ?? undefined,
+				rejectionReason: r.rejection_reason ?? undefined,
+				createdAt: r.created_at,
+				confirmedAt: r.confirmed_at ?? undefined,
+			})),
+			total,
+			page,
+			limit,
+		};
+	});
+
 	// ===== System settings (feature flags) =====
 	// GET — both admin and management may read.
 	app.get("/settings", auth, async () => {

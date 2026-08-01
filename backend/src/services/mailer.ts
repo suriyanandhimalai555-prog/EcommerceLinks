@@ -8,6 +8,7 @@
 import nodemailer from "nodemailer";
 import type { Transporter } from "nodemailer";
 import { CFG } from "../config.js";
+import { redis } from "../lib/redis.js";
 
 let _transporter: Transporter | undefined;
 
@@ -38,6 +39,11 @@ export interface MailOptions {
 /**
  * Send an email. Best-effort — never throws.
  * Logs a warning when SMTP is unconfigured and logs errors on delivery failure.
+ *
+ * Daily send cap: tracked in Redis under `mail:sent:YYYY-MM-DD` (Asia/Kolkata).
+ * If the counter reaches MAIL_DAILY_CAP (default 800, below Hostinger's 1000/day
+ * plan limit), the send is skipped and a warning is logged. If Redis is
+ * unavailable the cap check is bypassed so mail still flows.
  */
 export async function sendMail(opts: MailOptions): Promise<void> {
 	const transporter = getTransporter();
@@ -47,14 +53,44 @@ export async function sendMail(opts: MailOptions): Promise<void> {
 		);
 		return;
 	}
+
+	// ── Daily send cap ──────────────────────────────────────────────────────────
+	// INCR first so concurrent requests don't race past the cap.
+	// Expire is set on first increment of the day (count === 1) to 25 h, giving
+	// a generous rollover buffer past the Asia/Kolkata midnight boundary.
+	try {
+		const today = new Intl.DateTimeFormat("en-CA", {
+			timeZone: CFG.TZ,
+		}).format(new Date()); // "YYYY-MM-DD"
+		const capKey = `mail:sent:${today}`;
+		const count = await redis().incr(capKey);
+		if (count === 1) {
+			await redis().expire(capKey, 90_000); // 25 h
+		}
+		if (count > CFG.MAIL_DAILY_CAP) {
+			console.warn(
+				`[mailer] daily cap (${CFG.MAIL_DAILY_CAP}) reached — skipping email to ${opts.to} (today=${today}, count=${count})`,
+			);
+			return;
+		}
+	} catch (capErr) {
+		// Redis unavailable — skip the cap check; do not block the send.
+		console.warn("[mailer] Redis daily-cap check failed, proceeding anyway:", capErr);
+	}
+
+	// ── Send ────────────────────────────────────────────────────────────────────
 	try {
 		await transporter.sendMail({
 			from: CFG.EMAIL_FROM,
+			replyTo: CFG.EMAIL_FROM,
 			to: opts.to,
 			subject: opts.subject,
 			html: opts.html,
 			text: opts.text,
 		});
+		// Structured log: recipient domain + subject (no PII beyond domain).
+		const domain = opts.to.split("@")[1] ?? opts.to;
+		console.info(`[mailer] sent to=@${domain} subject="${opts.subject}"`);
 	} catch (err) {
 		console.error(`[mailer] Failed to send email to ${opts.to}:`, err);
 	}

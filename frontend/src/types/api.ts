@@ -588,6 +588,29 @@ export interface AdminEarningsExport {
   rows: AdminEarningsExportRow[]
 }
 
+// ---- admin: all-orders list (management-only export view) ----
+export interface AdminAllOrderRow {
+  orderId: string
+  memberCode: string
+  memberName: string
+  memberPhone: string
+  productId: number
+  productName: string
+  totalPaise: number
+  status: 'created' | 'paid' | 'confirmed' | 'rejected' | 'failed' | 'refunded'
+  paymentRef?: string
+  rejectionReason?: string
+  createdAt: string
+  confirmedAt?: string
+}
+
+export interface AdminOrdersPage {
+  items: AdminAllOrderRow[]
+  total: number
+  page: number
+  limit: number
+}
+
 // ---- management: on-behalf payment ----
 export interface OnBehalfRes {
   ok: boolean

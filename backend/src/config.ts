@@ -27,6 +27,9 @@ const EMAIL_FROM = env(
 	"EMAIL_FROM",
 	"Agila Vetri Groups <support@agilavetriglobal.com>",
 );
+// Hard daily send ceiling — stay below the Hostinger 1000/day mailbox limit.
+// Set lower than the plan limit so a burst never hits the provider cap directly.
+const MAIL_DAILY_CAP = parseInt(env("MAIL_DAILY_CAP", "800"), 10);
 
 // Fail fast when insecure defaults are present in staging/production.
 // development + test: local dev and vitest are exempt.
@@ -90,6 +93,7 @@ export const CFG = {
 	SMTP_PASS,
 	SMTP_SECURE,
 	EMAIL_FROM,
+	MAIL_DAILY_CAP,
 	// G-9: CORS allowlist (space-separated origins). In dev, localhost is allowed.
 	CORS_ORIGINS: env(
 		"CORS_ORIGINS",
