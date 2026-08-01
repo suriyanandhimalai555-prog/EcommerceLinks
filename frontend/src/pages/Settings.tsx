@@ -3,13 +3,13 @@ import { useTranslation } from 'react-i18next'
 import { Globe, Bell, LogOut, Shield, Zap } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { logout } from '../lib/auth'
+import { logoutAllDevices } from '../lib/auth'
 import api from '../lib/api'
 import { isStaff } from '../lib/roles'
 import type { Me } from '../types/api'
 
 export default function Settings() {
-  const { i18n } = useTranslation()
+  const { i18n, t } = useTranslation()
   const navigate = useNavigate()
   const [emailNotif, setEmailNotif] = useState(true)
   const [smsNotif, setSmsNotif] = useState(false)
@@ -23,7 +23,7 @@ export default function Settings() {
   })
 
   const handleLogoutAll = async () => {
-    await logout()
+    await logoutAllDevices()
     queryClient.clear()
     navigate('/login')
   }
@@ -88,15 +88,15 @@ export default function Settings() {
       <div className="avg-card p-5">
         <div className="flex items-center gap-2 mb-4">
           <Shield size={16} className="text-primary" />
-          <h2 className="text-sm font-semibold text-ink">Security</h2>
+          <h2 className="text-sm font-semibold text-ink">{t('settings.security')}</h2>
         </div>
         <div className="space-y-3">
-          <p className="text-sm text-ink-muted">Signing out from all devices will invalidate all active sessions.</p>
+          <p className="text-sm text-ink-muted">{t('settings.logoutAllDesc')}</p>
           <button
             onClick={handleLogoutAll}
             className="flex items-center gap-2 border border-danger/30 bg-danger/10 text-danger rounded-lg px-4 py-2.5 text-sm font-semibold hover:bg-danger/20 transition-colors cursor-pointer"
           >
-            <LogOut size={15} /> Logout from all devices
+            <LogOut size={15} /> {t('settings.logoutAllBtn')}
           </button>
         </div>
       </div>

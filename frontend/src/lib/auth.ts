@@ -35,6 +35,22 @@ export async function logout(): Promise<void> {
 }
 
 /**
+ * Revoke every live session for this account, then clear local state.
+ * Uses the current refresh token to identify the member on the server.
+ * Other devices are ejected within the 15-minute access-token TTL (by design —
+ * app.authenticate is deliberately DB-free, matching how admin-block behaves).
+ * Best-effort — always clears local state even if the server call fails.
+ */
+export async function logoutAllDevices(): Promise<void> {
+  const refreshToken = tokenStore.getRefresh()
+  if (refreshToken) {
+    const base = import.meta.env.VITE_API_URL || 'http://localhost:3000'
+    await axios.post(`${base}/auth/logout-all`, { refreshToken }).catch(() => null)
+  }
+  tokenStore.clear()
+}
+
+/**
  * Called once on app boot (inside RequireAuth). If an access token is already
  * in memory (e.g. just logged in, no refresh needed) returns true immediately.
  * If a refresh token exists in localStorage, exchanges it for a fresh access

@@ -691,6 +691,38 @@ export async function authRoutes(app: FastifyInstance) {
 		return reply.send({ ok: true });
 	});
 
+	// Revoke every live refresh token for the member who presents their current
+	// refresh token. Mirrors /logout but kills all sessions, not just this one.
+	// Access tokens remain valid for up to their 15-minute TTL — intentional,
+	// matches how admin block behaves (app.authenticate is deliberately DB-free).
+	app.post("/logout-all", async (req, reply) => {
+		const body = LogoutBody.safeParse(req.body);
+		if (!body.success)
+			return reply.status(400).send({ error: body.error.flatten() });
+
+		let payload: { sub?: string; type?: string; jti?: string };
+		try {
+			payload = app.jwt.verify<{ sub?: string; type?: string; jti?: string }>(
+				body.data.refreshToken,
+			);
+		} catch {
+			// Token already expired or invalid — treat as already logged out
+			return reply.send({ ok: true });
+		}
+
+		// Require a valid refresh token (not an access token)
+		if (payload.type !== "refresh" || !payload.sub) {
+			return reply.send({ ok: true });
+		}
+
+		// Revoke all live sessions for this member in one indexed UPDATE
+		await pool().query(
+			`UPDATE refresh_tokens SET revoked_at = now() WHERE member_id = $1 AND revoked_at IS NULL`,
+			[payload.sub],
+		);
+		return reply.send({ ok: true });
+	});
+
 	app.get(
 		"/me",
 		{

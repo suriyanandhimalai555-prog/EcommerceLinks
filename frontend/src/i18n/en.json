@@ -537,6 +537,11 @@
     "confirmedAt": "Confirmed On",
     "proofImages": "Payment screenshots"
   },
+  "settings": {
+    "security": "Security",
+    "logoutAllDesc": "Signing out from all devices will invalidate all active sessions.",
+    "logoutAllBtn": "Logout from all devices"
+  },
   "common": {
     "cancel": "Cancel"
   }
