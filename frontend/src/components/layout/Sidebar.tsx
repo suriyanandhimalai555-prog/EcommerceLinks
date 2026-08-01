@@ -39,6 +39,7 @@ const managementNavItems = [
   { key: 'adminBank', icon: CreditCard, path: '/admin/bank', end: false },
   { key: 'adminProducts', icon: ShoppingBag, path: '/admin/products', end: false },
   { key: 'adminRanks', icon: Trophy, path: '/admin/ranks', end: false },
+  { key: 'adminWithdrawals', icon: Wallet, path: '/admin/withdrawals', end: false },
   { key: 'adminPayouts', icon: Banknote, path: '/admin/payouts', end: false },
   { key: 'adminSystem', icon: Activity, path: '/admin/system', end: false },
   { key: 'adminAudit', icon: ScrollText, path: '/admin/audit', end: false },

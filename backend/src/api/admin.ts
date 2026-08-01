@@ -434,7 +434,48 @@ export async function adminRoutes(app: FastifyInstance) {
 	});
 
 	// ===== admin withdrawals =====
-	// GET /admin/withdrawals?status=requested&page=1&limit=20
+
+	// GET /admin/withdrawals/weeks — per-week aggregates (dropdown + summary strip).
+	// MUST be registered before GET /withdrawals/:id routes (Fastify route specificity).
+	app.get("/withdrawals/weeks", auth, async (req, reply) => {
+		const actor = req.user as { sub: string };
+		if (!(await isManagement(actor.sub)))
+			return reply.status(403).send({ error: "Management only" });
+
+		const { rows } = await pool().query<{
+			cutoff_id: string;
+			window_start: string;
+			window_end: string;
+			pending_count: string;
+			pending_total: string;
+			paid_total: string;
+		}>(`
+      SELECT c.id::text                                                          AS cutoff_id,
+             c.window_start,
+             c.window_end,
+             COUNT(*) FILTER (WHERE w.status IN ('pending','requested'))::text   AS pending_count,
+             COALESCE(SUM(w.amount) FILTER (WHERE w.status IN ('pending','requested')), 0)::text AS pending_total,
+             COALESCE(SUM(w.amount) FILTER (WHERE w.status = 'paid'), 0)::text   AS paid_total
+        FROM withdrawals w
+        JOIN cutoffs c ON c.id = w.source_cutoff_id
+       WHERE w.source_cutoff_id IS NOT NULL
+       GROUP BY c.id, c.window_start, c.window_end
+       ORDER BY c.window_start DESC
+    `);
+
+		return {
+			weeks: rows.map((r) => ({
+				cutoffId: r.cutoff_id,
+				weekStart: r.window_start,
+				weekEnd: r.window_end,
+				pendingCount: Number(r.pending_count),
+				pendingTotalPaise: Number(toPaise(r.pending_total)),
+				paidTotalPaise: Number(toPaise(r.paid_total)),
+			})),
+		};
+	});
+
+	// GET /admin/withdrawals?status=pending&cutoffId=7&page=1&limit=20
 	app.get("/withdrawals", auth, async (req, reply) => {
 		const actor = req.user as { sub: string };
 		if (!(await isManagement(actor.sub)))
@@ -445,18 +486,23 @@ export async function adminRoutes(app: FastifyInstance) {
 			page?: string;
 			limit?: string;
 			q?: string;
+			cutoffId?: string;
 		};
 		const statusFilter = query.status ?? "requested";
 		const search = (query.q ?? "").trim();
 		const limit = Math.min(Math.max(1, Number(query.limit ?? "20")), 100);
 		const page = Math.max(1, Number(query.page ?? "1"));
 		const offset = (page - 1) * limit;
+		// null disables the week filter; a value restricts to one cutoff's withdrawals.
+		const cutoffId = query.cutoffId ?? null;
 
-		// $2 = search term; empty string disables the member code/name filter.
+		// $3 = cutoffId (nullable bigint) — null = all weeks.
 		const { rows } = await pool().query<{
 			id: string;
 			member_code: string;
 			name: string;
+			kyc_status: string;
+			bank_status: string;
 			amount: string;
 			tds: string | null;
 			net: string | null;
@@ -464,40 +510,86 @@ export async function adminRoutes(app: FastifyInstance) {
 			requested_at: string;
 			processed_at: string | null;
 			notes: string | null;
+			source_cutoff_id: string | null;
+			window_start: string | null;
+			window_end: string | null;
 		}>(
-			`SELECT w.id, m.member_code, m.name, w.amount, w.tds, w.net,
-              w.status, w.requested_at, w.processed_at, w.notes
-       FROM withdrawals w
-       JOIN members m ON m.id = w.member_id
-       WHERE ($1 = 'all' OR w.status = $1)
-         AND ($2 = '' OR m.member_code ILIKE '%' || $2 || '%' OR m.name ILIKE '%' || $2 || '%')
-       ORDER BY w.id DESC
-       LIMIT $3 OFFSET $4`,
-			[statusFilter, search, limit, offset],
+			`SELECT w.id, m.member_code, m.name, m.kyc_status, m.bank_status,
+              w.amount, w.tds, w.net,
+              w.status, w.requested_at, w.processed_at, w.notes,
+              c.id::text AS source_cutoff_id, c.window_start, c.window_end
+         FROM withdrawals w
+         JOIN members m ON m.id = w.member_id
+         LEFT JOIN cutoffs c ON c.id = w.source_cutoff_id
+        WHERE ($1 = 'all' OR w.status = $1)
+          AND ($2 = '' OR m.member_code ILIKE '%' || $2 || '%' OR m.name ILIKE '%' || $2 || '%')
+          AND ($3::bigint IS NULL OR w.source_cutoff_id = $3::bigint)
+        ORDER BY w.id DESC
+        LIMIT $4 OFFSET $5`,
+			[statusFilter, search, cutoffId, limit, offset],
 		);
 
 		const { rows: countRows } = await pool().query<{ total: string }>(
 			`SELECT COUNT(*) AS total
-       FROM withdrawals w
-       JOIN members m ON m.id = w.member_id
-       WHERE ($1 = 'all' OR w.status = $1)
-         AND ($2 = '' OR m.member_code ILIKE '%' || $2 || '%' OR m.name ILIKE '%' || $2 || '%')`,
-			[statusFilter, search],
+         FROM withdrawals w
+         JOIN members m ON m.id = w.member_id
+        WHERE ($1 = 'all' OR w.status = $1)
+          AND ($2 = '' OR m.member_code ILIKE '%' || $2 || '%' OR m.name ILIKE '%' || $2 || '%')
+          AND ($3::bigint IS NULL OR w.source_cutoff_id = $3::bigint)`,
+			[statusFilter, search, cutoffId],
+		);
+
+		// Fetch proof URLs for paid withdrawals in this page.
+		const wdIds = rows.map((r) => r.id);
+		let proofsByWd: Map<string, string[]> = new Map();
+		if (wdIds.length > 0) {
+			const { rows: proofRows } = await pool().query<{
+				withdrawal_id: string;
+				s3_key: string;
+			}>(
+				`SELECT withdrawal_id, s3_key FROM withdrawal_payment_proofs
+				  WHERE withdrawal_id = ANY($1::bigint[])
+				  ORDER BY id`,
+				[wdIds],
+			);
+			for (const pr of proofRows) {
+				const list = proofsByWd.get(pr.withdrawal_id) ?? [];
+				list.push(pr.s3_key);
+				proofsByWd.set(pr.withdrawal_id, list);
+			}
+		}
+
+		// Build presigned GET URLs for proof screenshots (paid rows only).
+		const itemsWithProof = await Promise.all(
+			rows.map(async (r) => {
+				const keys = proofsByWd.get(r.id) ?? [];
+				const proofUrls =
+					r.status === "paid" && keys.length > 0
+						? await Promise.all(keys.map((k) => presignGet(k)))
+						: [];
+				return {
+					id: r.id,
+					memberCode: r.member_code,
+					memberName: r.name,
+					kycStatus: r.kyc_status,
+					bankStatus: r.bank_status,
+					amountPaise: Number(toPaise(r.amount)),
+					tdsPaise: r.tds ? Number(toPaise(r.tds)) : null,
+					netPaise: r.net ? Number(toPaise(r.net)) : null,
+					status: r.status,
+					requestedAt: r.requested_at,
+					processedAt: r.processed_at,
+					notes: r.notes,
+					proofUrls,
+					sourceCutoffId: r.source_cutoff_id ?? null,
+					weekStart: r.window_start ?? null,
+					weekEnd: r.window_end ?? null,
+				};
+			}),
 		);
 
 		return {
-			items: rows.map((r) => ({
-				id: r.id,
-				memberCode: r.member_code,
-				memberName: r.name,
-				amountPaise: Number(toPaise(r.amount)),
-				tdsPaise: r.tds ? Number(toPaise(r.tds)) : null,
-				netPaise: r.net ? Number(toPaise(r.net)) : null,
-				status: r.status,
-				requestedAt: r.requested_at,
-				processedAt: r.processed_at,
-				notes: r.notes,
-			})),
+			items: itemsWithProof,
 			total: Number(countRows[0]?.total ?? 0),
 			page,
 			limit,
@@ -507,6 +599,40 @@ export async function adminRoutes(app: FastifyInstance) {
 	const WithdrawalDecideBody = z.object({
 		notes: z.string().optional(),
 		bankRef: z.string().optional(),
+		proofKeys: z.array(z.string()).optional(),
+	});
+
+	// POST /admin/withdrawals/:id/proof/presign — mint a presigned S3 POST URL
+	// for management to upload a "money sent" screenshot.
+	const WithdrawalProofPresignBody = z.object({
+		contentType: z.enum(IMAGE_CONTENT_TYPES),
+		sizeBytes: z.number().int().positive().max(MAX_UPLOAD_BYTES),
+	});
+
+	app.post("/withdrawals/:id/proof/presign", auth, async (req, reply) => {
+		const actor = req.user as { sub: string };
+		if (!(await isManagement(actor.sub)))
+			return reply.status(403).send({ error: "Management only" });
+		if (!s3Configured())
+			return reply.status(503).send({ error: "S3_NOT_CONFIGURED" });
+
+		const { id } = req.params as { id: string };
+		const body = WithdrawalProofPresignBody.safeParse(req.body);
+		if (!body.success)
+			return reply.status(400).send({ error: body.error.flatten() });
+
+		const { rows } = await pool().query<{ member_id: string }>(
+			"SELECT member_id FROM withdrawals WHERE id = $1",
+			[id],
+		);
+		if (!rows[0])
+			return reply.status(404).send({ error: "Withdrawal not found" });
+
+		const key = buildKey(
+			`withdrawal-proofs/${rows[0].member_id}`,
+			body.data.contentType,
+		);
+		return presignUpload(key, body.data.contentType);
 	});
 
 	// POST /admin/withdrawals/:id/approve
@@ -532,9 +658,29 @@ export async function adminRoutes(app: FastifyInstance) {
 			);
 			if (!wdRows[0])
 				throw Object.assign(new Error("Withdrawal not found"), { statusCode: 404 });
-			if (wdRows[0].status !== "requested")
+			if (wdRows[0].status !== "pending" && wdRows[0].status !== "requested")
 				throw Object.assign(
-					new Error("Withdrawal is not in requested status"),
+					new Error("Withdrawal is not in pending or requested status"),
+					{ statusCode: 409 },
+				);
+
+			// KYC + bank gate — enforce here now that withdrawals are auto-created.
+			// The manual flow gated at request time; the auto flow relies on this check.
+			const { rows: memberRows } = await c.query<{
+				kyc_status: string;
+				bank_status: string;
+			}>(
+				"SELECT kyc_status, bank_status FROM members WHERE id=$1",
+				[wdRows[0].member_id],
+			);
+			if (memberRows[0]?.kyc_status !== "verified")
+				throw Object.assign(
+					new Error("Member must complete KYC verification before payment"),
+					{ statusCode: 409 },
+				);
+			if (memberRows[0]?.bank_status !== "verified")
+				throw Object.assign(
+					new Error("Member must complete bank verification before payment"),
 					{ statusCode: 409 },
 				);
 
@@ -597,7 +743,7 @@ export async function adminRoutes(app: FastifyInstance) {
 				[
 					actor.sub,
 					id,
-					{ status: "requested" },
+					{ status: "pending" },
 					{
 						status: "paid",
 						grossPaise: Number(grossPaise),
@@ -608,6 +754,17 @@ export async function adminRoutes(app: FastifyInstance) {
 					},
 				],
 			);
+
+			// Attach optional proof screenshots uploaded by management.
+			if (body.data.proofKeys?.length) {
+				for (const s3Key of body.data.proofKeys) {
+					await c.query(
+						`INSERT INTO withdrawal_payment_proofs (withdrawal_id, s3_key)
+						 VALUES ($1, $2)`,
+						[id, s3Key],
+					);
+				}
+			}
 		});
 
 		return { ok: true };
@@ -636,9 +793,9 @@ export async function adminRoutes(app: FastifyInstance) {
 			);
 			if (!wdRows[0])
 				throw Object.assign(new Error("Withdrawal not found"), { statusCode: 404 });
-			if (wdRows[0].status !== "requested")
+			if (wdRows[0].status !== "pending" && wdRows[0].status !== "requested")
 				throw Object.assign(
-					new Error("Withdrawal is not in requested status"),
+					new Error("Withdrawal is not in pending or requested status"),
 					{ statusCode: 409 },
 				);
 

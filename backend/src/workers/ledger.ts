@@ -453,14 +453,6 @@ export async function sweepToWithdrawable(
 		const memberId = BigInt(e.member_id);
 		const moveAmt = BigInt(e.amount_paise);
 
-		if (moveAmt === 0n) {
-			await c.query(
-				"INSERT INTO processed_events (consumer_group, event_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
-				[GROUP, e.event_id],
-			);
-			return;
-		}
-
 		const { rows: accs } = await c.query<{ id: string; kind: string }>(
 			`SELECT id, kind FROM accounts WHERE owner_id=$1 AND kind IN ('wallet','withdrawable')`,
 			[memberId],
@@ -470,22 +462,94 @@ export async function sweepToWithdrawable(
 			accs.find((a) => a.kind === "withdrawable")!.id,
 		);
 
-		// Idempotency key uses a distinct prefix (wsweep:) to avoid collision
-		// with the deferred sweep which uses (sweep:).
-		await postLedgerTxn(
-			c,
-			`wsweep:${e.closed_cutoff_id}:${memberId}`,
-			"wsweep",
-			null,
-			[
-				{ accountId: walletAccId, direction: "D", amountPaise: moveAmt },
-				{
-					accountId: withdrawableAccId,
-					direction: "C",
-					amountPaise: moveAmt,
-				},
-			],
+		// Move wallet → withdrawable (skip when amount is 0 — rollover-only events
+		// where the member had no new earnings but has a prior rejected payout to re-sweep).
+		// The ledger_entries.amount CHECK forbids a 0-value entry.
+		if (moveAmt > 0n) {
+			// Idempotency key uses a distinct prefix (wsweep:) to avoid collision
+			// with the deferred sweep which uses (sweep:).
+			await postLedgerTxn(
+				c,
+				`wsweep:${e.closed_cutoff_id}:${memberId}`,
+				"wsweep",
+				null,
+				[
+					{ accountId: walletAccId, direction: "D", amountPaise: moveAmt },
+					{
+						accountId: withdrawableAccId,
+						direction: "C",
+						amountPaise: moveAmt,
+					},
+				],
+			);
+		}
+
+		// Auto-create a 'pending' payout row for this week if the member's total
+		// withdrawable balance (new earnings + any rolled-over rejected funds) meets
+		// the minimum.  The hold (withdrawable → payout_clearing) is posted in the
+		// same transaction so money is always exactly accounted for.
+		// The unique index uq_withdrawal_source_cutoff (migration 039) plus the
+		// deterministic `autowd:` ledger key make this fully idempotent under
+		// XAUTOCLAIM re-delivery.
+		const { rows: wbRows } = await c.query<{ balance: string }>(
+			`SELECT wb.balance FROM wallet_balances wb
+			  WHERE wb.account_id = $1
+			  FOR UPDATE`,
+			[String(withdrawableAccId)],
 		);
+		const withdrawableBalance = wbRows[0]
+			? toPaise(wbRows[0].balance)
+			: 0n;
+
+		if (withdrawableBalance >= BigInt(CFG.MIN_PAYOUT_PAISE)) {
+			// Get system payout_clearing account (read-only lookup, lock not needed).
+			const { rows: sysRows } = await c.query<{ id: string }>(
+				`SELECT id FROM accounts WHERE owner_type='system' AND kind='payout_clearing'`,
+			);
+			if (sysRows[0]) {
+				const payoutClearingId = BigInt(sysRows[0].id);
+				const holdKey = `autowd:${e.closed_cutoff_id}:${memberId}`;
+
+				// Insert the pending withdrawal row.  ON CONFLICT DO NOTHING guards
+				// against duplicate delivery (same event replayed via XAUTOCLAIM).
+				const { rows: wdRows } = await c.query<{ id: string }>(
+					`INSERT INTO withdrawals (member_id, amount, status, source_cutoff_id)
+					 VALUES ($1, $2, 'pending', $3)
+					 ON CONFLICT (member_id, source_cutoff_id)
+					   WHERE source_cutoff_id IS NOT NULL
+					 DO NOTHING
+					 RETURNING id`,
+					[
+						String(memberId),
+						fromPaise(withdrawableBalance),
+						String(e.closed_cutoff_id),
+					],
+				);
+
+				if (wdRows[0]) {
+					// New row inserted — post the hold.
+					await postLedgerTxn(
+						c,
+						holdKey,
+						"withdrawal",
+						BigInt(wdRows[0].id),
+						[
+							{
+								accountId: withdrawableAccId,
+								direction: "D",
+								amountPaise: withdrawableBalance,
+							},
+							{
+								accountId: payoutClearingId,
+								direction: "C",
+								amountPaise: withdrawableBalance,
+							},
+						],
+					);
+				}
+				// If wdRows is empty the row already existed (idempotent replay) — skip.
+			}
+		}
 
 		await c.query(
 			"INSERT INTO processed_events (consumer_group, event_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",

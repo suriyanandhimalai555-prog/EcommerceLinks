@@ -45,7 +45,7 @@ export async function ensureCutoffExists(): Promise<void> {
 			const daysSinceSat = (now.weekday - 6 + 7) % 7;
 			wStart = now
 				.minus({ days: daysSinceSat })
-				.set({ hour: 18, minute: 0, second: 0, millisecond: 0 });
+				.set({ hour: 23, minute: 50, second: 0, millisecond: 0 });
 			if (wStart > now) wStart = wStart.minus({ days: 7 });
 		}
 
@@ -108,19 +108,38 @@ export async function closeAndOpenCutoff(): Promise<void> {
 		// WithdrawableSweepRequested for every member with earnings > 0.
 		// The snapshot amount is embedded in the event so the handler moves exactly
 		// that amount regardless of delivery order or XAUTOCLAIM re-delivery.
+		//
+		// We also emit for members whose wallet is 0 but who have a leftover
+		// withdrawable balance from a previously-rejected payout (amount_paise=0).
+		// The ledger.ts handler skips the wallet→withdrawable move for amount=0
+		// but still auto-creates the pending payout row from the existing
+		// withdrawable balance, so rejected-and-refunded funds are re-swept into
+		// the new week's pending without needing new earnings.
 		const { rows: walletSnapshot } = await c.query<{
 			owner_id: string;
-			balance: string;
+			wallet_balance: string;
 		}>(
-			`SELECT a.owner_id, wb.balance FROM wallet_balances wb
-       JOIN accounts a ON a.id = wb.account_id
-       WHERE a.kind='wallet' AND wb.balance > 0`,
+			`SELECT a.owner_id,
+			        COALESCE(wb.balance, 0) AS wallet_balance
+			   FROM accounts a
+			   JOIN wallet_balances wb ON wb.account_id = a.id
+			  WHERE a.kind = 'wallet'
+			    AND (
+			      wb.balance > 0
+			      OR EXISTS (
+			        SELECT 1 FROM accounts a2
+			        JOIN wallet_balances wb2 ON wb2.account_id = a2.id
+			        WHERE a2.owner_id = a.owner_id
+			          AND a2.kind = 'withdrawable'
+			          AND wb2.balance > 0
+			      )
+			    )`,
 		);
 		for (const row of walletSnapshot) {
 			// Convert NUMERIC balance (rupees) to integer paise for the event payload.
 			// Use toPaise (exact decimal parse), never float arithmetic on money.
-			const amountPaise = Number(toPaise(row.balance));
-			if (amountPaise <= 0) continue;
+			const amountPaise = Number(toPaise(row.wallet_balance));
+			// amountPaise may be 0 for rollover-only members — that is intentional.
 			await writeOutbox(c, {
 				event_id: randomUUID(),
 				event_type: "WithdrawableSweepRequested",

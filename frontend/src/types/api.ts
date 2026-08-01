@@ -313,9 +313,11 @@ export interface Withdrawal {
   amountPaise: number
   tdsPaise: number | null
   netPaise: number | null
-  status: 'requested' | 'approved' | 'rejected' | 'paid'
+  status: 'pending' | 'requested' | 'approved' | 'rejected' | 'paid'
   requestedAt: string
   processedAt: string | null
+  /** Presigned GET URLs for proof screenshots management uploaded (paid rows only). */
+  proofUrls?: string[]
 }
 
 export interface WithdrawalsRes {
@@ -326,13 +328,21 @@ export interface AdminWithdrawal {
   id: string
   memberCode: string
   memberName: string
+  kycStatus: string
+  bankStatus: string
   amountPaise: number
   tdsPaise: number | null
   netPaise: number | null
-  status: 'requested' | 'approved' | 'rejected' | 'paid'
+  status: 'pending' | 'requested' | 'approved' | 'rejected' | 'paid'
   requestedAt: string
   processedAt: string | null
   notes: string | null
+  /** Presigned GET URLs for proof screenshots (paid rows only). */
+  proofUrls?: string[]
+  /** Week linkage — null for legacy manual withdrawals. */
+  sourceCutoffId: string | null
+  weekStart: string | null
+  weekEnd: string | null
 }
 
 export interface AdminWithdrawalsPage {
@@ -340,6 +350,19 @@ export interface AdminWithdrawalsPage {
   total: number
   page: number
   limit: number
+}
+
+export interface AdminWithdrawalWeek {
+  cutoffId: string
+  weekStart: string
+  weekEnd: string
+  pendingCount: number
+  pendingTotalPaise: number
+  paidTotalPaise: number
+}
+
+export interface AdminWithdrawalWeeksRes {
+  weeks: AdminWithdrawalWeek[]
 }
 
 // ---- ranks ----

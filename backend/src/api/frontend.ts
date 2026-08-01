@@ -10,8 +10,8 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { CFG } from "../config.js";
 import { QUALIFIED_THRESHOLDS } from "../domain/ranks.js";
-import { pool, withTxn } from "../lib/db.js";
-import { fromPaise, pctRoundUp, toPaise } from "../lib/money.js";
+import { pool } from "../lib/db.js";
+import { toPaise } from "../lib/money.js";
 import { redis } from "../lib/redis.js";
 import {
 	buildKey,
@@ -30,7 +30,6 @@ import {
 	imagesByProduct,
 } from "../services/productService.js";
 import { getSetting } from "../services/settings.js";
-import { postLedgerTxn } from "../workers/ledger.js";
 
 // Display names the frontend expects (index 1..12)
 const RANK_NAMES: Record<number, string> = {
@@ -1325,111 +1324,10 @@ export async function frontendRoutes(app: FastifyInstance) {
 	});
 
 	// ===== member withdrawals =====
-	const WithdrawalReqBody = z.object({
-		amountPaise: z
-			.number()
-			.int()
-			.min(CFG.MIN_PAYOUT_PAISE, `Minimum withdrawal is ₹${CFG.MIN_PAYOUT_PAISE / 100}`),
-	});
-
-	app.post("/me/withdrawals", auth, async (req, reply) => {
-		const memberId = (req.user as Auth).sub;
-		const body = WithdrawalReqBody.safeParse(req.body);
-		if (!body.success)
-			return reply.status(400).send({ error: body.error.flatten() });
-
-		const amountPaise = BigInt(body.data.amountPaise);
-
-		await withTxn(async (c) => {
-			// Check KYC + bank gates
-			const { rows: memberRows } = await c.query<{
-				kyc_status: string;
-				bank_status: string;
-			}>("SELECT kyc_status, bank_status FROM members WHERE id=$1 FOR UPDATE", [
-				memberId,
-			]);
-			if (!memberRows[0])
-				throw Object.assign(new Error("Member not found"), { statusCode: 404 });
-
-			if (memberRows[0].kyc_status !== "verified") {
-				throw Object.assign(
-					new Error("KYC verification required before withdrawing"),
-					{ statusCode: 409 },
-				);
-			}
-			if (memberRows[0].bank_status !== "verified") {
-				throw Object.assign(
-					new Error("Bank details must be verified before withdrawing"),
-					{ statusCode: 409 },
-				);
-			}
-
-			// Fetch and lock withdrawable account
-			const { rows: accRows } = await c.query<{
-				id: string;
-				balance: string;
-			}>(
-				`SELECT a.id, wb.balance FROM accounts a
-         JOIN wallet_balances wb ON wb.account_id = a.id
-         WHERE a.owner_id=$1 AND a.kind='withdrawable'
-         FOR UPDATE`,
-				[memberId],
-			);
-			if (!accRows[0])
-				throw Object.assign(new Error("Withdrawable account not found"), {
-					statusCode: 500,
-				});
-
-			const withdrawableAccId = BigInt(accRows[0].id);
-			const currentBalance = toPaise(accRows[0].balance);
-
-			if (currentBalance < amountPaise) {
-				throw Object.assign(
-					new Error(
-						`Insufficient withdrawable balance (have ₹${Number(currentBalance) / 100}, requested ₹${Number(amountPaise) / 100})`,
-					),
-					{ statusCode: 409 },
-				);
-			}
-
-			// Get system payout_clearing account
-			const { rows: sysRows } = await c.query<{ id: string }>(
-				`SELECT id FROM accounts WHERE owner_type='system' AND kind='payout_clearing'`,
-			);
-			const payoutClearingId = BigInt(sysRows[0].id);
-
-			// Create withdrawal row first to get the ID for the idempotency key
-			const { rows: wdRows } = await c.query<{ id: string }>(
-				`INSERT INTO withdrawals (member_id, amount, status)
-         VALUES ($1, $2, 'requested')
-         RETURNING id`,
-				[memberId, fromPaise(amountPaise)],
-			);
-			const withdrawalId = wdRows[0].id;
-
-			// Hold: D withdrawable / C payout_clearing
-			await postLedgerTxn(
-				c,
-				`wdhold:${withdrawalId}`,
-				"withdrawal",
-				BigInt(withdrawalId),
-				[
-					{
-						accountId: withdrawableAccId,
-						direction: "D",
-						amountPaise,
-					},
-					{
-						accountId: payoutClearingId,
-						direction: "C",
-						amountPaise,
-					},
-				],
-			);
-		});
-
-		return reply.status(201).send({ ok: true });
-	});
+	// POST /me/withdrawals is removed — payouts are now fully automatic.
+	// At each Saturday 23:50 IST cutoff the system auto-creates a 'pending' payout
+	// row for every member with a withdrawable balance ≥ MIN_PAYOUT.
+	// Management approves each row individually via POST /admin/withdrawals/:id/approve.
 
 	app.get("/me/withdrawals", auth, async (req) => {
 		const memberId = (req.user as Auth).sub;
@@ -1454,17 +1352,47 @@ export async function frontendRoutes(app: FastifyInstance) {
 			[memberId, limit, offset],
 		);
 
-		return {
-			items: rows.map((r) => ({
-				id: r.id,
-				amountPaise: Number(toPaise(r.amount)),
-				tdsPaise: r.tds ? Number(toPaise(r.tds)) : null,
-				netPaise: r.net ? Number(toPaise(r.net)) : null,
-				status: r.status as "requested" | "approved" | "rejected" | "paid",
-				requestedAt: r.requested_at,
-				processedAt: r.processed_at,
-			})),
-		};
+		// Build proof screenshot URLs for paid withdrawals.
+		const wdIds = rows.map((r) => r.id);
+		const proofsByWd = new Map<string, string[]>();
+		if (wdIds.length > 0) {
+			const { rows: proofRows } = await pool().query<{
+				withdrawal_id: string;
+				s3_key: string;
+			}>(
+				`SELECT withdrawal_id, s3_key FROM withdrawal_payment_proofs
+				  WHERE withdrawal_id = ANY($1::bigint[])
+				  ORDER BY id`,
+				[wdIds],
+			);
+			for (const pr of proofRows) {
+				const list = proofsByWd.get(pr.withdrawal_id) ?? [];
+				list.push(pr.s3_key);
+				proofsByWd.set(pr.withdrawal_id, list);
+			}
+		}
+
+		const items = await Promise.all(
+			rows.map(async (r) => {
+				const keys = proofsByWd.get(r.id) ?? [];
+				const proofUrls =
+					r.status === "paid" && keys.length > 0
+						? await Promise.all(keys.map((k) => presignGet(k)))
+						: [];
+				return {
+					id: r.id,
+					amountPaise: Number(toPaise(r.amount)),
+					tdsPaise: r.tds ? Number(toPaise(r.tds)) : null,
+					netPaise: r.net ? Number(toPaise(r.net)) : null,
+					status: r.status as "pending" | "requested" | "approved" | "rejected" | "paid",
+					requestedAt: r.requested_at,
+					processedAt: r.processed_at,
+					proofUrls,
+				};
+			}),
+		);
+
+		return { items };
 	});
 
 	// ===== payouts =====

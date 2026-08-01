@@ -23,6 +23,7 @@ async function simulate() {
 		`SELECT m.id, m.member_code, COUNT(c.id) AS kids
      FROM members m
      LEFT JOIN members c ON c.parent_id = m.id
+     WHERE m.role != 'management'
      GROUP BY m.id, m.member_code
      HAVING COUNT(c.id) < 2
      ORDER BY m.id
@@ -65,15 +66,17 @@ async function simulate() {
 				[memberId],
 			);
 
-			// Simulate first product payment (Starter ₹10,000)
+			// Simulate first product payment (Starter ₹10,000, no GST since c62e1be)
+			const simKey = `sim-${memberCode}-${Date.now()}`;
 			const { rows: orderRows } = await pool().query<{ id: string }>(
 				`INSERT INTO orders (member_id, product_id, base_amount, gst_amount, total_amount, idempotency_key)
-         VALUES ($1, 1, 10000, 1800, 11800, $2) RETURNING id`,
-				[memberId, `sim-${memberCode}-${Date.now()}`],
+         VALUES ($1, 1, 10000, 0, 10000, $2) RETURNING id`,
+				[memberId, simKey],
 			);
 
+			// gatewayEventId must match the order's idempotency_key for confirmOrder's WHERE clause
 			await confirmOrder(
-				`sim-gw-${orderRows[0].id}`,
+				simKey,
 				BigInt(orderRows[0].id),
 				`sim-ref-${orderRows[0].id}`,
 			);

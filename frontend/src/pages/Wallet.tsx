@@ -1,34 +1,17 @@
-import { useState } from 'react'
-import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useInfiniteQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Wallet as WalletIcon, ArrowDownToLine, TrendingUp, Loader2, AlertCircle } from 'lucide-react'
-import { useForm } from 'react-hook-form'
-import { zodResolver } from '@hookform/resolvers/zod'
-import { z } from 'zod'
+import { Wallet as WalletIcon, ArrowDownToLine, AlertCircle, Clock, CheckCircle2, XCircle } from 'lucide-react'
+import { Link } from 'react-router-dom'
 import api from '../lib/api'
 import { formatINR, formatDateTime, orDash } from '../lib/format'
-import { apiErrorMessage } from '../lib/apiError'
 import { StatCard } from '../components/ui/StatCard'
 import { SkeletonCard } from '../components/ui/Skeleton'
 import { DataTable, type Column } from '../components/ui/DataTable'
 import { Badge } from '../components/ui/Badge'
 import type { Wallet as WalletType, LedgerEntry, LedgerRes, Withdrawal, WithdrawalsRes, Me } from '../types/api'
 
-const withdrawSchema = z.object({
-  amountPaise: z
-    .number()
-    .int()
-    .min(50000, 'Minimum withdrawal is ₹500'),
-})
-type WithdrawForm = z.infer<typeof withdrawSchema>
-
-const MIN_PAISE = 50000 // ₹500
-
 export default function WalletPage() {
   const { t } = useTranslation()
-  const qc = useQueryClient()
-  const [withdrawError, setWithdrawError] = useState<string | null>(null)
-  const [withdrawSuccess, setWithdrawSuccess] = useState(false)
 
   const { data: me } = useQuery<Me>({
     queryKey: ['me'],
@@ -59,43 +42,9 @@ export default function WalletPage() {
     ? Math.min(100, (wallet.currentWindow.earnedPaise / wallet.currentWindow.capPaise) * 100)
     : 0
 
-  const { register, handleSubmit, reset, formState: { errors, isSubmitting } } = useForm<WithdrawForm>({
-    resolver: zodResolver(withdrawSchema),
-  })
-
-  const requestWithdrawal = useMutation({
-    mutationFn: (data: WithdrawForm) =>
-      api.post('/me/withdrawals', { amountPaise: data.amountPaise }),
-    onSuccess: () => {
-      setWithdrawSuccess(true)
-      setWithdrawError(null)
-      reset()
-      qc.invalidateQueries({ queryKey: ['wallet'] })
-      qc.invalidateQueries({ queryKey: ['me-withdrawals'] })
-    },
-    onError: (err) => {
-      setWithdrawError(apiErrorMessage(err, t, t('wallet.withdrawFailed')))
-    },
-  })
-
-  const onSubmit = (data: WithdrawForm) => {
-    setWithdrawSuccess(false)
-    setWithdrawError(null)
-    // Friendly client-side guard so the user never hits the server's 409.
-    if (data.amountPaise > withdrawablePaise) {
-      setWithdrawError(t('wallet.exceedsBalance', { balance: formatINR(withdrawablePaise) }))
-      return
-    }
-    requestWithdrawal.mutate(data)
-  }
-
   const kycOk = me?.kycStatus === 'verified'
   const bankOk = me?.bankStatus === 'verified'
-  const canWithdraw = kycOk && bankOk
-  // Withdrawals draw from the withdrawable balance (funded at each weekly cutoff).
-  // Below the ₹500 minimum there is nothing to withdraw yet.
-  const withdrawablePaise = wallet?.withdrawablePaise ?? 0
-  const hasFunds = withdrawablePaise >= MIN_PAISE
+  const bothVerified = kycOk && bankOk
 
   const ledgerCols: Column<LedgerEntry>[] = [
     { key: 'date', header: t('wallet.date'), render: r => <span className="text-xs text-ink-muted">{formatDateTime(r.at)}</span> },
@@ -138,12 +87,33 @@ export default function WalletPage() {
         <Badge variant={
           r.status === 'paid' ? 'success' :
           r.status === 'rejected' ? 'danger' :
-          r.status === 'requested' ? 'warning' :
+          r.status === 'pending' ? 'warning' :
           'neutral'
         }>
-          {r.status}
+          {r.status === 'pending' ? t('wallet.statusPending') :
+           r.status === 'paid' ? t('wallet.statusPaid') :
+           r.status === 'rejected' ? t('wallet.statusRejected') :
+           r.status}
         </Badge>
       )
+    },
+    {
+      key: 'proof', header: t('wallet.proof'),
+      render: r => r.status === 'paid' && r.proofUrls?.length
+        ? (
+          <div className="flex gap-1.5 flex-wrap">
+            {r.proofUrls.map((url, i) => (
+              <a key={i} href={url} target="_blank" rel="noreferrer">
+                <img
+                  src={url}
+                  alt={t('wallet.proofAlt', { n: i + 1 })}
+                  className="w-10 h-10 rounded object-cover border border-surface-line hover:opacity-80 transition-opacity"
+                />
+              </a>
+            ))}
+          </div>
+        )
+        : <span className="text-ink-muted">—</span>
     },
   ]
 
@@ -196,86 +166,47 @@ export default function WalletPage() {
         </div>
       )}
 
-      {/* Withdraw form */}
-      <div className="avg-card p-5 space-y-4">
+      {/* Payout info / KYC–bank prompt */}
+      <div className="avg-card p-5 space-y-3">
         <div className="flex items-center gap-2">
-          <TrendingUp size={16} className="text-primary" />
-          <h2 className="text-sm font-semibold text-ink">{t('wallet.requestWithdrawal')}</h2>
+          <CheckCircle2 size={16} className="text-primary" />
+          <h2 className="text-sm font-semibold text-ink">{t('wallet.autoPayout')}</h2>
         </div>
+        <p className="text-xs text-ink-muted">{t('wallet.autoPayoutDesc')}</p>
 
-        {!canWithdraw && (
+        {!bothVerified && (
           <div className="flex items-start gap-2 bg-warning/10 border border-warning/20 rounded-xl p-3">
             <AlertCircle size={14} className="text-warning shrink-0 mt-0.5" />
-            <p className="text-xs text-ink-muted">
-              {!kycOk && !bankOk
-                ? t('wallet.kycBankRequired')
-                : !kycOk
-                  ? t('wallet.kycRequired')
-                  : t('wallet.bankRequired')}
-            </p>
-          </div>
-        )}
-
-        {canWithdraw && !hasFunds && (
-          <div className="flex items-start gap-2 bg-warning/10 border border-warning/20 rounded-xl p-3">
-            <AlertCircle size={14} className="text-warning shrink-0 mt-0.5" />
-            <p className="text-xs text-ink-muted">{t('wallet.noWithdrawableFunds')}</p>
-          </div>
-        )}
-
-        {withdrawSuccess && (
-          <div className="flex items-center gap-2 bg-success/10 text-success text-sm p-3 rounded-lg border border-success/20">
-            {t('wallet.withdrawSuccess')}
-          </div>
-        )}
-        {withdrawError && (
-          <div className="flex items-center gap-2 bg-danger/10 text-danger text-sm p-3 rounded-lg border border-danger/20">
-            <AlertCircle size={14} /> {withdrawError}
-          </div>
-        )}
-
-        <form onSubmit={handleSubmit(onSubmit)} className="flex gap-3 items-end">
-          <div className="flex-1 space-y-1">
-            <label className="text-xs font-semibold text-ink-muted uppercase tracking-wider">
-              {t('wallet.withdrawAmount')}
-            </label>
-            <div className="relative">
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-ink-muted">₹</span>
-              <input
-                type="number"
-                step="1"
-                min={MIN_PAISE / 100}
-                placeholder="500"
-                disabled={!canWithdraw || !hasFunds || isSubmitting}
-                className="w-full rounded-lg border border-surface-line bg-[#10141F] pl-7 pr-3 py-2.5 text-sm text-ink placeholder:text-ink-muted/60 outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary disabled:opacity-50"
-                {...register('amountPaise', {
-                  setValueAs: (v) => v === '' ? undefined : Math.round(Number(v) * 100),
-                })}
-              />
+            <div className="space-y-1">
+              <p className="text-xs text-ink-muted">
+                {!kycOk && !bankOk
+                  ? t('wallet.kycBankRequired')
+                  : !kycOk
+                    ? t('wallet.kycRequired')
+                    : t('wallet.bankRequired')}
+              </p>
+              <Link to="/profile" className="text-xs font-semibold text-primary underline underline-offset-2">
+                {t('wallet.completeProfile')}
+              </Link>
             </div>
-            {errors.amountPaise && (
-              <p className="text-xs text-danger">{errors.amountPaise.message}</p>
-            )}
-            <p className="text-xs text-ink-muted">
-              {t('wallet.withdrawableBalance')}: {orDash(wallet?.withdrawablePaise, formatINR)} · {t('wallet.minWithdrawal')}
-            </p>
           </div>
-          <button
-            type="submit"
-            disabled={!canWithdraw || !hasFunds || isSubmitting}
-            className="avg-btn-primary py-2.5 px-5 flex items-center gap-1.5 whitespace-nowrap"
-          >
-            {isSubmitting ? <Loader2 size={14} className="animate-spin" /> : <ArrowDownToLine size={14} />}
-            {t('wallet.withdraw')}
-          </button>
-        </form>
+        )}
+
+        {bothVerified && (
+          <div className="flex items-center gap-2 bg-success/10 border border-success/20 rounded-xl p-3">
+            <CheckCircle2 size={13} className="text-success shrink-0" />
+            <p className="text-xs text-ink-muted">{t('wallet.eligibleForPayout')}</p>
+          </div>
+        )}
+
         <p className="text-xs text-ink-muted">{t('wallet.tdsNote')}</p>
       </div>
 
-      {/* Withdrawal history */}
+      {/* Payout history */}
       {withdrawals.length > 0 && (
         <div className="avg-card">
-          <div className="p-5 border-b border-surface-line">
+          <div className="p-5 border-b border-surface-line flex items-center gap-2">
+            <Clock size={14} className="text-ink-muted" />
             <h2 className="text-sm font-semibold text-ink">{t('wallet.withdrawalHistory')}</h2>
           </div>
           <DataTable
@@ -284,6 +215,13 @@ export default function WalletPage() {
             rowKey={r => r.id}
             emptyTitle={t('wallet.noWithdrawals')}
           />
+        </div>
+      )}
+
+      {withdrawals.length === 0 && !walletLoading && (
+        <div className="avg-card p-8 text-center">
+          <XCircle size={28} className="text-ink-muted mx-auto mb-2 opacity-40" />
+          <p className="text-sm text-ink-muted">{t('wallet.noWithdrawals')}</p>
         </div>
       )}
 
