@@ -601,6 +601,11 @@ export interface AdminEarningsExportRow {
   memberCode: string
   name: string
   earnedPaise: number
+  kycStatus: string
+  bankStatus: string
+  bankAccountName: string
+  bankAccountNumber: string
+  bankIfsc: string
 }
 
 export interface AdminEarningsExport {
@@ -608,6 +613,7 @@ export interface AdminEarningsExport {
   windowStart: string
   windowEnd: string
   status: string
+  verifiedOnly: boolean
   rows: AdminEarningsExportRow[]
 }
 

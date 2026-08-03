@@ -2607,8 +2607,11 @@ export async function adminRoutes(app: FastifyInstance) {
 		if (!(await isManagement(actor.sub)))
 			return reply.status(403).send({ error: "Management only" });
 
-		const query = req.query as { cutoffId?: string };
+		const query = req.query as { cutoffId?: string; verifiedOnly?: string };
 		const requestedId = query.cutoffId?.trim();
+		// When verifiedOnly=true, only include members whose KYC and bank are both
+		// verified — i.e. the people who can actually be paid this cycle.
+		const verifiedOnly = query.verifiedOnly === "true";
 
 		type CutoffRow = {
 			id: string;
@@ -2655,11 +2658,19 @@ export async function adminRoutes(app: FastifyInstance) {
 			member_code: string;
 			name: string;
 			earned: string;
+			kyc_status: string;
+			bank_status: string;
+			bank_account_name: string | null;
+			bank_account_number: string | null;
+			bank_ifsc: string | null;
 		}>(
-			`SELECT m.member_code, m.name, ce.earned
+			`SELECT m.member_code, m.name, ce.earned,
+			        m.kyc_status, m.bank_status,
+			        m.bank_account_name, m.bank_account_number, m.bank_ifsc
 			 FROM cutoff_earnings ce
 			 JOIN members m ON m.id = ce.member_id
 			 WHERE ce.cutoff_id = $1
+			 ${verifiedOnly ? "AND m.kyc_status = 'verified' AND m.bank_status = 'verified'" : ""}
 			 ORDER BY m.member_code`,
 			[cutoffRow.id],
 		);
@@ -2669,10 +2680,16 @@ export async function adminRoutes(app: FastifyInstance) {
 			windowStart: new Date(cutoffRow.window_start).toISOString(),
 			windowEnd: new Date(cutoffRow.window_end).toISOString(),
 			status: cutoffRow.status,
+			verifiedOnly,
 			rows: earnedRows.map((r) => ({
 				memberCode: r.member_code,
 				name: r.name,
 				earnedPaise: Number(toPaise(r.earned)),
+				kycStatus: r.kyc_status,
+				bankStatus: r.bank_status,
+				bankAccountName: r.bank_account_name ?? "",
+				bankAccountNumber: r.bank_account_number ?? "",
+				bankIfsc: r.bank_ifsc ?? "",
 			})),
 		};
 	});

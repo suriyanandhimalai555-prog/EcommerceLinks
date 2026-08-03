@@ -29,7 +29,8 @@
     "worker:reconciler": "tsx src/workers/reconciler.ts",
     "report:weekly": "tsx scripts/reconstructWeekly.ts",
     "redate:earnings": "tsx scripts/redateEarnings.ts",
-    "reconstruct:payouts": "tsx scripts/reconstructWeeklyPayouts.ts"
+    "reconstruct:payouts": "tsx scripts/reconstructWeeklyPayouts.ts",
+    "forfeit:root-overage": "tsx scripts/forfeitRootOverage.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1085.0",

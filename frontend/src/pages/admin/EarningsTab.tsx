@@ -26,6 +26,9 @@ export function EarningsTab() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [selectedCutoffId, setSelectedCutoffId] = useState<string>('')
   const [exporting, setExporting] = useState(false)
+  // When on, the export only includes members whose KYC + bank are both verified
+  // (i.e. the people we can actually send money to).
+  const [verifiedOnly, setVerifiedOnly] = useState(true)
 
   // Debounce search
   useEffect(() => {
@@ -81,22 +84,35 @@ export function EarningsTab() {
   const exportCSV = async () => {
     setExporting(true)
     try {
-      const url = selectedCutoffId
-        ? `/admin/earnings/export?cutoffId=${encodeURIComponent(selectedCutoffId)}`
-        : '/admin/earnings/export'
+      const params = new URLSearchParams()
+      if (selectedCutoffId) params.set('cutoffId', selectedCutoffId)
+      if (verifiedOnly) params.set('verifiedOnly', 'true')
+      const qs = params.toString()
+      const url = qs ? `/admin/earnings/export?${qs}` : '/admin/earnings/export'
       const res: AdminEarningsExport = await api.get(url).then((r) => r.data)
 
       const startLabel = formatDate(res.windowStart)
       const endLabel = formatDate(res.windowEnd)
+      const csvCell = (v: string) => `"${(v ?? '').replace(/"/g, '""')}"`
       const headers = [
         t('admin.earnings.exportColCode'),
         t('admin.earnings.exportColName'),
         t('admin.earnings.exportColEarned'),
+        t('admin.earnings.exportColBankName'),
+        t('admin.earnings.exportColBankNumber'),
+        t('admin.earnings.exportColBankIfsc'),
+        t('admin.earnings.exportColKyc'),
+        t('admin.earnings.exportColBankStatus'),
       ]
       const rows = res.rows.map((r) => [
         r.memberCode,
-        `"${r.name.replace(/"/g, '""')}"`,
+        csvCell(r.name),
         (r.earnedPaise / 100).toFixed(2),
+        csvCell(r.bankAccountName),
+        csvCell(r.bankAccountNumber),
+        csvCell(r.bankIfsc),
+        r.kycStatus,
+        r.bankStatus,
       ])
       const csv = [headers, ...rows].map((r) => r.join(',')).join('\n')
       const blob = new Blob([csv], { type: 'text/csv' })
@@ -226,6 +242,15 @@ export function EarningsTab() {
                   <option value="">{t('admin.earnings.noCutoffs')}</option>
                 )}
               </select>
+              <label className="flex items-center gap-1.5 text-xs text-ink-muted cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={verifiedOnly}
+                  onChange={(e) => setVerifiedOnly(e.target.checked)}
+                  className="accent-primary"
+                />
+                {t('admin.earnings.exportVerifiedOnly')}
+              </label>
               <button
                 onClick={exportCSV}
                 disabled={exporting || cutoffs.length === 0}
