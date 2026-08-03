@@ -25,7 +25,7 @@ export default function PayoutHistory() {
     { key: 'date', header: 'Date', render: r => <span className="text-sm">{formatDate(r.date)}</span> },
     { key: 'gross', header: 'Gross Amount', align: 'right', render: r => <span className="font-semibold">{formatINR(r.grossPaise)}</span> },
     {
-      key: 'tds', header: 'TDS (5%)', align: 'right',
+      key: 'tds', header: 'TDS (10%)', align: 'right',
       render: r => <span className="text-danger">{formatINR(r.tdsPaise)}</span>
     },
     { key: 'net', header: 'Net Paid', align: 'right', render: r => <span className="font-bold text-success">{formatINR(r.netPaise)}</span> },

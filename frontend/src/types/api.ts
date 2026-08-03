@@ -555,6 +555,8 @@ export interface AdminEarningsRow {
   id: string
   memberCode: string
   name: string
+  kycStatus: string
+  bankStatus: string
   netEarnedPaise: number
   pairsMatched: number
   withdrawnPaise: number
@@ -613,7 +615,7 @@ export interface AdminEarningsExport {
   windowStart: string
   windowEnd: string
   status: string
-  verifiedOnly: boolean
+  verification: string
   rows: AdminEarningsExportRow[]
 }
 

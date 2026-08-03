@@ -2538,22 +2538,39 @@ export async function adminRoutes(app: FastifyInstance) {
 			q?: string;
 			page?: string;
 			limit?: string;
+			verification?: string;
 		};
 		const search = (query.q ?? "").trim();
 		const limit = Math.min(Math.max(1, Number(query.limit ?? "20")), 100);
 		const page = Math.max(1, Number(query.page ?? "1"));
 		const offset = (page - 1) * limit;
 
+		// Verification filter (fixed enum → safe to inline into SQL):
+		//   verified   = KYC and bank both verified (ready to be paid)
+		//   unverified = KYC or bank NOT yet verified (still needs to complete it)
+		//   all        = no filter (default)
+		const verification = query.verification === "verified" || query.verification === "unverified"
+			? query.verification
+			: "all";
+		const vClause =
+			verification === "verified"
+				? "AND m.kyc_status = 'verified' AND m.bank_status = 'verified'"
+				: verification === "unverified"
+					? "AND (m.kyc_status <> 'verified' OR m.bank_status <> 'verified')"
+					: "";
+
 		const [{ rows }, { rows: countRows }] = await Promise.all([
 			pool().query<{
 				id: string;
 				member_code: string;
 				name: string;
+				kyc_status: string;
+				bank_status: string;
 				net_earned: string;
 				pairs_matched: string;
 				withdrawn: string;
 			}>(
-				`SELECT m.id, m.member_code, m.name,
+				`SELECT m.id, m.member_code, m.name, m.kyc_status, m.bank_status,
 				        COALESCE(ce.net_earned, 0) AS net_earned,
 				        COALESCE(pa.pairs_matched, 0) AS pairs_matched,
 				        COALESCE(wd.withdrawn, 0) AS withdrawn
@@ -2572,6 +2589,7 @@ export async function adminRoutes(app: FastifyInstance) {
 				 ) wd ON wd.member_id = m.id
 				 WHERE m.role <> 'management'
 				   AND ($1 = '' OR m.member_code ILIKE '%' || $1 || '%' OR m.name ILIKE '%' || $1 || '%')
+				   ${vClause}
 				 ORDER BY m.member_code
 				 LIMIT $2 OFFSET $3`,
 				[search, limit, offset],
@@ -2580,7 +2598,8 @@ export async function adminRoutes(app: FastifyInstance) {
 				`SELECT COUNT(*) AS total
 				 FROM members m
 				 WHERE m.role <> 'management'
-				   AND ($1 = '' OR m.member_code ILIKE '%' || $1 || '%' OR m.name ILIKE '%' || $1 || '%')`,
+				   AND ($1 = '' OR m.member_code ILIKE '%' || $1 || '%' OR m.name ILIKE '%' || $1 || '%')
+				   ${vClause}`,
 				[search],
 			),
 		]);
@@ -2590,6 +2609,8 @@ export async function adminRoutes(app: FastifyInstance) {
 				id: r.id,
 				memberCode: r.member_code,
 				name: r.name,
+				kycStatus: r.kyc_status,
+				bankStatus: r.bank_status,
 				netEarnedPaise: Number(toPaise(r.net_earned)),
 				pairsMatched: Number(r.pairs_matched),
 				withdrawnPaise: Number(toPaise(r.withdrawn)),
@@ -2607,11 +2628,22 @@ export async function adminRoutes(app: FastifyInstance) {
 		if (!(await isManagement(actor.sub)))
 			return reply.status(403).send({ error: "Management only" });
 
-		const query = req.query as { cutoffId?: string; verifiedOnly?: string };
+		const query = req.query as { cutoffId?: string; verification?: string };
 		const requestedId = query.cutoffId?.trim();
-		// When verifiedOnly=true, only include members whose KYC and bank are both
-		// verified — i.e. the people who can actually be paid this cycle.
-		const verifiedOnly = query.verifiedOnly === "true";
+		// Verification filter (fixed enum → safe to inline), matching GET /earnings:
+		//   verified   = KYC and bank both verified (ready to pay)
+		//   unverified = KYC or bank NOT yet done (needs to complete it)
+		//   all        = no filter (default)
+		const verification =
+			query.verification === "verified" || query.verification === "unverified"
+				? query.verification
+				: "all";
+		const vClause =
+			verification === "verified"
+				? "AND m.kyc_status = 'verified' AND m.bank_status = 'verified'"
+				: verification === "unverified"
+					? "AND (m.kyc_status <> 'verified' OR m.bank_status <> 'verified')"
+					: "";
 
 		type CutoffRow = {
 			id: string;
@@ -2670,7 +2702,7 @@ export async function adminRoutes(app: FastifyInstance) {
 			 FROM cutoff_earnings ce
 			 JOIN members m ON m.id = ce.member_id
 			 WHERE ce.cutoff_id = $1
-			 ${verifiedOnly ? "AND m.kyc_status = 'verified' AND m.bank_status = 'verified'" : ""}
+			 ${vClause}
 			 ORDER BY m.member_code`,
 			[cutoffRow.id],
 		);
@@ -2680,7 +2712,7 @@ export async function adminRoutes(app: FastifyInstance) {
 			windowStart: new Date(cutoffRow.window_start).toISOString(),
 			windowEnd: new Date(cutoffRow.window_end).toISOString(),
 			status: cutoffRow.status,
-			verifiedOnly,
+			verification,
 			rows: earnedRows.map((r) => ({
 				memberCode: r.member_code,
 				name: r.name,

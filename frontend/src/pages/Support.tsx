@@ -6,7 +6,7 @@ import { FormField } from '../components/ui/FormField'
 const FAQ = [
   { q: 'How does the pair match bonus work?', a: 'You earn ₹1,000 for every matched pair of activations in your left and right legs. The system automatically matches left and right activations.' },
   { q: 'What is the weekly wallet cap?', a: 'Your wallet can earn up to ₹1,00,000 per week (Sun 18:00 – Sat 17:59 IST). Any earnings above ₹1,00,000 in a week are forfeited — they are not carried over to the next week.' },
-  { q: 'When are payouts processed?', a: 'Payouts are processed every Saturday to KYC and bank-verified members. 5% TDS is deducted as per Sec 194H.' },
+  { q: 'When are payouts processed?', a: 'Payouts are processed every Saturday to KYC and bank-verified members. 10% TDS is deducted as per Sec 194H.' },
   { q: 'What is the difference between Active and Qualified?', a: 'Active counts drive your ₹1,000 pair bonus. Qualified counts drive your rank ladder — a member qualifies only after their own direct recruit becomes active.' },
   { q: 'How do I change my phone number?', a: 'Phone number changes require identity verification. Please raise a support ticket and our team will assist you.' },
   { q: 'How long does KYC verification take?', a: 'KYC verification is typically completed within 2-3 business days after document submission.' },

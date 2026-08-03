@@ -22,13 +22,11 @@ export function EarningsTab() {
   const { t } = useTranslation()
   const [input, setInput] = useState('')
   const [q, setQ] = useState('')
+  const [verification, setVerification] = useState<'all' | 'verified' | 'unverified'>('all')
   const [page, setPage] = useState(1)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [selectedCutoffId, setSelectedCutoffId] = useState<string>('')
   const [exporting, setExporting] = useState(false)
-  // When on, the export only includes members whose KYC + bank are both verified
-  // (i.e. the people we can actually send money to).
-  const [verifiedOnly, setVerifiedOnly] = useState(true)
 
   // Debounce search
   useEffect(() => {
@@ -38,10 +36,10 @@ export function EarningsTab() {
 
   // Main earnings list
   const { data: earningsPage, isPending } = useQuery<AdminEarningsPage>({
-    queryKey: ['admin-earnings', q, page],
+    queryKey: ['admin-earnings', q, verification, page],
     queryFn: () =>
       api
-        .get(`/admin/earnings?q=${encodeURIComponent(q)}&page=${page}&limit=${PAGE_SIZE}`)
+        .get(`/admin/earnings?q=${encodeURIComponent(q)}&verification=${verification}&page=${page}&limit=${PAGE_SIZE}`)
         .then((r) => r.data),
     placeholderData: keepPreviousData,
   })
@@ -86,7 +84,8 @@ export function EarningsTab() {
     try {
       const params = new URLSearchParams()
       if (selectedCutoffId) params.set('cutoffId', selectedCutoffId)
-      if (verifiedOnly) params.set('verifiedOnly', 'true')
+      // Export honors the same verification filter selected for the list.
+      if (verification !== 'all') params.set('verification', verification)
       const qs = params.toString()
       const url = qs ? `/admin/earnings/export?${qs}` : '/admin/earnings/export'
       const res: AdminEarningsExport = await api.get(url).then((r) => r.data)
@@ -162,6 +161,20 @@ export function EarningsTab() {
       align: 'right',
       render: (r) => (
         <span className="text-sm text-ink-muted">{formatINR(r.withdrawnPaise)}</span>
+      ),
+    },
+    {
+      key: 'verification',
+      header: t('admin.earnings.colVerification'),
+      render: (r) => (
+        <div className="flex flex-wrap gap-1">
+          <Badge size="sm" variant={r.kycStatus === 'verified' ? 'success' : 'warning'}>
+            {t('admin.earnings.kycTag', { status: r.kycStatus })}
+          </Badge>
+          <Badge size="sm" variant={r.bankStatus === 'verified' ? 'success' : 'warning'}>
+            {t('admin.earnings.bankTag', { status: r.bankStatus })}
+          </Badge>
+        </div>
       ),
     },
     {
@@ -242,15 +255,6 @@ export function EarningsTab() {
                   <option value="">{t('admin.earnings.noCutoffs')}</option>
                 )}
               </select>
-              <label className="flex items-center gap-1.5 text-xs text-ink-muted cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={verifiedOnly}
-                  onChange={(e) => setVerifiedOnly(e.target.checked)}
-                  className="accent-primary"
-                />
-                {t('admin.earnings.exportVerifiedOnly')}
-              </label>
               <button
                 onClick={exportCSV}
                 disabled={exporting || cutoffs.length === 0}
@@ -262,15 +266,29 @@ export function EarningsTab() {
             </div>
           </div>
 
-          {/* Search */}
-          <div className="relative max-w-md">
-            <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted" />
-            <input
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder={t('admin.earnings.searchPlaceholder')}
-              className="w-full rounded-lg border border-surface-line bg-[#10141F] pl-9 pr-3 py-2.5 text-sm text-ink placeholder:text-ink-muted/60 outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
-            />
+          {/* Search + verification filter */}
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <div className="relative max-w-md flex-1">
+              <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted" />
+              <input
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                placeholder={t('admin.earnings.searchPlaceholder')}
+                className="w-full rounded-lg border border-surface-line bg-[#10141F] pl-9 pr-3 py-2.5 text-sm text-ink placeholder:text-ink-muted/60 outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+              />
+            </div>
+            <select
+              value={verification}
+              onChange={(e) => {
+                setVerification(e.target.value as 'all' | 'verified' | 'unverified')
+                setPage(1)
+              }}
+              className="rounded-lg border border-surface-line bg-[#10141F] px-3 py-2.5 text-sm text-ink outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+            >
+              <option value="all">{t('admin.earnings.filterAll')}</option>
+              <option value="verified">{t('admin.earnings.filterVerified')}</option>
+              <option value="unverified">{t('admin.earnings.filterUnverified')}</option>
+            </select>
           </div>
         </div>
 

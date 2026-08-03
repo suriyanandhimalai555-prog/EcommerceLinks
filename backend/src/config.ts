@@ -65,7 +65,7 @@ export const CFG = {
 	PAIR_BONUS_PAISE: parseInt(env("PAIR_BONUS_PAISE", "100000"), 10),
 	CUTOFF_CAP_PAISE: parseInt(env("CUTOFF_CAP_PAISE", "10000000"), 10),
 	GST_PCT: parseInt(env("GST_PCT", "18"), 10),
-	TDS_PCT: parseInt(env("TDS_PCT", "5"), 10),
+	TDS_PCT: parseInt(env("TDS_PCT", "10"), 10),
 	MIN_PAYOUT_PAISE: parseInt(env("MIN_PAYOUT_PAISE", "50000"), 10),
 	// Max levels below the root that /network/tree returns in one view (root = level 0).
 	// The frontend caps its request/zoom-out to the same value (see frontend tree constants).

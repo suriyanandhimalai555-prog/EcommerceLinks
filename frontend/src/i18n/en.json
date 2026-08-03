@@ -318,7 +318,7 @@
       "emptyDesc": "Payouts are generated automatically each Saturday night. Check back then.",
       "requestedOn": "Week ended {{date}}",
       "gross": "Gross amount",
-      "tds5pct": "5% TDS will be deducted",
+      "tds5pct": "10% TDS will be deducted",
       "bankRefLabel": "Bank Reference / UTR (optional)",
       "bankRefPlaceholder": "e.g. UTR123456789",
       "bankLabel": "Bank",
@@ -358,6 +358,12 @@
       "exportColKyc": "KYC Status",
       "exportColBankStatus": "Bank Status",
       "exportVerifiedOnly": "Only KYC + bank verified",
+      "filterAll": "All members",
+      "filterVerified": "KYC + bank verified",
+      "filterUnverified": "KYC / bank not done",
+      "colVerification": "KYC / Bank",
+      "kycTag": "KYC: {{status}}",
+      "bankTag": "Bank: {{status}}",
       "detailTitle": "Member Detail",
       "loading": "Loading…",
       "active": "Active",
@@ -376,7 +382,7 @@
       "sectionWithdrawals": "Withdrawals",
       "withdrawnGross": "Withdrawn (gross)",
       "withdrawnNet": "Withdrawn (post-TDS)",
-      "withdrawnNetHint": "After 5% TDS deduction",
+      "withdrawnNetHint": "After 10% TDS deduction",
       "withdrawalCount": "{{count}} paid withdrawal(s)",
       "pendingWithdrawal": "Pending withdrawal",
       "pendingWithdrawalHint": "Amount held in-flight — requested but not yet paid",
@@ -491,7 +497,7 @@
     }
   },
   "payout": {
-    "tdsNote": "5% TDS deducted as per Sec 194H"
+    "tdsNote": "10% TDS deducted as per Sec 194H"
   },
   "wallet": {
     "title": "Wallet",
@@ -509,7 +515,7 @@
     "bankRequired": "Bank details must be verified to receive your payout.",
     "completeProfile": "Complete your profile →",
     "eligibleForPayout": "Your KYC and bank are verified. You will be paid automatically after each Saturday sweep.",
-    "tdsNote": "5% TDS is deducted at the time of payment as per Sec 194H.",
+    "tdsNote": "10% TDS is deducted at the time of payment as per Sec 194H.",
     "withdrawalHistory": "Payout History",
     "noWithdrawals": "No payouts yet. Payouts are created automatically every Saturday night.",
     "ledger": "Transaction Ledger",
