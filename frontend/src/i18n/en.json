@@ -552,7 +552,9 @@
     "delete": "Delete",
     "deleteConfirmTitle": "Delete inactive member?",
     "deleteConfirmBody": "This will permanently remove {{name}} from the tree. The slot will become vacant. This cannot be undone.",
-    "deleteFailed": "Failed to delete member"
+    "deleteFailed": "Failed to delete member",
+    "searchPlaceholder": "Search tree by name or code…",
+    "searchNoResults": "No members found"
   },
   "downline": {
     "searchPlaceholder": "Search by name or member code…",

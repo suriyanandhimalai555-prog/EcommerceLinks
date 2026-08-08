@@ -7,6 +7,7 @@ import api from '../lib/api'
 import { formatDate, orDash } from '../lib/format'
 import { StatCard } from '../components/ui/StatCard'
 import { BinaryTree } from '../components/tree/BinaryTree'
+import { TreeSearch } from '../components/tree/TreeSearch'
 import { useTreeDrilldown } from '../components/tree/useTreeDrilldown'
 import { DataTable, type Column } from '../components/ui/DataTable'
 import { Badge } from '../components/ui/Badge'
@@ -111,18 +112,29 @@ export default function Network() {
         </div>
 
         {view === 'binary' ? (
-          tree
-            ? <BinaryTree
-                root={tree}
-                depth={depth}
-                onNodeClick={drillTo}
-                onBack={back}
-                onBackToMe={backToMe}
-                canGoBack={canGoBack}
-                isFetching={isFetching}
-                requestDeeper={requestDeeper}
-              />
-            : <div className="py-10 text-center text-sm text-ink-muted">Loading tree…</div>
+          <>
+            <TreeSearch
+              scope="downline"
+              placeholder={t('tree.searchPlaceholder')}
+              onSelect={drillTo}
+              fetchResults={async (query) => {
+                const r = await api.get<DownlinePage>(`/network/downline?q=${encodeURIComponent(query)}&page=1&limit=8`)
+                return r.data.items.map((m) => ({ memberCode: m.memberCode, name: m.name, meta: `L${m.level} · ${m.leg}` }))
+              }}
+            />
+            {tree
+              ? <BinaryTree
+                  root={tree}
+                  depth={depth}
+                  onNodeClick={drillTo}
+                  onBack={back}
+                  onBackToMe={backToMe}
+                  canGoBack={canGoBack}
+                  isFetching={isFetching}
+                  requestDeeper={requestDeeper}
+                />
+              : <div className="py-10 text-center text-sm text-ink-muted">Loading tree…</div>}
+          </>
         ) : (
           <>
             <div className="relative max-w-md mb-3">

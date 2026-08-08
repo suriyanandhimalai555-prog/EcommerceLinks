@@ -3,10 +3,12 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Loader2, Trash2 } from 'lucide-react'
 import { BinaryTree } from '../../components/tree/BinaryTree'
+import { TreeSearch } from '../../components/tree/TreeSearch'
 import { useTreeDrilldown } from '../../components/tree/useTreeDrilldown'
 import { Modal } from '../../components/ui/Modal'
 import api from '../../lib/api'
 import { apiErrorMessage } from '../../lib/apiError'
+import type { AdminMembersPage } from '../../types/api'
 
 /**
  * Management-only full-tree view. Reuses the same server-side drill-down hook
@@ -55,6 +57,22 @@ export function AdminNetworkTab() {
       </div>
 
       <div className="avg-card p-5 min-w-0">
+        <TreeSearch
+          scope="admin-members"
+          placeholder={t('tree.searchPlaceholder')}
+          onSelect={drillTo}
+          fetchResults={async (query) => {
+            const r = await api.get<AdminMembersPage>(`/admin/members?q=${encodeURIComponent(query)}&page=1&limit=8`)
+            return r.data.items
+              // Skip the off-tree management account — it has no placement subtree.
+              .filter((m) => m.role !== 'management')
+              .map((m) => ({
+                memberCode: m.memberCode,
+                name: m.name,
+                meta: m.isActive ? t('counters.active') : t('admin.earnings.inactive'),
+              }))
+          }}
+        />
         {tree ? (
           <BinaryTree
             root={tree}
