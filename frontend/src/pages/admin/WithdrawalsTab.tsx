@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Loader2, Search, CheckCircle2, XCircle, AlertCircle, CalendarDays } from 'lucide-react'
+import { Loader2, Search, CheckCircle2, XCircle, AlertCircle, CalendarDays, Download } from 'lucide-react'
 import api from '../../lib/api'
 import { apiErrorMessage } from '../../lib/apiError'
 import { formatDate, formatINR } from '../../lib/format'
+import { downloadCsv } from '../../lib/exportCsv'
 import { DataTable, type Column } from '../../components/ui/DataTable'
 import { Badge } from '../../components/ui/Badge'
 import { Modal } from '../../components/ui/Modal'
@@ -13,6 +14,7 @@ import type {
   AdminWithdrawal,
   AdminWithdrawalsPage,
   AdminWithdrawalWeeksRes,
+  AdminWithdrawalExport,
   PresignRes,
 } from '../../types/api'
 
@@ -33,6 +35,7 @@ export function WithdrawalsTab() {
   const [bankRef, setBankRef] = useState('')
   const [proofImages, setProofImages] = useState<UploadedImage[]>([])
   const [banner, setBanner] = useState<{ ok: boolean; text: string } | null>(null)
+  const [exporting, setExporting] = useState(false)
   const uploaderRef = useRef<ImageUploaderHandle>(null)
 
   useEffect(() => {
@@ -97,16 +100,58 @@ export function WithdrawalsTab() {
   })
 
   // ── Summary strip data ────────────────────────────────────────────────────
+  // For a single selected week, use that week's figures. For "all weeks", use the
+  // server-computed global totals (which include paid rows with a NULL cutoff) so
+  // "Already paid" reconciles with the Earnings tab — NOT a sum of the week rows.
   const selectedWeek = weeks.find((w) => w.cutoffId === weekFilter)
   const summaryPendingAmount = selectedWeek
     ? selectedWeek.pendingTotalPaise
-    : weeks.reduce((s, w) => s + w.pendingTotalPaise, 0)
+    : (weeksData?.totals?.pendingPaise ?? 0)
   const summaryPendingCount = selectedWeek
     ? selectedWeek.pendingCount
-    : weeks.reduce((s, w) => s + w.pendingCount, 0)
+    : (weeksData?.totals?.pendingCount ?? 0)
   const summaryPaidAmount = selectedWeek
     ? selectedWeek.paidTotalPaise
-    : weeks.reduce((s, w) => s + w.paidTotalPaise, 0)
+    : (weeksData?.totals?.paidPaise ?? 0)
+
+  // ── CSV export — all rows matching the current status/week/search filters ───
+  const exportCSV = async () => {
+    setExporting(true)
+    try {
+      const params = new URLSearchParams({ status: statusFilter })
+      if (weekFilter !== 'all') params.set('cutoffId', weekFilter)
+      if (q) params.set('q', q)
+      const res: AdminWithdrawalExport = await api
+        .get(`/admin/withdrawals/export?${params}`)
+        .then((r) => r.data)
+
+      const headers = [
+        t('admin.withdrawals.colCode'),
+        t('admin.withdrawals.colName'),
+        t('admin.withdrawals.colAmount'),
+        t('admin.withdrawals.colNet'),
+        t('admin.withdrawals.colStatus'),
+        t('admin.withdrawals.exportColBankRef'),
+        t('admin.withdrawals.exportColWeekEnd'),
+        t('admin.withdrawals.exportColProcessedAt'),
+        t('admin.bank.notesLabel'),
+      ]
+      const rows = res.rows.map((r) => [
+        r.memberCode,
+        r.memberName,
+        (r.amountPaise / 100).toFixed(2),
+        r.netPaise != null ? (r.netPaise / 100).toFixed(2) : '',
+        r.status,
+        r.bankRef ?? '',
+        r.weekEnd ? formatDate(r.weekEnd) : '',
+        r.processedAt ? formatDate(r.processedAt) : '',
+        r.notes ?? '',
+      ])
+      downloadCsv(`withdrawals-${statusFilter}-${formatDate(new Date().toISOString())}.csv`, headers, rows)
+    } finally {
+      setExporting(false)
+    }
+  }
 
   // ── Filter pills ──────────────────────────────────────────────────────────
   const filterPills: { key: FilterStatus; label: string }[] = [
@@ -196,7 +241,17 @@ export function WithdrawalsTab() {
   return (
     <div className="avg-card">
       <div className="p-5 pb-3 space-y-3">
-        <h2 className="text-sm font-semibold text-ink">{t('admin.withdrawals.title')}</h2>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <h2 className="text-sm font-semibold text-ink">{t('admin.withdrawals.title')}</h2>
+          <button
+            onClick={exportCSV}
+            disabled={exporting}
+            className="avg-btn-secondary flex items-center gap-1.5 text-xs py-2 disabled:opacity-40 self-start sm:self-auto"
+          >
+            <Download size={13} />
+            {exporting ? t('admin.withdrawals.exporting') : t('admin.withdrawals.exportBtn')}
+          </button>
+        </div>
 
         {/* Row 1 — status pills + week selector */}
         <div className="flex flex-wrap items-center gap-3">
@@ -253,7 +308,7 @@ export function WithdrawalsTab() {
                 &nbsp;
               </p>
               <p className="text-sm text-ink-muted">
-                {t('admin.withdrawals.alreadyPaid', { amount: formatINR(summaryPaidAmount) })}
+                {t(weekFilter === 'all' ? 'admin.withdrawals.alreadyPaidAll' : 'admin.withdrawals.alreadyPaid', { amount: formatINR(summaryPaidAmount) })}
               </p>
             </div>
           </div>

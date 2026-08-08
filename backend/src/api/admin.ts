@@ -463,6 +463,25 @@ export async function adminRoutes(app: FastifyInstance) {
        ORDER BY c.window_start DESC
     `);
 
+		// Global totals over the WHOLE withdrawals table — no cutoff join, so paid
+		// rows with a NULL source_cutoff_id (legacy / manually-paid) are included.
+		// This is what makes "Already paid (all weeks)" reconcile with the Earnings
+		// tab's per-member "withdrawn" (which also sums all paid rows). The role
+		// filter mirrors GET /earnings (`m.role <> 'management'`) so the two match.
+		const { rows: totalRows } = await pool().query<{
+			paid_total: string;
+			pending_total: string;
+			pending_count: string;
+		}>(`
+      SELECT COALESCE(SUM(w.amount) FILTER (WHERE w.status = 'paid'), 0)::text                     AS paid_total,
+             COALESCE(SUM(w.amount) FILTER (WHERE w.status IN ('pending','requested')), 0)::text   AS pending_total,
+             COUNT(*) FILTER (WHERE w.status IN ('pending','requested'))::text                     AS pending_count
+        FROM withdrawals w
+        JOIN members m ON m.id = w.member_id
+       WHERE m.role <> 'management'
+    `);
+		const totals = totalRows[0];
+
 		return {
 			weeks: rows.map((r) => ({
 				cutoffId: r.cutoff_id,
@@ -471,6 +490,76 @@ export async function adminRoutes(app: FastifyInstance) {
 				pendingCount: Number(r.pending_count),
 				pendingTotalPaise: Number(toPaise(r.pending_total)),
 				paidTotalPaise: Number(toPaise(r.paid_total)),
+			})),
+			totals: {
+				paidPaise: Number(toPaise(totals?.paid_total ?? "0")),
+				pendingPaise: Number(toPaise(totals?.pending_total ?? "0")),
+				pendingCount: Number(totals?.pending_count ?? "0"),
+			},
+		};
+	});
+
+	// GET /admin/withdrawals/export — all rows matching the current filters (no
+	// pagination) for CSV reconciliation. Static path — registered before the
+	// /withdrawals/:id parametric routes (Fastify route specificity).
+	app.get("/withdrawals/export", auth, async (req, reply) => {
+		const actor = req.user as { sub: string };
+		if (!(await isManagement(actor.sub)))
+			return reply.status(403).send({ error: "Management only" });
+
+		const query = req.query as {
+			status?: string;
+			q?: string;
+			cutoffId?: string;
+		};
+		const statusFilter = query.status ?? "all";
+		const search = (query.q ?? "").trim();
+		const cutoffId = query.cutoffId ?? null;
+
+		// Same WHERE clause as GET /withdrawals, minus LIMIT/OFFSET and proof URLs.
+		const { rows } = await pool().query<{
+			member_code: string;
+			name: string;
+			amount: string;
+			tds: string | null;
+			net: string | null;
+			status: string;
+			requested_at: string;
+			processed_at: string | null;
+			window_start: string | null;
+			window_end: string | null;
+			bank_ref: string | null;
+			notes: string | null;
+		}>(
+			`SELECT m.member_code, m.name,
+              w.amount, w.tds, w.net, w.status,
+              w.requested_at, w.processed_at, w.bank_ref, w.notes,
+              c.window_start, c.window_end
+         FROM withdrawals w
+         JOIN members m ON m.id = w.member_id
+         LEFT JOIN cutoffs c ON c.id = w.source_cutoff_id
+        WHERE ($1 = 'all' OR w.status = $1)
+          AND ($2 = '' OR m.member_code ILIKE '%' || $2 || '%' OR m.name ILIKE '%' || $2 || '%')
+          AND ($3::bigint IS NULL OR w.source_cutoff_id = $3::bigint)
+          AND m.role <> 'management'
+        ORDER BY w.id DESC`,
+			[statusFilter, search, cutoffId],
+		);
+
+		return {
+			rows: rows.map((r) => ({
+				memberCode: r.member_code,
+				memberName: r.name,
+				amountPaise: Number(toPaise(r.amount)),
+				tdsPaise: r.tds ? Number(toPaise(r.tds)) : null,
+				netPaise: r.net ? Number(toPaise(r.net)) : null,
+				status: r.status,
+				requestedAt: r.requested_at,
+				processedAt: r.processed_at,
+				weekStart: r.window_start ?? null,
+				weekEnd: r.window_end ?? null,
+				bankRef: r.bank_ref ?? null,
+				notes: r.notes ?? null,
 			})),
 		};
 	});
@@ -2559,7 +2648,7 @@ export async function adminRoutes(app: FastifyInstance) {
 					? "AND (m.kyc_status <> 'verified' OR m.bank_status <> 'verified')"
 					: "";
 
-		const [{ rows }, { rows: countRows }] = await Promise.all([
+		const [{ rows }, { rows: countRows }, { rows: totalRows }] = await Promise.all([
 			pool().query<{
 				id: string;
 				member_code: string;
@@ -2602,7 +2691,39 @@ export async function adminRoutes(app: FastifyInstance) {
 				   ${vClause}`,
 				[search],
 			),
+			// Global grand totals over the SAME filtered set (search + verification),
+			// no pagination — so the Earnings stat cards show a true all-members total.
+			// With default filters, `withdrawn` = global paid gross and equals the
+			// Withdrawals tab's "Already paid (all weeks)" figure (both role<>management).
+			pool().query<{
+				net_earned: string;
+				pairs_matched: string;
+				withdrawn: string;
+			}>(
+				`SELECT COALESCE(SUM(COALESCE(ce.net_earned, 0)), 0)   AS net_earned,
+				        COALESCE(SUM(COALESCE(pa.pairs_matched, 0)), 0) AS pairs_matched,
+				        COALESCE(SUM(COALESCE(wd.withdrawn, 0)), 0)     AS withdrawn
+				 FROM members m
+				 LEFT JOIN (
+				   SELECT member_id, SUM(earned) AS net_earned
+				   FROM cutoff_earnings GROUP BY member_id
+				 ) ce ON ce.member_id = m.id
+				 LEFT JOIN (
+				   SELECT beneficiary_id, COUNT(*) AS pairs_matched
+				   FROM pair_accruals GROUP BY beneficiary_id
+				 ) pa ON pa.beneficiary_id = m.id
+				 LEFT JOIN (
+				   SELECT member_id, SUM(amount) AS withdrawn
+				   FROM withdrawals WHERE status = 'paid' GROUP BY member_id
+				 ) wd ON wd.member_id = m.id
+				 WHERE m.role <> 'management'
+				   AND ($1 = '' OR m.member_code ILIKE '%' || $1 || '%' OR m.name ILIKE '%' || $1 || '%')
+				   ${vClause}`,
+				[search],
+			),
 		]);
+
+		const totals = totalRows[0];
 
 		return {
 			items: rows.map((r) => ({
@@ -2618,6 +2739,11 @@ export async function adminRoutes(app: FastifyInstance) {
 			total: Number(countRows[0]?.total ?? 0),
 			page,
 			limit,
+			totals: {
+				netEarnedPaise: Number(toPaise(totals?.net_earned ?? "0")),
+				pairsMatched: Number(totals?.pairs_matched ?? "0"),
+				withdrawnPaise: Number(toPaise(totals?.withdrawn ?? "0")),
+			},
 		};
 	});
 

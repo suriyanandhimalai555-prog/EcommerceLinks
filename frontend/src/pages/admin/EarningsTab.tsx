@@ -47,10 +47,12 @@ export function EarningsTab() {
   const total = earningsPage?.total ?? 0
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
 
-  // Summary stats (from current page — quick at-a-glance figures)
-  const pageNetEarned = items.reduce((a, b) => a + b.netEarnedPaise, 0)
-  const pagePairs = items.reduce((a, b) => a + b.pairsMatched, 0)
-  const pageWithdrawn = items.reduce((a, b) => a + b.withdrawnPaise, 0)
+  // Summary stats — GLOBAL grand totals over the current filtered set (all matching
+  // members, not just this page), computed server-side. This is what makes the
+  // "Withdrawn" card equal the Withdrawals tab's "Already paid (all weeks)".
+  const totalNetEarned = earningsPage?.totals?.netEarnedPaise ?? 0
+  const totalPairs = earningsPage?.totals?.pairsMatched ?? 0
+  const totalWithdrawn = earningsPage?.totals?.withdrawnPaise ?? 0
 
   // Per-member detail
   const { data: detail, isPending: detailLoading } = useQuery<AdminEarningsDetail>({
@@ -201,22 +203,22 @@ export function EarningsTab() {
         <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
           <StatCard
             label={t('admin.earnings.statNetEarned')}
-            value={formatINR(pageNetEarned)}
-            sub={t('admin.earnings.statPageSub', { count: items.length })}
+            value={formatINR(totalNetEarned)}
+            sub={t('admin.earnings.statTotalSub', { count: total })}
             icon={<TrendingUp size={18} />}
             tint="success"
           />
           <StatCard
             label={t('admin.earnings.statPairs')}
-            value={String(pagePairs)}
-            sub={t('admin.earnings.statPageSub', { count: items.length })}
+            value={String(totalPairs)}
+            sub={t('admin.earnings.statTotalSub', { count: total })}
             icon={<GitMerge size={18} />}
             tint="primary"
           />
           <StatCard
             label={t('admin.earnings.statWithdrawn')}
-            value={formatINR(pageWithdrawn)}
-            sub={t('admin.earnings.statPageSub', { count: items.length })}
+            value={formatINR(totalWithdrawn)}
+            sub={t('admin.earnings.statTotalSub', { count: total })}
             icon={<ArrowDownToLine size={18} />}
             tint="violet"
           />

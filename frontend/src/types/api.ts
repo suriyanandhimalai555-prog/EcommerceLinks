@@ -363,6 +363,31 @@ export interface AdminWithdrawalWeek {
 
 export interface AdminWithdrawalWeeksRes {
   weeks: AdminWithdrawalWeek[]
+  /** Global totals over ALL withdrawals (incl. NULL-cutoff rows), role<>management. */
+  totals: {
+    paidPaise: number
+    pendingPaise: number
+    pendingCount: number
+  }
+}
+
+export interface AdminWithdrawalExportRow {
+  memberCode: string
+  memberName: string
+  amountPaise: number
+  tdsPaise: number | null
+  netPaise: number | null
+  status: string
+  requestedAt: string
+  processedAt: string | null
+  weekStart: string | null
+  weekEnd: string | null
+  bankRef: string | null
+  notes: string | null
+}
+
+export interface AdminWithdrawalExport {
+  rows: AdminWithdrawalExportRow[]
 }
 
 // ---- ranks ----
@@ -567,6 +592,12 @@ export interface AdminEarningsPage {
   total: number
   page: number
   limit: number
+  /** Global grand totals over the current filtered set (all matching members). */
+  totals: {
+    netEarnedPaise: number
+    pairsMatched: number
+    withdrawnPaise: number
+  }
 }
 
 export interface AdminEarningsDetail {
