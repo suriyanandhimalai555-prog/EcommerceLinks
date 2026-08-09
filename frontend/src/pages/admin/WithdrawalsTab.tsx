@@ -31,6 +31,7 @@ export function WithdrawalsTab() {
   const [q, setQ] = useState('')
   const [page, setPage] = useState(1)
   const [selected, setSelected] = useState<AdminWithdrawal | null>(null)
+  const [revertTarget, setRevertTarget] = useState<AdminWithdrawal | null>(null)
   const [notes, setNotes] = useState('')
   const [bankRef, setBankRef] = useState('')
   const [proofImages, setProofImages] = useState<UploadedImage[]>([])
@@ -92,11 +93,28 @@ export function WithdrawalsTab() {
       qc.invalidateQueries({ queryKey: ['admin-withdrawals'] })
       qc.invalidateQueries({ queryKey: ['admin-withdrawal-weeks'] })
       qc.invalidateQueries({ queryKey: ['admin-overview'] })
+      qc.invalidateQueries({ queryKey: ['admin-earnings'] })
       setBanner({ ok: true, text: t(action === 'approve' ? 'admin.withdrawals.approved' : 'admin.withdrawals.rejected') })
       resetModal()
     },
     onError: (err) =>
       setBanner({ ok: false, text: apiErrorMessage(err, t, t('admin.withdrawals.actionFailed')) }),
+  })
+
+  // Revert a wrongly-marked-paid row back to pending (record correction; the app
+  // does not move real money — disbursement is external).
+  const revert = useMutation({
+    mutationFn: (id: string) => api.post(`/admin/withdrawals/${id}/revert`, {}),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin-withdrawals'] })
+      qc.invalidateQueries({ queryKey: ['admin-withdrawal-weeks'] })
+      qc.invalidateQueries({ queryKey: ['admin-overview'] })
+      qc.invalidateQueries({ queryKey: ['admin-earnings'] })
+      setBanner({ ok: true, text: t('admin.withdrawals.reverted') })
+      setRevertTarget(null)
+    },
+    onError: (err) =>
+      setBanner({ ok: false, text: apiErrorMessage(err, t, t('admin.withdrawals.revertFailed')) }),
   })
 
   // ── Summary strip data ────────────────────────────────────────────────────
@@ -224,13 +242,19 @@ export function WithdrawalsTab() {
         >
           {t('admin.withdrawals.review')}
         </button>
-      ) : r.status === 'paid' && r.proofUrls?.length ? (
-        <div className="flex gap-1 justify-end">
-          {r.proofUrls.map((url, i) => (
+      ) : r.status === 'paid' ? (
+        <div className="flex items-center gap-2 justify-end">
+          {r.proofUrls?.map((url, i) => (
             <a key={i} href={url} target="_blank" rel="noreferrer">
               <img src={url} alt="" className="w-8 h-8 rounded object-cover border border-surface-line hover:opacity-80" />
             </a>
           ))}
+          <button
+            onClick={() => { setRevertTarget(r); setBanner(null) }}
+            className="text-xs font-medium text-warning hover:text-warning/80 whitespace-nowrap cursor-pointer"
+          >
+            {t('admin.withdrawals.revert')}
+          </button>
         </div>
       ) : null,
     },
@@ -469,6 +493,42 @@ export function WithdrawalsTab() {
               >
                 <XCircle size={13} />
                 {t('admin.withdrawals.reject')}
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* Revert-to-pending confirmation (paid rows) */}
+      <Modal
+        open={!!revertTarget}
+        title={t('admin.withdrawals.revertConfirmTitle')}
+        onClose={() => setRevertTarget(null)}
+      >
+        {revertTarget && (
+          <div className="space-y-4">
+            <p className="text-sm text-ink">
+              {revertTarget.memberName} — <span className="font-mono text-xs">{revertTarget.memberCode}</span>
+              {' · '}<span className="font-semibold">{formatINR(revertTarget.amountPaise)}</span>
+            </p>
+            <p className="text-sm text-ink-muted">{t('admin.withdrawals.revertConfirmBody')}</p>
+            <div className="flex gap-3 justify-end pt-2">
+              <button
+                type="button"
+                className="avg-btn-secondary px-4 py-2 text-sm"
+                onClick={() => setRevertTarget(null)}
+                disabled={revert.isPending}
+              >
+                {t('common.cancel')}
+              </button>
+              <button
+                type="button"
+                className="flex items-center gap-1.5 bg-warning hover:bg-warning/90 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors disabled:opacity-50"
+                onClick={() => revert.mutate(revertTarget.id)}
+                disabled={revert.isPending}
+              >
+                {revert.isPending ? <Loader2 size={14} className="animate-spin" /> : null}
+                {t('admin.withdrawals.revert')}
               </button>
             </div>
           </div>

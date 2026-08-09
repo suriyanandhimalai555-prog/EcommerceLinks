@@ -741,8 +741,9 @@ export async function adminRoutes(app: FastifyInstance) {
 				member_id: string;
 				amount: string;
 				status: string;
+				payout_seq: string;
 			}>(
-				"SELECT id, member_id, amount, status FROM withdrawals WHERE id=$1 FOR UPDATE",
+				"SELECT id, member_id, amount, status, payout_seq FROM withdrawals WHERE id=$1 FOR UPDATE",
 				[id],
 			);
 			if (!wdRows[0])
@@ -794,9 +795,11 @@ export async function adminRoutes(app: FastifyInstance) {
 			const bankAccId = BigInt(bank.id);
 
 			// Pay: D payout_clearing / C bank(net) + C tds_payable(tds)
-			await postLedgerTxn(
+			// Key is versioned by payout_seq so a paid→pending revert can be
+			// re-approved without colliding with the prior wdpay txn.
+			const paidPosted = await postLedgerTxn(
 				c,
-				`wdpay:${id}`,
+				`wdpay:${id}:${wdRows[0].payout_seq}`,
 				"withdrawal",
 				BigInt(id),
 				[
@@ -805,6 +808,11 @@ export async function adminRoutes(app: FastifyInstance) {
 					{ accountId: tdsPayableId, direction: "C", amountPaise: tdsPaise },
 				],
 			);
+			if (!paidPosted)
+				throw Object.assign(
+					new Error("Payout ledger posting was unexpectedly skipped"),
+					{ statusCode: 500 },
+				);
 
 			await c.query(
 				`UPDATE withdrawals
@@ -943,6 +951,129 @@ export async function adminRoutes(app: FastifyInstance) {
 					id,
 					{ status: "requested" },
 					{ status: "rejected", notes: body.data.notes ?? null },
+				],
+			);
+		});
+
+		return { ok: true };
+	});
+
+	// POST /admin/withdrawals/:id/revert — undo a wrongly-marked 'paid' row back
+	// to 'pending'. The app never moves real money (disbursement is external), so
+	// this corrects the accounting record: post the EXACT inverse of the approve
+	// ledger txn (restoring the payout_clearing hold), clear the payment fields,
+	// bump payout_seq so a re-approval posts a fresh, collision-free wdpay txn.
+	app.post("/withdrawals/:id/revert", auth, async (req, reply) => {
+		const actor = req.user as { sub: string };
+		if (!(await isManagement(actor.sub)))
+			return reply.status(403).send({ error: "Management only" });
+
+		const { id } = req.params as { id: string };
+		const body = WithdrawalDecideBody.safeParse(req.body);
+		if (!body.success)
+			return reply.status(400).send({ error: body.error.flatten() });
+
+		await withTxn(async (c) => {
+			const { rows: wdRows } = await c.query<{
+				id: string;
+				member_id: string;
+				amount: string;
+				status: string;
+				tds: string | null;
+				net: string | null;
+				payout_seq: string;
+			}>(
+				"SELECT id, member_id, amount, status, tds, net, payout_seq FROM withdrawals WHERE id=$1 FOR UPDATE",
+				[id],
+			);
+			if (!wdRows[0])
+				throw Object.assign(new Error("Withdrawal not found"), { statusCode: 404 });
+			if (wdRows[0].status !== "paid")
+				throw Object.assign(
+					new Error("Only a paid withdrawal can be reverted to pending"),
+					{ statusCode: 409 },
+				);
+			if (wdRows[0].tds === null || wdRows[0].net === null)
+				throw Object.assign(
+					new Error("Paid withdrawal is missing stored tds/net; cannot reverse"),
+					{ statusCode: 500 },
+				);
+
+			// Reverse using the STORED tds/net so the inverse exactly matches what
+			// approve posted, independent of the current TDS rate.
+			const grossPaise = toPaise(wdRows[0].amount);
+			const tdsPaise = toPaise(wdRows[0].tds);
+			const netPaise = toPaise(wdRows[0].net);
+			const seq = wdRows[0].payout_seq;
+
+			// Get system accounts (same lookup as approve).
+			const { rows: sysAccs } = await c.query<{ id: string; kind: string }>(
+				`SELECT id, kind FROM accounts WHERE owner_type='system' AND kind IN ('payout_clearing','tds_payable','bank')`,
+			);
+			const payoutClearing = sysAccs.find((a) => a.kind === "payout_clearing");
+			const tdsPayable = sysAccs.find((a) => a.kind === "tds_payable");
+			const bank = sysAccs.find((a) => a.kind === "bank");
+			if (!payoutClearing || !tdsPayable || !bank)
+				throw Object.assign(
+					new Error("A system payout account is missing"),
+					{ statusCode: 500 },
+				);
+
+			// Inverse of approve: C payout_clearing(gross) / D bank(net) + D tds_payable(tds)
+			const reverted = await postLedgerTxn(
+				c,
+				`wdrevert:${id}:${seq}`,
+				"withdrawal",
+				BigInt(id),
+				[
+					{ accountId: BigInt(bank.id), direction: "D", amountPaise: netPaise },
+					{ accountId: BigInt(tdsPayable.id), direction: "D", amountPaise: tdsPaise },
+					{ accountId: BigInt(payoutClearing.id), direction: "C", amountPaise: grossPaise },
+				],
+			);
+			if (!reverted)
+				throw Object.assign(
+					new Error("Revert ledger posting was unexpectedly skipped"),
+					{ statusCode: 500 },
+				);
+
+			// Back to a clean pending row; bump payout_seq so re-approval gets a
+			// fresh wdpay key.
+			await c.query(
+				`UPDATE withdrawals
+           SET status='pending',
+               tds=NULL, net=NULL, bank_ref=NULL,
+               processed_by=NULL, processed_at=NULL,
+               payout_seq = payout_seq + 1
+         WHERE id=$1`,
+				[id],
+			);
+
+			// The recorded payment is undone — its proof no longer applies. Drop the
+			// DB rows (S3 objects survive as orphans; the audit log retains history).
+			await c.query(
+				`DELETE FROM withdrawal_payment_proofs WHERE withdrawal_id=$1`,
+				[id],
+			);
+
+			await c.query(
+				`INSERT INTO admin_audit_log
+           (actor_id, action, target_type, target_id, before_state, after_state)
+         VALUES ($1,'withdrawal_revert','withdrawal',$2,$3,$4)`,
+				[
+					actor.sub,
+					id,
+					{
+						status: "paid",
+						netPaise: Number(netPaise),
+						tdsPaise: Number(tdsPaise),
+						payoutSeq: Number(seq),
+					},
+					{
+						status: "pending",
+						payoutSeq: Number(seq) + 1,
+						reason: body.data.notes ?? null,
+					},
 				],
 			);
 		});
