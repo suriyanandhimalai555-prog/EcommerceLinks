@@ -27,6 +27,7 @@ export function WithdrawalsTab() {
   const qc = useQueryClient()
   const [statusFilter, setStatusFilter] = useState<FilterStatus>('pending')
   const [weekFilter, setWeekFilter] = useState<string>('all')
+  const [verification, setVerification] = useState<'all' | 'verified' | 'unverified'>('all')
   const [input, setInput] = useState('')
   const [q, setQ] = useState('')
   const [page, setPage] = useState(1)
@@ -53,7 +54,7 @@ export function WithdrawalsTab() {
 
   // ── Withdrawal list ───────────────────────────────────────────────────────
   const { data: wdPage, isPending } = useQuery<AdminWithdrawalsPage>({
-    queryKey: ['admin-withdrawals', statusFilter, weekFilter, q, page],
+    queryKey: ['admin-withdrawals', statusFilter, weekFilter, verification, q, page],
     queryFn: () => {
       const params = new URLSearchParams({
         status: statusFilter,
@@ -62,6 +63,7 @@ export function WithdrawalsTab() {
         q,
       })
       if (weekFilter !== 'all') params.set('cutoffId', weekFilter)
+      if (verification !== 'all') params.set('verification', verification)
       return api.get(`/admin/withdrawals?${params}`).then((r) => r.data)
     },
     placeholderData: keepPreviousData,
@@ -138,6 +140,7 @@ export function WithdrawalsTab() {
     try {
       const params = new URLSearchParams({ status: statusFilter })
       if (weekFilter !== 'all') params.set('cutoffId', weekFilter)
+      if (verification !== 'all') params.set('verification', verification)
       if (q) params.set('q', q)
       const res: AdminWithdrawalExport = await api
         .get(`/admin/withdrawals/export?${params}`)
@@ -153,6 +156,11 @@ export function WithdrawalsTab() {
         t('admin.withdrawals.exportColWeekEnd'),
         t('admin.withdrawals.exportColProcessedAt'),
         t('admin.bank.notesLabel'),
+        t('admin.withdrawals.exportColKyc'),
+        t('admin.withdrawals.exportColBankStatus'),
+        t('admin.withdrawals.exportColBankName'),
+        t('admin.withdrawals.exportColBankNumber'),
+        t('admin.withdrawals.exportColBankIfsc'),
       ]
       const rows = res.rows.map((r) => [
         r.memberCode,
@@ -164,6 +172,11 @@ export function WithdrawalsTab() {
         r.weekEnd ? formatDate(r.weekEnd) : '',
         r.processedAt ? formatDate(r.processedAt) : '',
         r.notes ?? '',
+        r.kycStatus,
+        r.bankStatus,
+        r.bankAccountName ?? '',
+        r.bankAccountNumber ?? '',
+        r.bankIfsc ?? '',
       ])
       downloadCsv(`withdrawals-${statusFilter}-${formatDate(new Date().toISOString())}.csv`, headers, rows)
     } finally {
@@ -311,6 +324,17 @@ export function WithdrawalsTab() {
               ))}
             </select>
           </div>
+
+          {/* Verification filter — narrow to KYC + bank verified (payout-ready) */}
+          <select
+            value={verification}
+            onChange={(e) => { setVerification(e.target.value as 'all' | 'verified' | 'unverified'); setPage(1) }}
+            className="rounded-lg border border-surface-line bg-[#10141F] px-3 py-1.5 text-sm text-ink outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary cursor-pointer"
+          >
+            <option value="all">{t('admin.withdrawals.verifAll')}</option>
+            <option value="verified">{t('admin.withdrawals.verifVerified')}</option>
+            <option value="unverified">{t('admin.withdrawals.verifUnverified')}</option>
+          </select>
         </div>
 
         {/* Summary strip */}

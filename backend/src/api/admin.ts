@@ -435,6 +435,18 @@ export async function adminRoutes(app: FastifyInstance) {
 
 	// ===== admin withdrawals =====
 
+	// Verification filter → SQL fragment (fixed enum, safe to inline). Shared by the
+	// list and export handlers. `m` must be the members alias in the caller's query.
+	//   verified = KYC and bank both verified (payout-ready) · unverified = either not
+	//   yet verified · all/other = no filter.
+	function withdrawalVClause(verification?: string): string {
+		if (verification === "verified")
+			return "AND m.kyc_status = 'verified' AND m.bank_status = 'verified'";
+		if (verification === "unverified")
+			return "AND (m.kyc_status <> 'verified' OR m.bank_status <> 'verified')";
+		return "";
+	}
+
 	// GET /admin/withdrawals/weeks — per-week aggregates (dropdown + summary strip).
 	// MUST be registered before GET /withdrawals/:id routes (Fastify route specificity).
 	app.get("/withdrawals/weeks", auth, async (req, reply) => {
@@ -511,12 +523,15 @@ export async function adminRoutes(app: FastifyInstance) {
 			status?: string;
 			q?: string;
 			cutoffId?: string;
+			verification?: string;
 		};
 		const statusFilter = query.status ?? "all";
 		const search = (query.q ?? "").trim();
 		const cutoffId = query.cutoffId ?? null;
+		const vClause = withdrawalVClause(query.verification);
 
 		// Same WHERE clause as GET /withdrawals, minus LIMIT/OFFSET and proof URLs.
+		// Includes the member's bank details so the CSV is usable to make the transfers.
 		const { rows } = await pool().query<{
 			member_code: string;
 			name: string;
@@ -530,10 +545,17 @@ export async function adminRoutes(app: FastifyInstance) {
 			window_end: string | null;
 			bank_ref: string | null;
 			notes: string | null;
+			kyc_status: string;
+			bank_status: string;
+			bank_account_name: string | null;
+			bank_account_number: string | null;
+			bank_ifsc: string | null;
 		}>(
 			`SELECT m.member_code, m.name,
               w.amount, w.tds, w.net, w.status,
               w.requested_at, w.processed_at, w.bank_ref, w.notes,
+              m.kyc_status, m.bank_status,
+              m.bank_account_name, m.bank_account_number, m.bank_ifsc,
               c.window_start, c.window_end
          FROM withdrawals w
          JOIN members m ON m.id = w.member_id
@@ -542,6 +564,7 @@ export async function adminRoutes(app: FastifyInstance) {
           AND ($2 = '' OR m.member_code ILIKE '%' || $2 || '%' OR m.name ILIKE '%' || $2 || '%')
           AND ($3::bigint IS NULL OR w.source_cutoff_id = $3::bigint)
           AND m.role <> 'management'
+          ${vClause}
         ORDER BY w.id DESC`,
 			[statusFilter, search, cutoffId],
 		);
@@ -560,6 +583,11 @@ export async function adminRoutes(app: FastifyInstance) {
 				weekEnd: r.window_end ?? null,
 				bankRef: r.bank_ref ?? null,
 				notes: r.notes ?? null,
+				kycStatus: r.kyc_status,
+				bankStatus: r.bank_status,
+				bankAccountName: r.bank_account_name ?? null,
+				bankAccountNumber: r.bank_account_number ?? null,
+				bankIfsc: r.bank_ifsc ?? null,
 			})),
 		};
 	});
@@ -576,6 +604,7 @@ export async function adminRoutes(app: FastifyInstance) {
 			limit?: string;
 			q?: string;
 			cutoffId?: string;
+			verification?: string;
 		};
 		const statusFilter = query.status ?? "requested";
 		const search = (query.q ?? "").trim();
@@ -584,6 +613,10 @@ export async function adminRoutes(app: FastifyInstance) {
 		const offset = (page - 1) * limit;
 		// null disables the week filter; a value restricts to one cutoff's withdrawals.
 		const cutoffId = query.cutoffId ?? null;
+		// Verification filter (fixed enum → safe to inline), mirrors GET /earnings:
+		//   verified = KYC and bank both verified (payout-ready); unverified = either
+		//   not yet verified; all = no filter (default).
+		const vClause = withdrawalVClause(query.verification);
 
 		// $3 = cutoffId (nullable bigint) — null = all weeks.
 		const { rows } = await pool().query<{
@@ -614,6 +647,7 @@ export async function adminRoutes(app: FastifyInstance) {
         WHERE ($1 = 'all' OR w.status = $1)
           AND ($2 = '' OR m.member_code ILIKE '%' || $2 || '%' OR m.name ILIKE '%' || $2 || '%')
           AND ($3::bigint IS NULL OR w.source_cutoff_id = $3::bigint)
+          ${vClause}
         ORDER BY w.id DESC
         LIMIT $4 OFFSET $5`,
 			[statusFilter, search, cutoffId, limit, offset],
@@ -625,7 +659,8 @@ export async function adminRoutes(app: FastifyInstance) {
          JOIN members m ON m.id = w.member_id
         WHERE ($1 = 'all' OR w.status = $1)
           AND ($2 = '' OR m.member_code ILIKE '%' || $2 || '%' OR m.name ILIKE '%' || $2 || '%')
-          AND ($3::bigint IS NULL OR w.source_cutoff_id = $3::bigint)`,
+          AND ($3::bigint IS NULL OR w.source_cutoff_id = $3::bigint)
+          ${vClause}`,
 			[statusFilter, search, cutoffId],
 		);
 

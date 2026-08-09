@@ -385,6 +385,11 @@ export interface AdminWithdrawalExportRow {
   weekEnd: string | null
   bankRef: string | null
   notes: string | null
+  kycStatus: string
+  bankStatus: string
+  bankAccountName: string | null
+  bankAccountNumber: string | null
+  bankIfsc: string | null
 }
 
 export interface AdminWithdrawalExport {
