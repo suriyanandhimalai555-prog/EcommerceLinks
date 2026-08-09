@@ -8,10 +8,10 @@ import { Badge } from '../components/ui/Badge'
 import type { Payout } from '../types/api'
 
 const statusVariant = (s: string) => {
-  if (s === 'settled') return 'success'
-  if (s === 'failed') return 'danger'
-  if (s === 'sent') return 'primary'
-  return 'warning'
+  if (s === 'paid') return 'success'
+  if (s === 'rejected') return 'danger'
+  if (s === 'approved') return 'primary'
+  return 'warning' // pending | requested
 }
 
 export default function PayoutHistory() {
@@ -26,9 +26,16 @@ export default function PayoutHistory() {
     { key: 'gross', header: 'Gross Amount', align: 'right', render: r => <span className="font-semibold">{formatINR(r.grossPaise)}</span> },
     {
       key: 'tds', header: 'TDS (10%)', align: 'right',
-      render: r => <span className="text-danger">{formatINR(r.tdsPaise)}</span>
+      render: r => r.tdsPaise != null
+        ? <span className="text-danger">{formatINR(r.tdsPaise)}</span>
+        : <span className="text-ink-muted text-xs">—</span>
     },
-    { key: 'net', header: 'Net Paid', align: 'right', render: r => <span className="font-bold text-success">{formatINR(r.netPaise)}</span> },
+    {
+      key: 'net', header: 'Net Paid', align: 'right',
+      render: r => r.netPaise != null
+        ? <span className="font-bold text-success">{formatINR(r.netPaise)}</span>
+        : <span className="text-ink-muted text-xs">—</span>
+    },
     {
       key: 'status', header: 'Status',
       render: r => <Badge variant={statusVariant(r.status)}>{r.status}</Badge>
@@ -51,9 +58,9 @@ export default function PayoutHistory() {
       {/* Summary cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         {[
-          { label: 'Total Paid Out', value: formatINR((data?.items ?? []).filter(p => p.status === 'settled').reduce((a, b) => a + b.netPaise, 0)), color: 'text-success' },
-          { label: 'TDS Deducted', value: formatINR((data?.items ?? []).reduce((a, b) => a + b.tdsPaise, 0)), color: 'text-danger' },
-          { label: 'Pending', value: formatINR((data?.items ?? []).filter(p => p.status === 'pending').reduce((a, b) => a + b.netPaise, 0)), color: 'text-warning' },
+          { label: 'Total Paid Out', value: formatINR((data?.items ?? []).filter(p => p.status === 'paid').reduce((a, b) => a + (b.netPaise ?? 0), 0)), color: 'text-success' },
+          { label: 'TDS Deducted', value: formatINR((data?.items ?? []).filter(p => p.status === 'paid').reduce((a, b) => a + (b.tdsPaise ?? 0), 0)), color: 'text-danger' },
+          { label: 'Pending', value: formatINR((data?.items ?? []).filter(p => p.status === 'pending' || p.status === 'requested').reduce((a, b) => a + b.grossPaise, 0)), color: 'text-warning' },
         ].map(s => (
           <div key={s.label} className="avg-card p-4">
             <p className="text-xs font-semibold text-ink-muted uppercase tracking-wider mb-1">{s.label}</p>

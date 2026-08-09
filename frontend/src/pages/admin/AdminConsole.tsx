@@ -10,7 +10,6 @@ import { ProductsTab } from './ProductsTab'
 import { KycTab } from './KycTab'
 import { BankTab } from './BankTab'
 import { RanksTab } from './RanksTab'
-import { PayoutsTab } from './PayoutsTab'
 import { SystemTab } from './SystemTab'
 import { AuditTab } from './AuditTab'
 import { SettingsTab } from './SettingsTab'
@@ -79,7 +78,6 @@ export default function AdminConsole() {
         {isManagement(me) && <Route path="network" element={<AdminNetworkTab />} />}
         {isManagement(me) && <Route path="earnings" element={<EarningsTab />} />}
         <Route path="ranks" element={<RanksTab />} />
-        <Route path="payouts" element={<PayoutsTab />} />
         <Route path="withdrawals" element={<WithdrawalsTab />} />
         <Route path="system" element={<SystemTab />} />
         <Route path="audit" element={<AuditTab />} />

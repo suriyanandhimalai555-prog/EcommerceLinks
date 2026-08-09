@@ -5,7 +5,7 @@
  * Proves the accounting stays exact across approve → revert → re-approve:
  *   - approve posts wdpay:<id>:0 (bank/tds credited, hold released)
  *   - revert posts the exact inverse wdrevert:<id>:0, restores the hold,
- *     clears tds/net/bank_ref/processed_*, bumps payout_seq, deletes proofs
+ *     clears tds/net/bank_ref/processed_*, bumps payout_seq (proofs are kept)
  *   - re-approve posts a FRESH wdpay:<id>:1 (no idempotency-key collision) so
  *     the money moves again
  *   - per-withdrawal ledger is always balanced (SUM(D)=SUM(C)); payout_clearing
@@ -19,6 +19,7 @@ import { registerAnchor, uniqueEmail, uniquePhone } from './helpers.js'
 
 let mgmtToken: string
 let memberId: string
+let memberCode: string
 let withdrawalId: string
 const GROSS_PAISE = 100000n // ₹1000
 
@@ -70,6 +71,7 @@ beforeAll(async () => {
   // Member who will hold a pending payout; KYC + bank verified so approve passes.
   const anchor = await registerAnchor('WdRevMember')
   memberId = String(anchor.memberId)
+  memberCode = anchor.memberCode
   await pool().query(
     `UPDATE members SET kyc_status='verified', bank_status='verified' WHERE id=$1`,
     [memberId],
@@ -198,5 +200,32 @@ describe('withdrawal revert (paid → pending)', () => {
       `SELECT balance FROM wallet_balances WHERE account_id=$1`, [wAcc],
     )
     expect(Number(wb[0].balance)).toBeCloseTo(0, 2)
+  })
+
+  it('shows only the current attempt proof after revert+re-approve (payout_seq scoping)', async () => {
+    // The withdrawal is paid at payout_seq=1 (approve→revert→re-approve above).
+    // Seed one stale proof from attempt 0 and one from the current attempt 1.
+    await pool().query(
+      `INSERT INTO withdrawal_payment_proofs (withdrawal_id, s3_key, payout_seq)
+       VALUES ($1,'proofs/old-seq0.jpg',0), ($1,'proofs/new-seq1.jpg',1)`,
+      [withdrawalId],
+    )
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/admin/withdrawals?status=paid&q=${memberCode}&page=1&limit=20`,
+      headers: { authorization: `Bearer ${mgmtToken}` },
+    })
+    expect(res.statusCode).toBe(200)
+    const row = JSON.parse(res.body).items.find((i: { id: string }) => i.id === withdrawalId)
+    expect(row).toBeTruthy()
+    // Only the seq-1 proof is surfaced; the seq-0 one is hidden, not deleted.
+    expect(row.proofUrls.length).toBe(1)
+
+    const { rows: cnt } = await pool().query<{ n: number }>(
+      `SELECT COUNT(*)::int AS n FROM withdrawal_payment_proofs WHERE withdrawal_id=$1`,
+      [withdrawalId],
+    )
+    expect(cnt[0].n).toBe(2) // both retained in the DB
   })
 })

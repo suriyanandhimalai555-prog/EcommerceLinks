@@ -1343,8 +1343,9 @@ export async function frontendRoutes(app: FastifyInstance) {
 			status: string;
 			requested_at: string;
 			processed_at: string | null;
+			payout_seq: number;
 		}>(
-			`SELECT id, amount, tds, net, status, requested_at, processed_at
+			`SELECT id, amount, tds, net, status, requested_at, processed_at, payout_seq
        FROM withdrawals
        WHERE member_id=$1
        ORDER BY id DESC
@@ -1354,27 +1355,31 @@ export async function frontendRoutes(app: FastifyInstance) {
 
 		// Build proof screenshot URLs for paid withdrawals.
 		const wdIds = rows.map((r) => r.id);
-		const proofsByWd = new Map<string, string[]>();
+		const proofsByWd = new Map<string, { key: string; seq: number }[]>();
 		if (wdIds.length > 0) {
 			const { rows: proofRows } = await pool().query<{
 				withdrawal_id: string;
 				s3_key: string;
+				payout_seq: number;
 			}>(
-				`SELECT withdrawal_id, s3_key FROM withdrawal_payment_proofs
+				`SELECT withdrawal_id, s3_key, payout_seq FROM withdrawal_payment_proofs
 				  WHERE withdrawal_id = ANY($1::bigint[])
 				  ORDER BY id`,
 				[wdIds],
 			);
 			for (const pr of proofRows) {
 				const list = proofsByWd.get(pr.withdrawal_id) ?? [];
-				list.push(pr.s3_key);
+				list.push({ key: pr.s3_key, seq: pr.payout_seq });
 				proofsByWd.set(pr.withdrawal_id, list);
 			}
 		}
 
 		const items = await Promise.all(
 			rows.map(async (r) => {
-				const keys = proofsByWd.get(r.id) ?? [];
+				// Only the current attempt's proofs (payout_seq match).
+				const keys = (proofsByWd.get(r.id) ?? [])
+					.filter((p) => p.seq === r.payout_seq)
+					.map((p) => p.key);
 				const proofUrls =
 					r.status === "paid" && keys.length > 0
 						? await Promise.all(keys.map((k) => presignGet(k)))
@@ -1398,26 +1403,31 @@ export async function frontendRoutes(app: FastifyInstance) {
 	// ===== payouts =====
 	app.get("/payouts", auth, async (req) => {
 		const memberId = (req.user as Auth).sub;
+		// Real payout data lives in `withdrawals` (the legacy payout_batches/items
+		// tables are dead — the batch worker was removed). tds/net are only set
+		// once a payout is actually paid; pending rows carry null for them.
 		const { rows } = await pool().query<{
-			scheduled_for: string;
-			gross: string;
-			tds: string;
-			net: string;
+			requested_at: string;
+			processed_at: string | null;
+			amount: string;
+			tds: string | null;
+			net: string | null;
 			status: string;
 			bank_ref: string | null;
 		}>(
-			`SELECT pb.scheduled_for, pi.gross, pi.tds, pi.net, pi.status, pi.bank_ref
-       FROM payout_items pi JOIN payout_batches pb ON pb.id = pi.batch_id
-       WHERE pi.member_id = $1 ORDER BY pi.id DESC LIMIT 50`,
+			`SELECT requested_at, processed_at, amount, tds, net, status, bank_ref
+       FROM withdrawals
+       WHERE member_id = $1
+       ORDER BY id DESC LIMIT 50`,
 			[memberId],
 		);
 		return {
 			items: rows.map((r) => ({
-				date: new Date(r.scheduled_for).toISOString(),
-				grossPaise: Number(toPaise(r.gross)),
-				tdsPaise: Number(toPaise(r.tds)),
-				netPaise: Number(toPaise(r.net)),
-				status: r.status, // pending | sent | settled | failed — matches the frontend union
+				date: new Date(r.processed_at ?? r.requested_at).toISOString(),
+				grossPaise: Number(toPaise(r.amount)),
+				tdsPaise: r.tds != null ? Number(toPaise(r.tds)) : null,
+				netPaise: r.net != null ? Number(toPaise(r.net)) : null,
+				status: r.status, // pending | requested | approved | rejected | paid
 				bankRef: r.bank_ref,
 			})),
 		};

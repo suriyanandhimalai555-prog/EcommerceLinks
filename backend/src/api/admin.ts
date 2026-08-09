@@ -599,13 +599,14 @@ export async function adminRoutes(app: FastifyInstance) {
 			requested_at: string;
 			processed_at: string | null;
 			notes: string | null;
+			payout_seq: number;
 			source_cutoff_id: string | null;
 			window_start: string | null;
 			window_end: string | null;
 		}>(
 			`SELECT w.id, m.member_code, m.name, m.kyc_status, m.bank_status,
               w.amount, w.tds, w.net,
-              w.status, w.requested_at, w.processed_at, w.notes,
+              w.status, w.requested_at, w.processed_at, w.notes, w.payout_seq,
               c.id::text AS source_cutoff_id, c.window_start, c.window_end
          FROM withdrawals w
          JOIN members m ON m.id = w.member_id
@@ -630,28 +631,32 @@ export async function adminRoutes(app: FastifyInstance) {
 
 		// Fetch proof URLs for paid withdrawals in this page.
 		const wdIds = rows.map((r) => r.id);
-		let proofsByWd: Map<string, string[]> = new Map();
+		let proofsByWd: Map<string, { key: string; seq: number }[]> = new Map();
 		if (wdIds.length > 0) {
 			const { rows: proofRows } = await pool().query<{
 				withdrawal_id: string;
 				s3_key: string;
+				payout_seq: number;
 			}>(
-				`SELECT withdrawal_id, s3_key FROM withdrawal_payment_proofs
+				`SELECT withdrawal_id, s3_key, payout_seq FROM withdrawal_payment_proofs
 				  WHERE withdrawal_id = ANY($1::bigint[])
 				  ORDER BY id`,
 				[wdIds],
 			);
 			for (const pr of proofRows) {
 				const list = proofsByWd.get(pr.withdrawal_id) ?? [];
-				list.push(pr.s3_key);
+				list.push({ key: pr.s3_key, seq: pr.payout_seq });
 				proofsByWd.set(pr.withdrawal_id, list);
 			}
 		}
 
-		// Build presigned GET URLs for proof screenshots (paid rows only).
+		// Build presigned GET URLs for proof screenshots (paid rows only). Only the
+		// current attempt's proofs (payout_seq match) — older attempts stay hidden.
 		const itemsWithProof = await Promise.all(
 			rows.map(async (r) => {
-				const keys = proofsByWd.get(r.id) ?? [];
+				const keys = (proofsByWd.get(r.id) ?? [])
+					.filter((p) => p.seq === r.payout_seq)
+					.map((p) => p.key);
 				const proofUrls =
 					r.status === "paid" && keys.length > 0
 						? await Promise.all(keys.map((k) => presignGet(k)))
@@ -852,13 +857,15 @@ export async function adminRoutes(app: FastifyInstance) {
 				],
 			);
 
-			// Attach optional proof screenshots uploaded by management.
+			// Attach optional proof screenshots uploaded by management. Tag each with
+			// the current payout attempt (payout_seq) so a later revert + re-approve
+			// shows only the newest attempt's proof, not stale ones.
 			if (body.data.proofKeys?.length) {
 				for (const s3Key of body.data.proofKeys) {
 					await c.query(
-						`INSERT INTO withdrawal_payment_proofs (withdrawal_id, s3_key)
-						 VALUES ($1, $2)`,
-						[id, s3Key],
+						`INSERT INTO withdrawal_payment_proofs (withdrawal_id, s3_key, payout_seq)
+						 VALUES ($1, $2, $3)`,
+						[id, s3Key, wdRows[0].payout_seq],
 					);
 				}
 			}
@@ -1038,7 +1045,10 @@ export async function adminRoutes(app: FastifyInstance) {
 				);
 
 			// Back to a clean pending row; bump payout_seq so re-approval gets a
-			// fresh wdpay key.
+			// fresh wdpay key. Payment proofs are intentionally KEPT (attached to the
+			// withdrawal) — they are audit evidence of the reverted payment, and
+			// deleting only their DB rows would orphan the S3 objects (the S3 user has
+			// no delete permission anyway). If re-approved, new proofs append.
 			await c.query(
 				`UPDATE withdrawals
            SET status='pending',
@@ -1046,13 +1056,6 @@ export async function adminRoutes(app: FastifyInstance) {
                processed_by=NULL, processed_at=NULL,
                payout_seq = payout_seq + 1
          WHERE id=$1`,
-				[id],
-			);
-
-			// The recorded payment is undone — its proof no longer applies. Drop the
-			// DB rows (S3 objects survive as orphans; the audit log retains history).
-			await c.query(
-				`DELETE FROM withdrawal_payment_proofs WHERE withdrawal_id=$1`,
 				[id],
 			);
 
@@ -1733,80 +1736,6 @@ export async function adminRoutes(app: FastifyInstance) {
 	});
 
 	// ===== Payout batch visibility =====
-	app.get("/payouts", auth, async () => {
-		const { rows } = await pool().query<{
-			id: string;
-			scheduled_for: string;
-			status: string;
-			created_at: string;
-			items: string;
-			pending: string;
-			sent: string;
-			settled: string;
-			failed: string;
-			net_total: string;
-		}>(
-			`SELECT pb.id, pb.scheduled_for, pb.status, pb.created_at,
-              COUNT(pi.id) AS items,
-              COUNT(*) FILTER (WHERE pi.status = 'pending') AS pending,
-              COUNT(*) FILTER (WHERE pi.status = 'sent') AS sent,
-              COUNT(*) FILTER (WHERE pi.status = 'settled') AS settled,
-              COUNT(*) FILTER (WHERE pi.status = 'failed') AS failed,
-              COALESCE(SUM(pi.net), 0) AS net_total
-       FROM payout_batches pb
-       LEFT JOIN payout_items pi ON pi.batch_id = pb.id
-       GROUP BY pb.id
-       ORDER BY pb.scheduled_for DESC
-       LIMIT 52`,
-		);
-		return rows.map((r) => ({
-			id: String(r.id),
-			scheduledFor: new Date(r.scheduled_for).toISOString(),
-			status: r.status,
-			createdAt: r.created_at,
-			items: parseInt(r.items),
-			pending: parseInt(r.pending),
-			sent: parseInt(r.sent),
-			settled: parseInt(r.settled),
-			failed: parseInt(r.failed),
-			netTotalPaise: Number(toPaise(r.net_total)),
-		}));
-	});
-
-	app.get("/payouts/:batchId/items", auth, async (req) => {
-		const { batchId } = req.params as { batchId: string };
-		const { rows } = await pool().query<{
-			id: string;
-			member_code: string;
-			name: string;
-			gross: string;
-			tds: string;
-			net: string;
-			status: string;
-			bank_ref: string | null;
-			failure_reason: string | null;
-		}>(
-			`SELECT pi.id, m.member_code, m.name, pi.gross, pi.tds, pi.net,
-              pi.status, pi.bank_ref, pi.failure_reason
-       FROM payout_items pi
-       JOIN members m ON m.id = pi.member_id
-       WHERE pi.batch_id = $1
-       ORDER BY pi.id`,
-			[batchId],
-		);
-		return rows.map((r) => ({
-			id: String(r.id),
-			memberCode: r.member_code,
-			name: r.name,
-			grossPaise: Number(toPaise(r.gross)),
-			tdsPaise: Number(toPaise(r.tds)),
-			netPaise: Number(toPaise(r.net)),
-			status: r.status,
-			bankRef: r.bank_ref,
-			failureReason: r.failure_reason,
-		}));
-	});
-
 	// ===== Dead-letter queue =====
 	app.get("/dead-letters", auth, async () => {
 		const { rows } = await pool().query<{

@@ -23,7 +23,6 @@ const breadcrumbMap: Record<string, string> = {
   '/admin/kyc': 'Admin · KYC Approvals',
   '/admin/products': 'Admin · Products',
   '/admin/ranks': 'Admin · Rank Approvals',
-  '/admin/payouts': 'Admin · Payouts',
   '/admin/system': 'Admin · System Health',
   '/admin/audit': 'Admin · Audit Log',
 }

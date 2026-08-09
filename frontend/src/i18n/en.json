@@ -24,7 +24,6 @@
     "adminBank": "Bank Approvals",
     "adminRanks": "Rank Approvals",
     "adminWithdrawals": "Withdrawals",
-    "adminPayouts": "Payouts",
     "adminSystem": "System Health",
     "adminAudit": "Audit Log",
     "adminSettings": "Control Center",
@@ -338,7 +337,7 @@
       "exportColProcessedAt": "Processed On",
       "revert": "Revert to pending",
       "revertConfirmTitle": "Revert payout to pending?",
-      "revertConfirmBody": "This moves the payout back to Pending and clears its recorded TDS/net and payment proof. Use this to fix a payout that was marked Paid by mistake. Money is disbursed outside the app — make sure you haven't already sent it before re-approving.",
+      "revertConfirmBody": "This moves the payout back to Pending and clears its recorded TDS/net. Use this to fix a payout that was marked Paid by mistake. Money is disbursed outside the app — make sure you haven't already sent it before re-approving.",
       "reverted": "Payout reverted to pending.",
       "revertFailed": "Could not revert the payout. Please try again."
     },

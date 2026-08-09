@@ -302,9 +302,10 @@ export interface LedgerRes {
 export interface Payout {
   date: string
   grossPaise: number
-  tdsPaise: number
-  netPaise: number
-  status: 'pending' | 'sent' | 'settled' | 'failed'
+  /** null until the payout is actually paid (TDS is computed at payment). */
+  tdsPaise: number | null
+  netPaise: number | null
+  status: 'pending' | 'requested' | 'approved' | 'rejected' | 'paid'
   bankRef: string | null
 }
 
@@ -491,31 +492,6 @@ export interface RankSummaryRow {
   approved: number
   received: number
   rejected: number
-}
-
-export interface AdminPayoutBatch {
-  id: string
-  scheduledFor: string
-  status: 'building' | 'sent' | 'reconciled'
-  createdAt: string
-  items: number
-  pending: number
-  sent: number
-  settled: number
-  failed: number
-  netTotalPaise: number
-}
-
-export interface AdminPayoutItem {
-  id: string
-  memberCode: string
-  name: string
-  grossPaise: number
-  tdsPaise: number
-  netPaise: number
-  status: 'pending' | 'sent' | 'settled' | 'failed'
-  bankRef: string | null
-  failureReason: string | null
 }
 
 export interface DeadLetter {
