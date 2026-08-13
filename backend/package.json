@@ -14,6 +14,7 @@
     "test:watch": "vitest",
     "seed": "tsx scripts/seedRoot.ts",
     "seed:management": "tsx scripts/seedManagement.ts",
+    "seed:payout": "tsx scripts/seedPayout.ts",
     "reset": "tsx scripts/reset.ts",
     "revert:qualification": "tsx scripts/revertQualification.ts",
     "backfill:pairs": "tsx scripts/backfillPairsV2.ts",

@@ -11,7 +11,7 @@ export interface Me {
   bankStatus: 'pending' | 'verified' | 'rejected'
   currentRankLevel: number
   currentRankName: string
-  role: 'member' | 'admin' | 'management'
+  role: 'member' | 'admin' | 'management' | 'payout'
   blocked?: boolean
   // KYC & bank detail fields (persisted and returned for pre-fill)
   pan?: string
@@ -444,7 +444,7 @@ export interface AdminMemberRow {
   email: string | null
   isActive: boolean
   isQualified: boolean
-  role: 'member' | 'admin' | 'management'
+  role: 'member' | 'admin' | 'management' | 'payout'
   kycStatus: 'pending' | 'verified' | 'rejected'
   bankStatus: 'pending' | 'verified' | 'rejected'
   blocked: boolean

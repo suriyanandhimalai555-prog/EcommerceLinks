@@ -2,7 +2,7 @@ import { Routes, Route, NavLink, Navigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import api from '../../lib/api'
-import { isManagement } from '../../lib/roles'
+import { isManagement, isPayout } from '../../lib/roles'
 import type { Me } from '../../types/api'
 import { OverviewTab } from './OverviewTab'
 import { MembersTab } from './MembersTab'
@@ -37,7 +37,25 @@ export default function AdminConsole() {
   })
   // Management navigates these pages from the sidebar; the pill subnav is for
   // appointed admins whose sidebar shows the member menu + one console entry.
-  const showSubnav = !isManagement(me)
+  // Payout navigates directly from its own sidebar — no subnav needed.
+  const showSubnav = !isManagement(me) && !isPayout(me)
+
+  // The payout account is solely for withdrawal-marking: render only the
+  // withdrawals route and redirect everything else there.
+  if (isPayout(me)) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-xl font-bold text-ink">Withdrawals</h1>
+          <p className="text-sm text-ink-muted">Review and mark member withdrawals</p>
+        </div>
+        <Routes>
+          <Route path="withdrawals" element={<WithdrawalsTab />} />
+          <Route path="*" element={<Navigate to="/admin/withdrawals" replace />} />
+        </Routes>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">

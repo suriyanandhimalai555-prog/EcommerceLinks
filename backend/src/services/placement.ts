@@ -91,10 +91,10 @@ export async function registerMember(
 					e.statusCode = 404;
 					throw e;
 				}
-				// Management accounts are off-tree: nothing may ever be placed under
+				// Off-tree master accounts are off-tree: nothing may ever be placed under
 				// them. Enforced here (not only at the register route) so every
 				// caller — including simulate/test scripts — hits the same wall.
-				if (sRows[0].role === "management") {
+				if (sRows[0].role === "management" || sRows[0].role === "payout") {
 					const e = new Error(
 						"This code cannot be used as a sponsor",
 					) as Error & { statusCode: number };
@@ -253,9 +253,9 @@ export async function deleteInactiveMember(
 			throw Object.assign(new Error("Member not found"), { statusCode: 404 });
 		const target = tRows[0];
 
-		if (target.role === "management")
+		if (target.role === "management" || target.role === "payout")
 			throw Object.assign(
-				new Error("Cannot delete the management account"),
+				new Error("Cannot delete a management or payout account"),
 				{ statusCode: 403 },
 			);
 

@@ -45,6 +45,22 @@ export async function adminRoutes(app: FastifyInstance) {
 		return rows[0]?.role === "management";
 	}
 
+	// Withdrawal-marking staff: management (full control) or payout (withdrawals only).
+	// Used as the inline guard inside the 7 withdrawal routes — defence-in-depth
+	// on top of the requireWithdrawalStaff preHandler.
+	async function canMarkWithdrawals(actorId: string): Promise<boolean> {
+		const { rows } = await pool().query<{ role: string }>(
+			"SELECT role FROM members WHERE id=$1",
+			[actorId],
+		);
+		return rows[0]?.role === "management" || rows[0]?.role === "payout";
+	}
+
+	// preHandler for the 7 withdrawal routes: management ∪ payout.
+	// Deliberately separate from `auth` (requireAdmin) so 'payout' is 403'd on
+	// every other /admin/* route.
+	const withdrawalAuth = { preHandler: [app.requireWithdrawalStaff] };
+
 	// ===== products (catalog managed by management) =====
 	app.get("/products", auth, async () => {
 		return listAdminProducts();
@@ -449,10 +465,10 @@ export async function adminRoutes(app: FastifyInstance) {
 
 	// GET /admin/withdrawals/weeks — per-week aggregates (dropdown + summary strip).
 	// MUST be registered before GET /withdrawals/:id routes (Fastify route specificity).
-	app.get("/withdrawals/weeks", auth, async (req, reply) => {
+	app.get("/withdrawals/weeks", withdrawalAuth, async (req, reply) => {
 		const actor = req.user as { sub: string };
-		if (!(await isManagement(actor.sub)))
-			return reply.status(403).send({ error: "Management only" });
+		if (!(await canMarkWithdrawals(actor.sub)))
+			return reply.status(403).send({ error: "Withdrawal staff only" });
 
 		const { rows } = await pool().query<{
 			cutoff_id: string;
@@ -479,7 +495,7 @@ export async function adminRoutes(app: FastifyInstance) {
 		// rows with a NULL source_cutoff_id (legacy / manually-paid) are included.
 		// This is what makes "Already paid (all weeks)" reconcile with the Earnings
 		// tab's per-member "withdrawn" (which also sums all paid rows). The role
-		// filter mirrors GET /earnings (`m.role <> 'management'`) so the two match.
+		// filter mirrors GET /earnings so the two match (excludes off-tree accounts).
 		const { rows: totalRows } = await pool().query<{
 			paid_total: string;
 			pending_total: string;
@@ -490,7 +506,7 @@ export async function adminRoutes(app: FastifyInstance) {
              COUNT(*) FILTER (WHERE w.status IN ('pending','requested'))::text                     AS pending_count
         FROM withdrawals w
         JOIN members m ON m.id = w.member_id
-       WHERE m.role <> 'management'
+       WHERE m.role NOT IN ('management', 'payout')
     `);
 		const totals = totalRows[0];
 
@@ -514,10 +530,10 @@ export async function adminRoutes(app: FastifyInstance) {
 	// GET /admin/withdrawals/export — all rows matching the current filters (no
 	// pagination) for CSV reconciliation. Static path — registered before the
 	// /withdrawals/:id parametric routes (Fastify route specificity).
-	app.get("/withdrawals/export", auth, async (req, reply) => {
+	app.get("/withdrawals/export", withdrawalAuth, async (req, reply) => {
 		const actor = req.user as { sub: string };
-		if (!(await isManagement(actor.sub)))
-			return reply.status(403).send({ error: "Management only" });
+		if (!(await canMarkWithdrawals(actor.sub)))
+			return reply.status(403).send({ error: "Withdrawal staff only" });
 
 		const query = req.query as {
 			status?: string;
@@ -563,7 +579,7 @@ export async function adminRoutes(app: FastifyInstance) {
         WHERE ($1 = 'all' OR w.status = $1)
           AND ($2 = '' OR m.member_code ILIKE '%' || $2 || '%' OR m.name ILIKE '%' || $2 || '%')
           AND ($3::bigint IS NULL OR w.source_cutoff_id = $3::bigint)
-          AND m.role <> 'management'
+          AND m.role NOT IN ('management', 'payout')
           ${vClause}
         ORDER BY w.id DESC`,
 			[statusFilter, search, cutoffId],
@@ -593,10 +609,10 @@ export async function adminRoutes(app: FastifyInstance) {
 	});
 
 	// GET /admin/withdrawals?status=pending&cutoffId=7&page=1&limit=20
-	app.get("/withdrawals", auth, async (req, reply) => {
+	app.get("/withdrawals", withdrawalAuth, async (req, reply) => {
 		const actor = req.user as { sub: string };
-		if (!(await isManagement(actor.sub)))
-			return reply.status(403).send({ error: "Management only" });
+		if (!(await canMarkWithdrawals(actor.sub)))
+			return reply.status(403).send({ error: "Withdrawal staff only" });
 
 		const query = req.query as {
 			status?: string;
@@ -732,16 +748,16 @@ export async function adminRoutes(app: FastifyInstance) {
 	});
 
 	// POST /admin/withdrawals/:id/proof/presign — mint a presigned S3 POST URL
-	// for management to upload a "money sent" screenshot.
+	// for withdrawal staff to upload a "money sent" screenshot.
 	const WithdrawalProofPresignBody = z.object({
 		contentType: z.enum(IMAGE_CONTENT_TYPES),
 		sizeBytes: z.number().int().positive().max(MAX_UPLOAD_BYTES),
 	});
 
-	app.post("/withdrawals/:id/proof/presign", auth, async (req, reply) => {
+	app.post("/withdrawals/:id/proof/presign", withdrawalAuth, async (req, reply) => {
 		const actor = req.user as { sub: string };
-		if (!(await isManagement(actor.sub)))
-			return reply.status(403).send({ error: "Management only" });
+		if (!(await canMarkWithdrawals(actor.sub)))
+			return reply.status(403).send({ error: "Withdrawal staff only" });
 		if (!s3Configured())
 			return reply.status(503).send({ error: "S3_NOT_CONFIGURED" });
 
@@ -765,10 +781,10 @@ export async function adminRoutes(app: FastifyInstance) {
 	});
 
 	// POST /admin/withdrawals/:id/approve
-	app.post("/withdrawals/:id/approve", auth, async (req, reply) => {
+	app.post("/withdrawals/:id/approve", withdrawalAuth, async (req, reply) => {
 		const actor = req.user as { sub: string };
-		if (!(await isManagement(actor.sub)))
-			return reply.status(403).send({ error: "Management only" });
+		if (!(await canMarkWithdrawals(actor.sub)))
+			return reply.status(403).send({ error: "Withdrawal staff only" });
 
 		const { id } = req.params as { id: string };
 		const body = WithdrawalDecideBody.safeParse(req.body);
@@ -910,10 +926,10 @@ export async function adminRoutes(app: FastifyInstance) {
 	});
 
 	// POST /admin/withdrawals/:id/reject
-	app.post("/withdrawals/:id/reject", auth, async (req, reply) => {
+	app.post("/withdrawals/:id/reject", withdrawalAuth, async (req, reply) => {
 		const actor = req.user as { sub: string };
-		if (!(await isManagement(actor.sub)))
-			return reply.status(403).send({ error: "Management only" });
+		if (!(await canMarkWithdrawals(actor.sub)))
+			return reply.status(403).send({ error: "Withdrawal staff only" });
 
 		const { id } = req.params as { id: string };
 		const body = WithdrawalDecideBody.safeParse(req.body);
@@ -1005,10 +1021,10 @@ export async function adminRoutes(app: FastifyInstance) {
 	// this corrects the accounting record: post the EXACT inverse of the approve
 	// ledger txn (restoring the payout_clearing hold), clear the payment fields,
 	// bump payout_seq so a re-approval posts a fresh, collision-free wdpay txn.
-	app.post("/withdrawals/:id/revert", auth, async (req, reply) => {
+	app.post("/withdrawals/:id/revert", withdrawalAuth, async (req, reply) => {
 		const actor = req.user as { sub: string };
-		if (!(await isManagement(actor.sub)))
-			return reply.status(403).send({ error: "Management only" });
+		if (!(await canMarkWithdrawals(actor.sub)))
+			return reply.status(403).send({ error: "Withdrawal staff only" });
 
 		const { id } = req.params as { id: string };
 		const body = WithdrawalDecideBody.safeParse(req.body);
@@ -1164,25 +1180,25 @@ export async function adminRoutes(app: FastifyInstance) {
 		if (kycStatus) {
 			if (kycStatus === "awaiting") {
 				// pending + has uploaded KYC documents — the actionable review queue
-				where += ` AND m.kyc_status = 'pending' AND EXISTS (SELECT 1 FROM kyc_documents kd WHERE kd.member_id = m.id) AND m.role <> 'management'`;
+				where += ` AND m.kyc_status = 'pending' AND EXISTS (SELECT 1 FROM kyc_documents kd WHERE kd.member_id = m.id) AND m.role NOT IN ('management', 'payout')`;
 			} else if (kycStatus === "pending") {
 				// pending + no documents uploaded yet
-				where += ` AND m.kyc_status = 'pending' AND NOT EXISTS (SELECT 1 FROM kyc_documents kd WHERE kd.member_id = m.id) AND m.role <> 'management'`;
+				where += ` AND m.kyc_status = 'pending' AND NOT EXISTS (SELECT 1 FROM kyc_documents kd WHERE kd.member_id = m.id) AND m.role NOT IN ('management', 'payout')`;
 			} else {
 				baseParams.push(kycStatus);
-				where += ` AND m.kyc_status = $${baseParams.length} AND m.role <> 'management'`;
+				where += ` AND m.kyc_status = $${baseParams.length} AND m.role NOT IN ('management', 'payout')`;
 			}
 		}
 		if (bankStatus) {
 			if (bankStatus === "awaiting") {
 				// pending + has submitted bank account details — the actionable review queue
-				where += ` AND m.bank_status = 'pending' AND m.bank_account_number IS NOT NULL AND m.role <> 'management'`;
+				where += ` AND m.bank_status = 'pending' AND m.bank_account_number IS NOT NULL AND m.role NOT IN ('management', 'payout')`;
 			} else if (bankStatus === "pending") {
 				// pending + no bank details submitted yet
-				where += ` AND m.bank_status = 'pending' AND m.bank_account_number IS NULL AND m.role <> 'management'`;
+				where += ` AND m.bank_status = 'pending' AND m.bank_account_number IS NULL AND m.role NOT IN ('management', 'payout')`;
 			} else {
 				baseParams.push(bankStatus);
-				where += ` AND m.bank_status = $${baseParams.length} AND m.role <> 'management'`;
+				where += ` AND m.bank_status = $${baseParams.length} AND m.role NOT IN ('management', 'payout')`;
 			}
 		}
 		// Activation filter: true = money-pipeline activated, false = not yet activated.
@@ -1603,10 +1619,10 @@ export async function adminRoutes(app: FastifyInstance) {
 			);
 			if (!before[0])
 				throw Object.assign(new Error("Member not found"), { statusCode: 404 });
-			// The management role itself is fixed — never grantable or revocable via API.
-			if (before[0].role === "management")
+			// Off-tree master accounts are fixed — never grantable or revocable via API.
+			if (before[0].role === "management" || before[0].role === "payout")
 				throw Object.assign(
-					new Error("Cannot change a management account's role"),
+					new Error("Cannot change a management or payout account's role"),
 					{
 						statusCode: 403,
 					},
@@ -1650,8 +1666,8 @@ export async function adminRoutes(app: FastifyInstance) {
 			}>("SELECT role, blocked FROM members WHERE id=$1 FOR UPDATE", [id]);
 			if (!before[0])
 				throw Object.assign(new Error("Member not found"), { statusCode: 404 });
-			if (before[0].role === "management")
-				throw Object.assign(new Error("Cannot block a management account"), {
+			if (before[0].role === "management" || before[0].role === "payout")
+				throw Object.assign(new Error("Cannot block a management or payout account"), {
 					statusCode: 403,
 				});
 
@@ -1725,11 +1741,11 @@ export async function adminRoutes(app: FastifyInstance) {
 				`SELECT COUNT(*) AS total,
                 COUNT(*) FILTER (WHERE is_active) AS active,
                 COUNT(*) FILTER (WHERE blocked) AS blocked
-         FROM members WHERE role <> 'management'`,
+         FROM members WHERE role NOT IN ('management', 'payout')`,
 			),
 			pool().query<{ c: string }>(
 				`SELECT COUNT(*) AS c FROM members
-         WHERE kyc_status = 'pending' AND role <> 'management'`,
+         WHERE kyc_status = 'pending' AND role NOT IN ('management', 'payout')`,
 			),
 			pool().query<{ c: string }>(
 				`SELECT COUNT(*) AS c FROM rank_achievements WHERE verification_status = 'pending'`,
@@ -2578,7 +2594,7 @@ export async function adminRoutes(app: FastifyInstance) {
 			return reply.status(503).send({ error: "S3_NOT_CONFIGURED" });
 
 		const { rows } = await pool().query<{ id: string }>(
-			"SELECT id FROM members WHERE id = $1 AND role <> 'management'",
+			"SELECT id FROM members WHERE id = $1 AND role NOT IN ('management', 'payout')",
 			[body.data.memberId],
 		);
 		if (!rows[0])
@@ -2771,7 +2787,7 @@ export async function adminRoutes(app: FastifyInstance) {
 				   SELECT member_id, SUM(amount) AS withdrawn
 				   FROM withdrawals WHERE status = 'paid' GROUP BY member_id
 				 ) wd ON wd.member_id = m.id
-				 WHERE m.role <> 'management'
+				 WHERE m.role NOT IN ('management', 'payout')
 				   AND ($1 = '' OR m.member_code ILIKE '%' || $1 || '%' OR m.name ILIKE '%' || $1 || '%')
 				   ${vClause}
 				 ORDER BY m.member_code
@@ -2781,7 +2797,7 @@ export async function adminRoutes(app: FastifyInstance) {
 			pool().query<{ total: string }>(
 				`SELECT COUNT(*) AS total
 				 FROM members m
-				 WHERE m.role <> 'management'
+				 WHERE m.role NOT IN ('management', 'payout')
 				   AND ($1 = '' OR m.member_code ILIKE '%' || $1 || '%' OR m.name ILIKE '%' || $1 || '%')
 				   ${vClause}`,
 				[search],
@@ -2811,7 +2827,7 @@ export async function adminRoutes(app: FastifyInstance) {
 				   SELECT member_id, SUM(amount) AS withdrawn
 				   FROM withdrawals WHERE status = 'paid' GROUP BY member_id
 				 ) wd ON wd.member_id = m.id
-				 WHERE m.role <> 'management'
+				 WHERE m.role NOT IN ('management', 'payout')
 				   AND ($1 = '' OR m.member_code ILIKE '%' || $1 || '%' OR m.name ILIKE '%' || $1 || '%')
 				   ${vClause}`,
 				[search],
@@ -2964,7 +2980,7 @@ export async function adminRoutes(app: FastifyInstance) {
 				is_qualified: boolean;
 			}>(
 				`SELECT id, member_code, name, is_active, is_qualified
-				 FROM members WHERE id = $1 AND role <> 'management'`,
+				 FROM members WHERE id = $1 AND role NOT IN ('management', 'payout')`,
 				[id],
 			),
 			pool().query<{ net_earned: string }>(

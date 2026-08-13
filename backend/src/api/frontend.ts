@@ -105,7 +105,7 @@ export async function buildMe(memberId: string) {
 		bankStatus: m.bank_status,
 		currentRankLevel: level,
 		currentRankName: level > 0 ? RANK_NAMES[level] : "Member",
-		role: m.role as "member" | "admin" | "management",
+		role: m.role as "member" | "admin" | "management" | "payout",
 		blocked: m.blocked,
 		pan: m.pan ?? undefined,
 		aadhaarLast4: m.aadhaar_last4 ?? undefined,
@@ -821,7 +821,7 @@ export async function frontendRoutes(app: FastifyInstance) {
 			if (query.root === "me" || !query.root) {
 				// The single binary tree root (enforced by uq_single_root).
 				const { rows } = await pool().query<{ id: string }>(
-					`SELECT id FROM members WHERE parent_id IS NULL AND role <> 'management' LIMIT 1`,
+					`SELECT id FROM members WHERE parent_id IS NULL AND role NOT IN ('management', 'payout') LIMIT 1`,
 				);
 				if (!rows[0])
 					return reply

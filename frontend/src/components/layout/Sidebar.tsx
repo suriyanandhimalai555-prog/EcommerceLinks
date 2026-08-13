@@ -7,7 +7,7 @@ import {
   Settings, LogOut, X, ShieldCheck, Activity, ScrollText, SlidersHorizontal, ClipboardList, Package, HandCoins, CreditCard, TrendingUp,
 } from 'lucide-react'
 import api from '../../lib/api'
-import { isManagement } from '../../lib/roles'
+import { isManagement, isPayout } from '../../lib/roles'
 import { useLogout } from '../../lib/useLogout'
 import type { Me } from '../../types/api'
 
@@ -26,6 +26,12 @@ const navItems = [
   { key: 'support', icon: TicketCheck, path: '/support' },
   { key: 'notifications', icon: Bell, path: '/notifications' },
   { key: 'settings', icon: Settings, path: '/settings' },
+]
+
+// The payout account can only mark withdrawals — show just that one admin page.
+const payoutNavItems = [
+  { key: 'adminWithdrawals', icon: Wallet, path: '/admin/withdrawals', end: false },
+  { key: 'settings', icon: Settings, path: '/settings', end: false },
 ]
 
 // The management account gets the admin pages as first-class routes instead
@@ -61,8 +67,11 @@ export default function Sidebar({ open = true, onClose }: Props) {
   })
   // Appointed admins are real members: full member menu + one console entry.
   // Management is off-tree: only the admin pages + settings.
+  // Payout is off-tree: only the withdrawals page + settings.
   const isAdminMember = me?.role === 'admin'
-  const visibleNavItems = isManagement(me) ? managementNavItems : navItems
+  const visibleNavItems = isPayout(me)
+    ? payoutNavItems
+    : isManagement(me) ? managementNavItems : navItems
 
   const handleLogout = useLogout()
 

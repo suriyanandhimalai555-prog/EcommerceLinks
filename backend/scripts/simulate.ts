@@ -23,7 +23,7 @@ async function simulate() {
 		`SELECT m.id, m.member_code, COUNT(c.id) AS kids
      FROM members m
      LEFT JOIN members c ON c.parent_id = m.id
-     WHERE m.role != 'management'
+     WHERE m.role NOT IN ('management', 'payout')
      GROUP BY m.id, m.member_code
      HAVING COUNT(c.id) < 2
      ORDER BY m.id

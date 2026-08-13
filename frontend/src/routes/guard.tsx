@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import api from '../lib/api'
 import type { Me } from '../types/api'
 import { tokenStore, bootstrapAuth } from '../lib/auth'
-import { isManagement, isStaff } from '../lib/roles'
+import { isManagement, isPayout, isStaff } from '../lib/roles'
 import { SkeletonCard } from '../components/ui/Skeleton'
 
 /**
@@ -103,6 +103,7 @@ export function MemberHome({ children }: { children: React.ReactNode }) {
     queryFn: () => api.get('/me').then((r) => r.data),
   })
   if (isPending) return <SkeletonCard lines={2} />
-  if (isManagement(me)) return <Navigate to="/admin" replace />
+  // Both management and payout are off-tree staff — redirect away from member pages.
+  if (isManagement(me) || isPayout(me)) return <Navigate to="/admin" replace />
   return <>{children}</>
 }

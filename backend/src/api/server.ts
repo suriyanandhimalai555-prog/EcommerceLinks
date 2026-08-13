@@ -67,6 +67,30 @@ app.decorate(
 	},
 );
 
+// Decorator: verifies JWT and checks that the caller is withdrawal staff —
+// either 'management' or 'payout'. Used on the 7 withdrawal-marking routes
+// ONLY. 'payout' is deliberately NOT in requireAdmin so it is 403'd on every
+// other /admin/* route.
+app.decorate(
+	"requireWithdrawalStaff",
+	async (request: FastifyRequest, reply: FastifyReply) => {
+		try {
+			await request.jwtVerify();
+		} catch {
+			reply.status(401).send({ error: "Unauthorized" });
+			return;
+		}
+		const user = request.user as { sub: string };
+		const { rows } = await pool().query<{ role: string }>(
+			"SELECT role FROM members WHERE id = $1",
+			[user.sub],
+		);
+		if (!rows[0] || !["management", "payout"].includes(rows[0].role)) {
+			reply.status(403).send({ error: "Forbidden" });
+		}
+	},
+);
+
 await app.register(authRoutes, { prefix: "/auth" });
 await app.register(frontendRoutes);
 await app.register(adminRoutes, { prefix: "/admin" });

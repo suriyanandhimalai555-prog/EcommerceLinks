@@ -190,7 +190,7 @@ export async function authRoutes(app: FastifyInstance) {
 				);
 				if (!sponsorRows[0])
 					return reply.status(404).send({ error: "Sponsor not found" });
-				if (sponsorRows[0].role === "management")
+				if (sponsorRows[0].role === "management" || sponsorRows[0].role === "payout")
 					return reply.status(409).send({ error: "This code cannot be used as a sponsor" });
 
 				const { rows: emailRows } = await pool().query<{ id: string }>(
@@ -368,9 +368,9 @@ export async function authRoutes(app: FastifyInstance) {
 					},
 				});
 
-			// Management accounts bypass OTP — they are internal staff, not members.
+			// Management and payout accounts bypass OTP — they are internal staff, not members.
 			const otpEnabled = await getSetting<boolean>("login_otp_enabled");
-			if (otpEnabled && me.role !== "management") {
+			if (otpEnabled && me.role !== "management" && me.role !== "payout") {
 				const allowed = await checkAndIncrOtpGenLimit(String(member.id));
 				if (!allowed)
 					return reply.status(429).send({
