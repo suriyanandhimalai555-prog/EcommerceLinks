@@ -11,6 +11,7 @@ import { Modal } from '../../components/ui/Modal'
 import { ImageUploader, type ImageUploaderHandle, type UploadedImage } from '../../components/ui/ImageUploader'
 import type { AdminOrder, AdminProduct, Me, PresignRes } from '../../types/api'
 import { AllOrdersTab } from './AllOrdersTab'
+import { RepeatBuyersTab } from './RepeatBuyersTab'
 
 const PAGE = 50
 
@@ -26,7 +27,7 @@ export function OrdersTab() {
   const { t } = useTranslation()
   const qc = useQueryClient()
   const [filter, setFilter] = useState<Filter>('paid')
-  const [view, setView] = useState<'queue' | 'all'>('queue')
+  const [view, setView] = useState<'queue' | 'all' | 'repeat'>('queue')
 
   const { data: me } = useQuery<Me>({
     queryKey: ['me'],
@@ -401,10 +402,20 @@ export function OrdersTab() {
           >
             {t('admin.orders.viewAll')}
           </button>
+          <button
+            onClick={() => setView('repeat')}
+            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all cursor-pointer whitespace-nowrap ${
+              view === 'repeat' ? 'bg-white/10 text-ink shadow-sm' : 'text-ink-muted hover:text-ink'
+            }`}
+          >
+            {t('admin.orders.viewRepeat')}
+          </button>
         </div>
       )}
 
-      {view === 'all' ? (
+      {view === 'repeat' ? (
+        <RepeatBuyersTab />
+      ) : view === 'all' ? (
         <AllOrdersTab />
       ) : (
       <>

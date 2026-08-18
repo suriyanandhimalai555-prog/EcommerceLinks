@@ -436,6 +436,63 @@ export function EarningsTab() {
                 )}
               </div>
             </section>
+
+            {/* Week-by-week breakdown */}
+            <section>
+              <h3 className="text-xs font-semibold text-ink-muted uppercase tracking-wider mb-3">
+                {t('admin.earnings.sectionWeekly')}
+              </h3>
+              {detail.weeks.length === 0 ? (
+                <p className="text-sm text-ink-muted text-center py-4">
+                  {t('admin.earnings.weekNoData')}
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {[...detail.weeks].reverse().map((week) => {
+                    const start = formatDate(week.windowStart)
+                    const end = formatDate(week.windowEnd)
+                    const statusBadge =
+                      week.status === 'paid' ? (
+                        <Badge size="sm" variant="success">{t('admin.earnings.weekPaid')}</Badge>
+                      ) : week.status === 'open' ? (
+                        <Badge size="sm" variant="neutral">{t('admin.earnings.weekInProgress')}</Badge>
+                      ) : (
+                        <Badge size="sm" variant="warning">{t('admin.earnings.weekNotPaid')}</Badge>
+                      )
+                    return (
+                      <div
+                        key={week.cutoffId}
+                        className="avg-card p-3 flex items-center justify-between gap-3 flex-wrap"
+                      >
+                        {/* Date range + paid status */}
+                        <div className="flex flex-col gap-1 min-w-0">
+                          <p className="text-xs font-medium text-ink">
+                            {start} – {end}
+                          </p>
+                          {statusBadge}
+                        </div>
+                        {/* Earned */}
+                        <div className="text-right shrink-0">
+                          <p className="text-[10px] text-ink-muted uppercase tracking-wider">
+                            {t('admin.earnings.weekNetEarned')}
+                          </p>
+                          <p className="text-base font-bold text-success">
+                            {formatINR(week.netEarnedPaise)}
+                          </p>
+                        </div>
+                        {/* Pairs */}
+                        <div className="text-right shrink-0">
+                          <p className="text-[10px] text-ink-muted uppercase tracking-wider">
+                            {t('admin.earnings.weekPairs')}
+                          </p>
+                          <p className="text-base font-bold text-ink">{week.pairsMatched}</p>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </section>
           </div>
         )}
       </Modal>

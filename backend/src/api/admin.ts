@@ -2490,6 +2490,86 @@ export async function adminRoutes(app: FastifyInstance) {
 		};
 	});
 
+	// GET /admin/orders/multi-buyers — members with ≥2 confirmed orders.
+	// Management-only. Registered before any parametric /orders/:id routes.
+	app.get("/orders/multi-buyers", auth, async (req, reply) => {
+		const actor = req.user as { sub: string };
+		if (!(await isManagement(actor.sub)))
+			return reply.status(403).send({ error: "Management only" });
+
+		const query = req.query as {
+			q?: string;
+			page?: string;
+			limit?: string;
+		};
+
+		const q = (query.q ?? "").trim();
+		const limit = Math.min(Math.max(1, Number(query.limit ?? "20")), 100);
+		const page = Math.max(1, Number(query.page ?? "1"));
+		const offset = (page - 1) * limit;
+
+		// Core query: confirmed orders only, members with ≥2.
+		// $1 = search string (empty string = no filter).
+		const dataParams: unknown[] = [q, limit, offset];
+		const { rows } = await pool().query<{
+			member_code: string;
+			member_name: string;
+			member_phone: string;
+			confirmed_count: string;
+			total_confirmed: string;
+			first_order_at: string;
+			last_order_at: string;
+		}>(
+			`SELECT m.member_code, m.name AS member_name, m.phone AS member_phone,
+			        COUNT(*)::int AS confirmed_count,
+			        COALESCE(SUM(o.total_amount), 0) AS total_confirmed,
+			        MIN(o.created_at) AS first_order_at,
+			        MAX(o.created_at) AS last_order_at
+			   FROM orders o
+			   JOIN members m ON m.id = o.member_id
+			  WHERE o.status = 'confirmed'
+			    AND ($1 = '' OR m.name ILIKE '%'||$1||'%'
+			                 OR m.member_code ILIKE '%'||$1||'%'
+			                 OR m.phone ILIKE '%'||$1||'%')
+			  GROUP BY m.id, m.member_code, m.name, m.phone
+			 HAVING COUNT(*) > 1
+			  ORDER BY COUNT(*) DESC, MAX(o.created_at) DESC
+			  LIMIT $2 OFFSET $3`,
+			dataParams,
+		);
+
+		const { rows: countRows } = await pool().query<{ total: string }>(
+			`SELECT COUNT(*) AS total FROM (
+			   SELECT m.id
+			     FROM orders o
+			     JOIN members m ON m.id = o.member_id
+			    WHERE o.status = 'confirmed'
+			      AND ($1 = '' OR m.name ILIKE '%'||$1||'%'
+			                   OR m.member_code ILIKE '%'||$1||'%'
+			                   OR m.phone ILIKE '%'||$1||'%')
+			    GROUP BY m.id
+			   HAVING COUNT(*) > 1
+			 ) t`,
+			[q],
+		);
+		const total = Number(countRows[0].total);
+
+		return {
+			items: rows.map((r) => ({
+				memberCode: r.member_code,
+				memberName: r.member_name,
+				memberPhone: r.member_phone,
+				confirmedCount: Number(r.confirmed_count),
+				totalConfirmedPaise: Number(toPaise(r.total_confirmed)),
+				firstOrderAt: r.first_order_at,
+				lastOrderAt: r.last_order_at,
+			})),
+			total,
+			page,
+			limit,
+		};
+	});
+
 	// ===== System settings (feature flags) =====
 	// GET — both admin and management may read.
 	app.get("/settings", auth, async () => {
@@ -2971,7 +3051,7 @@ export async function adminRoutes(app: FastifyInstance) {
 
 		const { id } = req.params as { id: string };
 
-		const [memberRes, netRes, pairsRes, wdRes] = await Promise.all([
+		const [memberRes, netRes, pairsRes, wdRes, weeksRes] = await Promise.all([
 			pool().query<{
 				id: string;
 				member_code: string;
@@ -3012,6 +3092,52 @@ export async function adminRoutes(app: FastifyInstance) {
 				 FROM withdrawals WHERE member_id = $1`,
 				[id],
 			),
+			// Per-week breakdown:
+			// Net earned comes from cutoff_earnings (authoritative post-redate source).
+			// Pairs are bucketed by causal release_at = GREATEST(pair completion, earner
+			// qualification) — the same attribution method as redateEarnings.ts — because
+			// pair_accruals.released_at was NOT redated and must not be used for bucketing.
+			pool().query<{
+				cutoff_id: string;
+				window_start: Date;
+				window_end: Date;
+				status: string;
+				net_earned: string;
+				pairs: string;
+			}>(
+				`WITH rel AS (
+				   SELECT GREATEST(
+				            GREATEST(lm.activated_at, rm.activated_at),
+				            b.qualified_at
+				          ) AS release_at
+				     FROM pair_accruals pa
+				     JOIN pairs   p  ON p.id  = pa.pair_id
+				     JOIN members lm ON lm.id = p.left_member_id
+				     JOIN members rm ON rm.id = p.right_member_id
+				     JOIN members b  ON b.id  = p.member_id
+				    WHERE pa.status = 'released' AND p.member_id = $1
+				 ),
+				 pairs_by_week AS (
+				   SELECT c.id AS cutoff_id, COUNT(*) AS pairs
+				     FROM rel r
+				     JOIN cutoffs c
+				       ON r.release_at >= c.window_start
+				      AND r.release_at <  c.window_end
+				    GROUP BY c.id
+				 )
+				 SELECT ce.cutoff_id::text,
+				        c.window_start,
+				        c.window_end,
+				        c.status,
+				        ce.earned::text          AS net_earned,
+				        COALESCE(pw.pairs, 0)::text AS pairs
+				   FROM cutoff_earnings ce
+				   JOIN cutoffs c ON c.id = ce.cutoff_id
+				   LEFT JOIN pairs_by_week pw ON pw.cutoff_id = ce.cutoff_id
+				  WHERE ce.member_id = $1
+				  ORDER BY c.window_start`,
+				[id],
+			),
 		]);
 
 		const m = memberRes.rows[0];
@@ -3035,6 +3161,15 @@ export async function adminRoutes(app: FastifyInstance) {
 			withdrawnNetPaise: Number(toPaise(wdRes.rows[0]?.withdrawn_net ?? "0")),
 			withdrawalCount: Number(wdRes.rows[0]?.withdrawal_count ?? "0"),
 			pendingWithdrawalPaise: Number(toPaise(wdRes.rows[0]?.pending_withdrawal ?? "0")),
+			// Week-by-week breakdown ordered oldest → newest
+			weeks: weeksRes.rows.map((w) => ({
+				cutoffId: w.cutoff_id,
+				windowStart: w.window_start,
+				windowEnd: w.window_end,
+				status: w.status,
+				netEarnedPaise: Number(toPaise(w.net_earned ?? "0")),
+				pairsMatched: Number(w.pairs ?? "0"),
+			})),
 		};
 	});
 }

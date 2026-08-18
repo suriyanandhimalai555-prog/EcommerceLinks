@@ -406,7 +406,14 @@
       "pendingWithdrawal": "Pending withdrawal",
       "pendingWithdrawalHint": "Amount held in-flight — requested but not yet paid",
       "weekCurrent": "in progress",
-      "weekLast": "last week"
+      "weekLast": "last week",
+      "sectionWeekly": "Week by week",
+      "weekPaid": "Paid",
+      "weekNotPaid": "Not paid yet",
+      "weekInProgress": "Current week",
+      "weekNetEarned": "Net earned",
+      "weekPairs": "Pairs",
+      "weekNoData": "No weekly earnings found for this member."
     },
     "members": {
       "noDocsWarning": "No KYC documents uploaded yet — verify only if documents were checked another way.",
@@ -494,7 +501,21 @@
       "statusConfirmed": "Confirmed",
       "statusRejected": "Rejected",
       "statusFailed": "Failed",
-      "statusRefunded": "Refunded"
+      "statusRefunded": "Refunded",
+      "viewRepeat": "Repeat Buyers",
+      "repeatTitle": "Repeat Buyers",
+      "repeatSubtitle": "Members with 2 or more confirmed orders.",
+      "repeatColCount": "Confirmed Orders",
+      "repeatColTotal": "Total Spent",
+      "repeatColLastOrder": "Last Order",
+      "repeatSearchPlaceholder": "Search name, member code, phone…",
+      "repeatEmptyTitle": "No repeat buyers",
+      "repeatEmptyDesc": "Members with 2 or more confirmed orders will appear here.",
+      "repeatExportBtn": "Export one per person",
+      "repeatExportScopeLabel": "Include orders",
+      "repeatExportScopeConfirmed": "Confirmed only",
+      "repeatExportScopeConfirmedPaid": "Confirmed + Paid",
+      "repeatExportScopeAll": "All statuses"
     },
     "membersExport": {
       "button": "Export CSV",

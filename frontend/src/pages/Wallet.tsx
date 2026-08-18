@@ -144,7 +144,7 @@ export default function WalletPage() {
             tint="success"
             sub={t('wallet.withdrawableHint')}
           />
-          <div className="avg-card p-5">
+          <div className="avg-card p-5 col-span-2 lg:col-span-1">
             <div className="flex items-center justify-between mb-3">
               <div>
                 <p className="text-xs font-semibold text-ink-muted uppercase tracking-wider mb-1">{t('wallet.currentWindow')}</p>

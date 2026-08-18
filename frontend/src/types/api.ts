@@ -581,6 +581,19 @@ export interface AdminEarningsPage {
   }
 }
 
+/** One cutoff window in the per-member week-by-week breakdown */
+export interface AdminEarningsWeek {
+  cutoffId: string
+  windowStart: string
+  windowEnd: string
+  /** 'paid' = payout done; 'closed' = week ended, payout pending; 'open' = in-progress */
+  status: 'open' | 'closed' | 'paid'
+  /** Net amount that landed in wallet for this week (post ₹1 lakh cap) */
+  netEarnedPaise: number
+  /** Number of pairs matched (causal, bucketed by release_at) */
+  pairsMatched: number
+}
+
 export interface AdminEarningsDetail {
   id: string
   memberCode: string
@@ -602,6 +615,8 @@ export interface AdminEarningsDetail {
   withdrawalCount: number
   /** Amount held in-flight for requested (not yet paid) withdrawals */
   pendingWithdrawalPaise: number
+  /** Per-week breakdown, oldest → newest */
+  weeks: AdminEarningsWeek[]
 }
 
 export interface AdminCutoff {
@@ -649,6 +664,23 @@ export interface AdminAllOrderRow {
 
 export interface AdminOrdersPage {
   items: AdminAllOrderRow[]
+  total: number
+  page: number
+  limit: number
+}
+
+// ---- admin: repeat-buyers list (management-only, ≥2 confirmed orders) ----
+export interface AdminMultiBuyerRow {
+  memberCode: string
+  memberName: string
+  memberPhone: string
+  confirmedCount: number
+  totalConfirmedPaise: number
+  firstOrderAt: string
+  lastOrderAt: string
+}
+export interface AdminMultiBuyersPage {
+  items: AdminMultiBuyerRow[]
   total: number
   page: number
   limit: number
