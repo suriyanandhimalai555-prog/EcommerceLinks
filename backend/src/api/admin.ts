@@ -3101,7 +3101,7 @@ export async function adminRoutes(app: FastifyInstance) {
 				cutoff_id: string;
 				window_start: Date;
 				window_end: Date;
-				status: string;
+				week_status: string;
 				net_earned: string;
 				pairs: string;
 			}>(
@@ -3128,7 +3128,16 @@ export async function adminRoutes(app: FastifyInstance) {
 				 SELECT ce.cutoff_id::text,
 				        c.window_start,
 				        c.window_end,
-				        c.status,
+				        CASE
+				          WHEN c.status = 'open' THEN 'open'
+				          WHEN EXISTS (
+				            SELECT 1 FROM withdrawals w
+				             WHERE w.member_id = $1
+				               AND w.source_cutoff_id = c.id
+				               AND w.status = 'paid'
+				          ) THEN 'paid'
+				          ELSE 'closed'
+				        END AS week_status,
 				        ce.earned::text          AS net_earned,
 				        COALESCE(pw.pairs, 0)::text AS pairs
 				   FROM cutoff_earnings ce
@@ -3166,7 +3175,7 @@ export async function adminRoutes(app: FastifyInstance) {
 				cutoffId: w.cutoff_id,
 				windowStart: w.window_start,
 				windowEnd: w.window_end,
-				status: w.status,
+				status: w.week_status,
 				netEarnedPaise: Number(toPaise(w.net_earned ?? "0")),
 				pairsMatched: Number(w.pairs ?? "0"),
 			})),
