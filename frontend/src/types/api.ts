@@ -396,6 +396,28 @@ export interface AdminWithdrawalExport {
   rows: AdminWithdrawalExportRow[]
 }
 
+// ---- downline export ----
+export interface AdminDownlineRow {
+  memberCode: string
+  name: string
+  phone: string
+  email: string | null
+  level: number
+  leg: 'L' | 'R'
+  isActive: boolean
+  isQualified: boolean
+  kycStatus: 'pending' | 'verified' | 'rejected'
+  bankStatus: 'pending' | 'verified' | 'rejected'
+  sponsorCode: string | null
+  sponsorName: string | null
+  joinedAt: string
+}
+
+export interface AdminDownlineExport {
+  root: { memberCode: string; name: string }
+  rows: AdminDownlineRow[]
+}
+
 // ---- ranks ----
 export interface RankLevel {
   level: number

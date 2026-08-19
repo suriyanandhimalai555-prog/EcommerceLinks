@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { ShieldCheck, Mail, Lock, LockOpen, AlertCircle, Loader2, UserCheck } from 'lucide-react'
 import api from '../../lib/api'
 import type { SystemSettings } from '../../types/api'
+import { PasswordTab } from '../profile/PasswordTab'
 
 function ToggleSwitch({
   checked,
@@ -344,6 +345,9 @@ export function SettingsTab() {
           </div>
         )}
       </div>
+
+      {/* ── Change management password ── */}
+      <PasswordTab />
 
       {/* Payout note */}
       <div className="flex items-start gap-2 bg-primary/5 border border-primary/20 rounded-xl p-4">

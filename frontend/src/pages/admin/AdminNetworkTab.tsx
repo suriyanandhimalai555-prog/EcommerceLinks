@@ -1,14 +1,16 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Loader2, Trash2 } from 'lucide-react'
+import { Download, Loader2, Trash2 } from 'lucide-react'
 import { BinaryTree } from '../../components/tree/BinaryTree'
 import { TreeSearch } from '../../components/tree/TreeSearch'
 import { useTreeDrilldown } from '../../components/tree/useTreeDrilldown'
 import { Modal } from '../../components/ui/Modal'
 import api from '../../lib/api'
 import { apiErrorMessage } from '../../lib/apiError'
-import type { AdminMembersPage } from '../../types/api'
+import { downloadCsv } from '../../lib/exportCsv'
+import { formatDate } from '../../lib/format'
+import type { AdminDownlineExport, AdminMembersPage } from '../../types/api'
 
 /**
  * Management-only full-tree view. Reuses the same server-side drill-down hook
@@ -22,6 +24,9 @@ import type { AdminMembersPage } from '../../types/api'
  * no live orders). The tree cache is busted server-side so the Vacant slot
  * appears immediately.
  */
+const SELECT_CLS =
+  'rounded-lg border border-surface-line bg-[#10141F] px-3 py-1.5 text-sm text-ink outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary cursor-pointer'
+
 export function AdminNetworkTab() {
   const { t } = useTranslation()
   const qc = useQueryClient()
@@ -30,6 +35,79 @@ export function AdminNetworkTab() {
 
   const [deleteTarget, setDeleteTarget] = useState<{ code: string; name: string } | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+
+  // ── Export state ──
+  const [activeFilter, setActiveFilter] = useState<'all' | 'active' | 'inactive'>('all')
+  const [kycFilter, setKycFilter] = useState<'all' | 'done' | 'notdone'>('all')
+  const [bankFilter, setBankFilter] = useState<'all' | 'done' | 'notdone'>('all')
+  const [exporting, setExporting] = useState(false)
+  const [exportError, setExportError] = useState<string | null>(null)
+
+  // Export the entire downline of the currently displayed tree root.
+  // Uses the dedicated management-only endpoint which performs a single
+  // GIN-indexed placement_path containment query on the backend.
+  const exportCSV = async () => {
+    if (!tree) return
+    // The 'me' sentinel resolves to the tree root; the memberCode on the node
+    // is always the real code once the tree has loaded, so this is always valid.
+    const rootCode = tree.memberCode
+    setExporting(true)
+    setExportError(null)
+    try {
+      const params = new URLSearchParams()
+      if (activeFilter !== 'all') params.set('active', activeFilter)
+      if (kycFilter !== 'all')    params.set('kyc', kycFilter)
+      if (bankFilter !== 'all')   params.set('bank', bankFilter)
+
+      const res = await api
+        .get<AdminDownlineExport>(`/admin/network/${rootCode}/downline/export?${params}`)
+        .then((r) => r.data)
+
+      const headers = [
+        t('adminNetwork.colMemberCode'),
+        t('adminNetwork.colName'),
+        t('adminNetwork.colPhone'),
+        t('adminNetwork.colEmail'),
+        t('adminNetwork.colSponsorCode'),
+        t('adminNetwork.colSponsorName'),
+        t('adminNetwork.colLevel'),
+        t('adminNetwork.colLeg'),
+        t('adminNetwork.colActive'),
+        t('adminNetwork.colQualified'),
+        t('adminNetwork.colKyc'),
+        t('adminNetwork.colBank'),
+        t('adminNetwork.colJoined'),
+      ]
+
+      const rows = res.rows.map((r) => [
+        r.memberCode,
+        r.name,
+        r.phone,
+        r.email ?? '',
+        r.sponsorCode ?? '',
+        r.sponsorName ?? '',
+        r.level,
+        r.leg ?? '-',
+        r.isActive ? 'Active' : 'Inactive',
+        r.isQualified ? 'Yes' : 'No',
+        r.kycStatus,
+        r.bankStatus,
+        formatDate(r.joinedAt),
+      ])
+
+      // File named for the exported person — management can tell exports apart at a glance.
+      const safeName = res.root.name.replace(/[^\w-]+/g, '_')
+      downloadCsv(
+        `downline-${res.root.memberCode}-${safeName}-${new Date().toISOString().slice(0, 10)}.csv`,
+        headers,
+        rows,
+      )
+    } catch {
+      setExportError('Export failed. Please try again.')
+    } finally {
+      setExporting(false)
+    }
+  }
 
   const del = useMutation({
     mutationFn: (code: string) => api.delete(`/admin/network/${code}`),
@@ -54,6 +132,79 @@ export function AdminNetworkTab() {
       <div>
         <h1 className="text-xl font-bold text-ink">{t('nav.adminNetwork')}</h1>
         <p className="text-sm text-ink-muted">Full binary placement tree from the root, with drill-down</p>
+      </div>
+
+      {/* ── Downline export card (management-only; this whole tab is management-only) ── */}
+      <div className="avg-card p-5 space-y-4">
+        <div>
+          <h2 className="text-sm font-semibold text-ink">{t('adminNetwork.exportTitle')}</h2>
+          <p className="text-xs text-ink-muted mt-0.5">{t('adminNetwork.exportSubtitle')}</p>
+        </div>
+
+        {/* Current target indicator */}
+        <div className="text-xs text-ink-muted">
+          <span className="font-medium text-ink">{t('adminNetwork.currentTarget')}:</span>{' '}
+          {tree
+            ? <span className="text-primary font-semibold">{tree.name} ({tree.memberCode})</span>
+            : <span className="italic">{t('adminNetwork.noTarget')}</span>}
+        </div>
+
+        {/* Filters row */}
+        <div className="flex flex-wrap gap-3 items-center">
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-ink-muted whitespace-nowrap">{t('adminNetwork.filterStatus')}</span>
+            <select
+              value={activeFilter}
+              onChange={(e) => setActiveFilter(e.target.value as typeof activeFilter)}
+              className={SELECT_CLS}
+            >
+              <option value="all">{t('adminNetwork.filterStatusAll')}</option>
+              <option value="active">{t('adminNetwork.filterStatusActive')}</option>
+              <option value="inactive">{t('adminNetwork.filterStatusInactive')}</option>
+            </select>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-ink-muted whitespace-nowrap">{t('adminNetwork.filterKyc')}</span>
+            <select
+              value={kycFilter}
+              onChange={(e) => setKycFilter(e.target.value as typeof kycFilter)}
+              className={SELECT_CLS}
+            >
+              <option value="all">{t('adminNetwork.filterKycAll')}</option>
+              <option value="done">{t('adminNetwork.filterKycDone')}</option>
+              <option value="notdone">{t('adminNetwork.filterKycNotDone')}</option>
+            </select>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-ink-muted whitespace-nowrap">{t('adminNetwork.filterBank')}</span>
+            <select
+              value={bankFilter}
+              onChange={(e) => setBankFilter(e.target.value as typeof bankFilter)}
+              className={SELECT_CLS}
+            >
+              <option value="all">{t('adminNetwork.filterBankAll')}</option>
+              <option value="done">{t('adminNetwork.filterBankDone')}</option>
+              <option value="notdone">{t('adminNetwork.filterBankNotDone')}</option>
+            </select>
+          </div>
+
+          <button
+            onClick={exportCSV}
+            disabled={!tree || exporting}
+            className="flex items-center gap-1.5 avg-btn-primary disabled:opacity-50 disabled:cursor-not-allowed ml-auto"
+          >
+            {exporting
+              ? <Loader2 size={14} className="animate-spin" />
+              : <Download size={14} />}
+            {exporting ? t('adminNetwork.exporting') : t('adminNetwork.exportBtn')}
+          </button>
+        </div>
+
+        {exportError && (
+          <p className="text-xs text-danger">{exportError}</p>
+        )}
       </div>
 
       <div className="avg-card p-5 min-w-0">

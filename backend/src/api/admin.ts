@@ -1726,6 +1726,119 @@ export async function adminRoutes(app: FastifyInstance) {
 		return { ok: true };
 	});
 
+	// ===== Downline export — management only =====
+	// GET /admin/network/:memberCode/downline/export
+	// Returns every member in the placement subtree below the given member (strict
+	// containment — the root member is excluded). Filters: active/inactive, kyc
+	// done/notdone, bank done/notdone. No pagination — same shape as /withdrawals/export.
+	// MUST be registered before the parametric DELETE /network/:memberCode so Fastify
+	// resolves the static suffix `/downline/export` first (more-specific wins).
+	app.get("/network/:memberCode/downline/export", auth, async (req, reply) => {
+		const actor = req.user as { sub: string };
+		if (!(await isManagement(actor.sub)))
+			return reply.status(403).send({ error: "Management only" });
+
+		const { memberCode } = req.params as { memberCode: string };
+		const query = req.query as { active?: string; kyc?: string; bank?: string };
+
+		// Validate filters against fixed enums; unknown values fall back to 'all'.
+		const activeFilter =
+			query.active === "active" || query.active === "inactive"
+				? query.active
+				: "all";
+		const kycFilter =
+			query.kyc === "done" || query.kyc === "notdone" ? query.kyc : "all";
+		const bankFilter =
+			query.bank === "done" || query.bank === "notdone" ? query.bank : "all";
+
+		// Resolve member code → id + name. Payout/management have no placement subtree.
+		const { rows: memberRows } = await pool().query<{
+			id: string;
+			name: string;
+		}>(
+			`SELECT id, name FROM members
+        WHERE member_code = $1 AND role NOT IN ('management','payout')`,
+			[memberCode],
+		);
+		if (!memberRows[0])
+			return reply.status(404).send({ error: "Member not found" });
+		const { id: memberId, name: rootName } = memberRows[0];
+
+		// Build safe inline filter clauses from validated enum values — no user text
+		// is ever interpolated, same pattern as withdrawalVClause above.
+		const activeClause =
+			activeFilter === "active"
+				? "AND m.is_active = true"
+				: activeFilter === "inactive"
+					? "AND m.is_active = false"
+					: "";
+		const kycClause =
+			kycFilter === "done"
+				? "AND m.kyc_status = 'verified'"
+				: kycFilter === "notdone"
+					? "AND m.kyc_status <> 'verified'"
+					: "";
+		const bankClause =
+			bankFilter === "done"
+				? "AND m.bank_status = 'verified'"
+				: bankFilter === "notdone"
+					? "AND m.bank_status <> 'verified'"
+					: "";
+
+		// GIN-indexed placement_path containment — same technique as /network/downline
+		// (frontend.ts). Strict @> containment excludes the root member itself.
+		// Level is relative to the root (level 1 = direct child).
+		// Leg is the side taken at the root's position in each descendant's path.
+		const { rows } = await pool().query<{
+			member_code: string;
+			name: string;
+			phone: string;
+			email: string | null;
+			level: number;
+			leg: string | null;
+			is_active: boolean;
+			is_qualified: boolean;
+			kyc_status: string;
+			bank_status: string;
+			created_at: string;
+			sponsor_code: string | null;
+			sponsor_name: string | null;
+		}>(
+			`SELECT m.member_code, m.name, m.phone, m.email,
+              cardinality(m.placement_path)
+                - (SELECT cardinality(placement_path) FROM members WHERE id = $1::bigint) AS level,
+              m.placement_sides[array_position(m.placement_path, $1::bigint)] AS leg,
+              m.is_active, m.is_qualified, m.kyc_status, m.bank_status, m.created_at,
+              s.member_code AS sponsor_code, s.name AS sponsor_name
+         FROM members m
+         LEFT JOIN members s ON s.id = m.sponsor_id
+        WHERE m.placement_path @> ARRAY[$1::bigint]
+          AND m.role NOT IN ('management','payout')
+          ${activeClause} ${kycClause} ${bankClause}
+        ORDER BY cardinality(m.placement_path) ASC, m.created_at ASC`,
+			[memberId],
+		);
+
+		return {
+			root: { memberCode, name: rootName },
+			rows: rows.map((r) => ({
+				memberCode: r.member_code,
+				name: r.name,
+				phone: r.phone,
+				email: r.email ?? null,
+				level: Number(r.level),
+				leg: (r.leg ?? "L") as "L" | "R",
+				isActive: r.is_active,
+				isQualified: r.is_qualified,
+				kycStatus: r.kyc_status,
+				bankStatus: r.bank_status,
+				sponsorCode: r.sponsor_code ?? null,
+				sponsorName: r.sponsor_name ?? null,
+				joinedAt: r.created_at,
+			})),
+		};
+	});
+
 	// ===== System overview (read-only aggregates; one parallel round trip) =====
 	app.get("/overview", auth, async () => {
 		const [

@@ -631,5 +631,38 @@
   },
   "common": {
     "cancel": "ரத்து செய்"
+  },
+  "adminNetwork": {
+    "exportTitle": "கீழ்நிலை ஏற்றுமதி",
+    "exportSubtitle": "தேர்ந்தெடுக்கப்பட்ட உறுப்பினருக்கு கீழே உள்ள அனைவரையும் CSV ஆக பதிவிறக்கவும்.",
+    "currentTarget": "தேர்வு",
+    "noTarget": "உறுப்பினர் தேர்ந்தெடுக்கப்படவில்லை — மரத்தை தேடவும் அல்லது ஆய்வு செய்யவும்.",
+    "filterStatus": "நிலை",
+    "filterStatusAll": "அனைத்தும்",
+    "filterStatusActive": "செயலில் மட்டும்",
+    "filterStatusInactive": "செயலில் இல்லாதவர்கள்",
+    "filterKyc": "KYC",
+    "filterKycAll": "அனைத்தும்",
+    "filterKycDone": "சரிபார்க்கப்பட்டது",
+    "filterKycNotDone": "சரிபார்க்கப்படவில்லை",
+    "filterBank": "வங்கி",
+    "filterBankAll": "அனைத்தும்",
+    "filterBankDone": "சரிபார்க்கப்பட்டது",
+    "filterBankNotDone": "சரிபார்க்கப்படவில்லை",
+    "exportBtn": "CSV ஏற்றுமதி",
+    "exporting": "ஏற்றுமதி செய்கிறது…",
+    "colMemberCode": "உறுப்பினர் குறியீடு",
+    "colName": "பெயர்",
+    "colPhone": "தொலைபேசி",
+    "colEmail": "மின்னஞ்சல்",
+    "colSponsorCode": "ஸ்பான்சர் குறியீடு",
+    "colSponsorName": "ஸ்பான்சர் பெயர்",
+    "colLevel": "நிலை",
+    "colLeg": "பக்கம்",
+    "colActive": "நிலை",
+    "colQualified": "தகுதி",
+    "colKyc": "KYC",
+    "colBank": "வங்கி",
+    "colJoined": "சேர்ந்த தேதி"
   }
 }

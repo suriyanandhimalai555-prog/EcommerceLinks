@@ -632,5 +632,38 @@
   },
   "common": {
     "cancel": "Cancel"
+  },
+  "adminNetwork": {
+    "exportTitle": "Export Downline",
+    "exportSubtitle": "Download a CSV of everyone placed below the current member.",
+    "currentTarget": "Current target",
+    "noTarget": "No member selected — search or drill into the tree first.",
+    "filterStatus": "Status",
+    "filterStatusAll": "All",
+    "filterStatusActive": "Active only",
+    "filterStatusInactive": "Inactive only",
+    "filterKyc": "KYC",
+    "filterKycAll": "All",
+    "filterKycDone": "Verified",
+    "filterKycNotDone": "Not verified",
+    "filterBank": "Bank",
+    "filterBankAll": "All",
+    "filterBankDone": "Verified",
+    "filterBankNotDone": "Not verified",
+    "exportBtn": "Export CSV",
+    "exporting": "Exporting…",
+    "colMemberCode": "Member Code",
+    "colName": "Name",
+    "colPhone": "Phone",
+    "colEmail": "Email",
+    "colSponsorCode": "Sponsor Code",
+    "colSponsorName": "Sponsor Name",
+    "colLevel": "Level",
+    "colLeg": "Leg",
+    "colActive": "Status",
+    "colQualified": "Qualified",
+    "colKyc": "KYC",
+    "colBank": "Bank",
+    "colJoined": "Joined"
   }
 }
