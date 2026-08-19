@@ -3,7 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { isAxiosError } from 'axios'
 import { useTranslation } from 'react-i18next'
-import { AlertTriangle, ArrowLeft, CheckCircle2, Clock, Copy, FileText, Loader2, ShoppingBag, Upload } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, CheckCircle2, Clock, Copy, FileText, Loader2, MapPin, ShoppingBag, Upload } from 'lucide-react'
 import api from '../lib/api'
 import { formatINR } from '../lib/format'
 import { ImageGallery } from '../components/ui/ImageGallery'
@@ -25,6 +25,7 @@ export default function ProductDetail() {
   // orderId is set when the member creates a new order via the Buy button.
   const [orderId, setOrderId] = useState<string | null>(null)
   const [kycBlocked, setKycBlocked] = useState(false)
+  const [addressBlocked, setAddressBlocked] = useState(false)
   const [proofImages, setProofImages] = useState<UploadedImage[]>([])
   const [copied, setCopied] = useState<string | null>(null)
 
@@ -69,6 +70,10 @@ export default function ProductDetail() {
 
   // kycMandatory defaults to true so old API responses still enforce the gate
   const kycRequired = kycBlocked || (me != null && (me.kycMandatory ?? true) && me.kycStatus !== 'verified')
+  // Address is required when the member has not set one yet (null = not set).
+  // addressBlocked is also set when the server returns ADDRESS_REQUIRED as a safety net.
+  const hasAddress = me != null && me.deliveryAddress != null
+  const addressRequired = addressBlocked || (me != null && !hasAddress)
 
   const createOrder = useMutation({
     mutationFn: () => api.post('/orders', { productId: Number(pid) }),
@@ -78,6 +83,8 @@ export default function ProductDetail() {
     onError: (err) => {
       if (isAxiosError(err) && err.response?.data?.error?.code === 'KYC_REQUIRED')
         setKycBlocked(true)
+      if (isAxiosError(err) && err.response?.data?.error?.code === 'ADDRESS_REQUIRED')
+        setAddressBlocked(true)
     },
   })
 
@@ -301,6 +308,22 @@ export default function ProductDetail() {
 
       {kycRequired && <KycRequiredBanner />}
 
+      {addressRequired && (
+        <div className="flex items-start gap-3 bg-warning/8 border border-warning/25 rounded-2xl p-4">
+          <MapPin size={16} className="text-warning shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-semibold text-ink">{t('buy.addressRequired')}</p>
+            <p className="text-xs text-ink-muted mt-0.5">{t('buy.addressRequiredHint')}</p>
+            <Link
+              to="/profile/address"
+              className="inline-block mt-2 text-xs font-semibold text-primary underline underline-offset-2"
+            >
+              {t('buy.addressRequiredCta')}
+            </Link>
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-6 lg:items-start">
         {/* Left: gallery + name */}
         <div className="avg-card p-5 space-y-4">
@@ -331,6 +354,19 @@ export default function ProductDetail() {
             </div>
           </div>
 
+          {/* Delivery address (read-only) */}
+          {hasAddress && me?.deliveryAddress && (
+            <div className="rounded-xl bg-white/5 border border-surface-line p-3 space-y-0.5">
+              <div className="flex items-center gap-1.5 mb-1">
+                <MapPin size={12} className="text-ink-muted" />
+                <span className="text-[11px] font-semibold text-ink-muted uppercase tracking-wide">{t('buy.deliverTo')}</span>
+              </div>
+              <p className="text-xs font-semibold text-ink">{me.deliveryAddress.recipientName}</p>
+              <p className="text-xs text-ink-muted">{me.deliveryAddress.line1}{me.deliveryAddress.line2 ? `, ${me.deliveryAddress.line2}` : ''}</p>
+              <p className="text-xs text-ink-muted">{me.deliveryAddress.city}, {me.deliveryAddress.state} — {me.deliveryAddress.pincode}</p>
+            </div>
+          )}
+
           {/* Terms */}
           <label className="flex items-start gap-3 cursor-pointer">
             <input
@@ -345,7 +381,7 @@ export default function ProductDetail() {
           {/* Buy button */}
           <button
             onClick={() => createOrder.mutate()}
-            disabled={!terms || kycRequired || createOrder.isPending}
+            disabled={!terms || kycRequired || addressRequired || createOrder.isPending}
             className="avg-btn-primary w-full py-3"
           >
             {createOrder.isPending ? (

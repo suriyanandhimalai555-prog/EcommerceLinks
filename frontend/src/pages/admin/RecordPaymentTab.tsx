@@ -2,12 +2,24 @@ import { useEffect, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import {
-  Search, CheckCircle2, AlertTriangle, Loader2, X, BadgeIndianRupee,
+  Search, CheckCircle2, AlertTriangle, Loader2, X, BadgeIndianRupee, MapPin, Pencil,
 } from 'lucide-react'
+import { z } from 'zod'
 import api from '../../lib/api'
 import { formatINR } from '../../lib/format'
-import type { AdminMemberRow, AdminMembersPage, AdminProduct, OnBehalfRes, PresignRes } from '../../types/api'
+import type { AdminMemberRow, AdminMembersPage, AdminProduct, OnBehalfRes, PresignRes, SystemSettings } from '../../types/api'
 import { ImageUploader, type ImageUploaderHandle, type UploadedImage } from '../../components/ui/ImageUploader'
+
+const addressSchema = z.object({
+  recipientName: z.string().min(1, 'Recipient name is required'),
+  phone:         z.string().min(10, 'Valid phone number is required'),
+  line1:         z.string().min(1, 'Address line 1 is required'),
+  line2:         z.string().optional(),
+  city:          z.string().min(1, 'City is required'),
+  state:         z.string().min(1, 'State is required'),
+  pincode:       z.string().regex(/^\d{6}$/, 'Pincode must be exactly 6 digits'),
+})
+type AddressData = z.infer<typeof addressSchema>
 
 function useDebounce<T>(value: T, delay: number): T {
   const [debounced, setDebounced] = useState<T>(value)
@@ -33,6 +45,13 @@ export function RecordPaymentTab() {
   const [successState, setSuccessState] = useState<OnBehalfRes | null>(null)
   const uploaderRef = useRef<ImageUploaderHandle>(null)
 
+  // Address editing state (management can always edit)
+  const [editingAddress, setEditingAddress] = useState(false)
+  const [addrForm, setAddrForm] = useState<AddressData>({
+    recipientName: '', phone: '', line1: '', line2: '', city: '', state: '', pincode: '',
+  })
+  const [addrErrors, setAddrErrors] = useState<Partial<Record<keyof AddressData, string>>>({})
+
   // ── queries ──────────────────────────────────────────────────────────────
   const { data: memberResults } = useQuery<AdminMembersPage>({
     queryKey: ['admin-members-search', debouncedQ],
@@ -48,7 +67,16 @@ export function RecordPaymentTab() {
     queryFn: () => api.get('/admin/products').then((r) => r.data),
   })
 
+  const { data: settings } = useQuery<SystemSettings>({
+    queryKey: ['admin-settings'],
+    queryFn: () => api.get('/admin/settings').then((r) => r.data),
+  })
+
   const activeProducts = products.filter((p) => p.active)
+
+  // Whether the selected member currently has a complete address on file.
+  const memberHasAddress = Boolean(selectedMember?.deliveryAddress?.recipientName)
+  const addressOptional = Boolean(settings?.addressOptional)
 
   // ── presign (per file selection) ────────────────────────────────────────
   function getPresign(file: File): Promise<PresignRes> {
@@ -59,6 +87,36 @@ export function RecordPaymentTab() {
         sizeBytes: file.size,
       })
       .then((r) => r.data)
+  }
+
+  // ── address save mutation ────────────────────────────────────────────────
+  const saveAddress = useMutation({
+    mutationFn: (data: AddressData) =>
+      api.put(`/admin/members/${selectedMember!.id}/address`, data).then((r) => r.data),
+    onSuccess: () => {
+      // Refresh the search results so the member row shows the updated address.
+      qc.invalidateQueries({ queryKey: ['admin-members-search'] })
+      // Update the selected member locally to reflect the saved address immediately.
+      setSelectedMember((prev) =>
+        prev ? { ...prev, deliveryAddress: addrForm } : prev,
+      )
+      setEditingAddress(false)
+    },
+  })
+
+  function handleSaveAddress() {
+    const result = addressSchema.safeParse(addrForm)
+    if (!result.success) {
+      const errs: Partial<Record<keyof AddressData, string>> = {}
+      for (const issue of result.error.issues) {
+        const key = issue.path[0] as keyof AddressData
+        if (!errs[key]) errs[key] = issue.message
+      }
+      setAddrErrors(errs)
+      return
+    }
+    setAddrErrors({})
+    saveAddress.mutate(result.data)
   }
 
   // ── submit mutation ──────────────────────────────────────────────────────
@@ -91,6 +149,7 @@ export function RecordPaymentTab() {
   function handleSubmit() {
     setSubmitError('')
     if (!selectedMember || !selectedProduct || !paymentRef.trim()) return
+    if (!addressOptional && !memberHasAddress) return
     submit.mutate()
   }
 
@@ -102,6 +161,9 @@ export function RecordPaymentTab() {
     setPaymentRef('')
     setSubmitError('')
     setSuccessState(null)
+    setEditingAddress(false)
+    setAddrForm({ recipientName: '', phone: '', line1: '', line2: '', city: '', state: '', pincode: '' })
+    setAddrErrors({})
   }
 
   // ── success screen ───────────────────────────────────────────────────────
@@ -209,6 +271,116 @@ export function RecordPaymentTab() {
         )}
       </div>
 
+      {/* ── Step 1b: Delivery Address ──────────────────────────────────── */}
+      {selectedMember && (
+        <div className="avg-card p-5 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <MapPin size={15} className="text-primary" />
+              <h3 className="text-sm font-semibold text-ink">{t('admin.recordPayment.addressTitle')}</h3>
+            </div>
+            {/* Management can always edit */}
+            {memberHasAddress && !editingAddress && (
+              <button
+                onClick={() => {
+                  const a = selectedMember.deliveryAddress!
+                  setAddrForm({
+                    recipientName: a.recipientName,
+                    phone: a.phone,
+                    line1: a.line1,
+                    line2: a.line2 ?? '',
+                    city: a.city,
+                    state: a.state,
+                    pincode: a.pincode,
+                  })
+                  setEditingAddress(true)
+                }}
+                className="flex items-center gap-1 text-xs text-primary hover:underline cursor-pointer"
+              >
+                <Pencil size={11} />
+                {t('admin.recordPayment.addressEdit')}
+              </button>
+            )}
+          </div>
+
+          {/* Show existing address read-only (unless editing) */}
+          {memberHasAddress && !editingAddress && selectedMember.deliveryAddress && (
+            <div className="rounded-xl bg-white/5 border border-surface-line p-3 space-y-0.5 text-sm">
+              <p className="font-semibold text-ink">{selectedMember.deliveryAddress.recipientName}</p>
+              <p className="text-xs text-ink-muted">{selectedMember.deliveryAddress.phone}</p>
+              <p className="text-xs text-ink-muted">{selectedMember.deliveryAddress.line1}{selectedMember.deliveryAddress.line2 ? `, ${selectedMember.deliveryAddress.line2}` : ''}</p>
+              <p className="text-xs text-ink-muted">{selectedMember.deliveryAddress.city}, {selectedMember.deliveryAddress.state} — {selectedMember.deliveryAddress.pincode}</p>
+            </div>
+          )}
+
+          {/* No address yet — warn and show form */}
+          {(!memberHasAddress || editingAddress) && (
+            <div className="space-y-3">
+              {!memberHasAddress && (
+                <div
+                  className="flex items-start gap-2.5 rounded-xl p-3"
+                  style={{ background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.2)' }}
+                >
+                  <AlertTriangle size={13} className="shrink-0 mt-0.5 text-warning" />
+                  <p className="text-xs text-warning/90">{t('admin.recordPayment.addressMissing')}</p>
+                </div>
+              )}
+
+              {/* Inline address form */}
+              <div className="space-y-2">
+                {(
+                  [
+                    { field: 'recipientName' as const, label: t('admin.recordPayment.addrRecipient'), placeholder: 'Full name' },
+                    { field: 'phone' as const, label: t('admin.recordPayment.addrPhone'), placeholder: '10-digit mobile' },
+                    { field: 'line1' as const, label: t('admin.recordPayment.addrLine1'), placeholder: 'Street / house / flat' },
+                    { field: 'line2' as const, label: t('admin.recordPayment.addrLine2'), placeholder: 'Landmark (optional)' },
+                    { field: 'city' as const, label: t('admin.recordPayment.addrCity'), placeholder: 'City' },
+                    { field: 'state' as const, label: t('admin.recordPayment.addrState'), placeholder: 'State' },
+                    { field: 'pincode' as const, label: t('admin.recordPayment.addrPincode'), placeholder: '6-digit pincode' },
+                  ] as const
+                ).map(({ field, label, placeholder }) => (
+                  <div key={field} className="space-y-1">
+                    <label className="block text-xs font-medium text-ink">{label}</label>
+                    <input
+                      value={addrForm[field] ?? ''}
+                      onChange={(e) => setAddrForm((f) => ({ ...f, [field]: e.target.value }))}
+                      placeholder={placeholder}
+                      maxLength={field === 'pincode' ? 6 : undefined}
+                      className="w-full bg-white/5 border border-surface-line rounded-xl px-3 py-2 text-sm text-ink placeholder-ink-muted outline-none focus:border-primary/60 transition-colors"
+                    />
+                    {addrErrors[field] && (
+                      <p className="text-xs text-danger">{addrErrors[field]}</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleSaveAddress}
+                  disabled={saveAddress.isPending}
+                  className="avg-btn-primary py-2 px-4 flex items-center gap-2 text-sm"
+                >
+                  {saveAddress.isPending && <Loader2 size={13} className="animate-spin" />}
+                  {t('admin.recordPayment.addressSave')}
+                </button>
+                {editingAddress && (
+                  <button
+                    onClick={() => setEditingAddress(false)}
+                    className="text-sm text-ink-muted hover:text-ink transition-colors cursor-pointer"
+                  >
+                    {t('admin.recordPayment.addressCancel')}
+                  </button>
+                )}
+                {saveAddress.isError && (
+                  <p className="text-xs text-danger">{t('errors.generic')}</p>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ── Step 2: Product picker ──────────────────────────────────────── */}
       {selectedMember && (
         <div className="avg-card p-5 space-y-3">
@@ -284,7 +456,7 @@ export function RecordPaymentTab() {
           )}
           <button
             onClick={handleSubmit}
-            disabled={submit.isPending || !paymentRef.trim()}
+            disabled={submit.isPending || !paymentRef.trim() || (!addressOptional && !memberHasAddress)}
             className="avg-btn-primary w-full py-3 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {submit.isPending && <Loader2 size={15} className="animate-spin" />}

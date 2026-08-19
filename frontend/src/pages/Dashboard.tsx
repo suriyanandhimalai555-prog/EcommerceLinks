@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import {
   Wallet, GitMerge, TrendingUp, Clock, ArrowUpRight, ShoppingBag,
-  ChevronRight, Info, Trophy, UserPlus, Users, AlertCircle,
+  ChevronRight, Info, Trophy, UserPlus, Users, AlertCircle, MapPin,
 } from 'lucide-react'
 import {
   ResponsiveContainer, XAxis, YAxis, CartesianGrid,
@@ -84,6 +84,23 @@ export default function Dashboard() {
         <h1 className="text-xl font-bold text-ink">{t('dashboard.totalIncome')} Overview</h1>
         <p className="text-sm text-ink-muted">Welcome back, {meData?.name ?? '—'} 👋</p>
       </div>
+
+      {/* Address banner — shown to active members who haven't set their address yet */}
+      {meData?.isActive && !meData?.deliveryAddress && (
+        <div className="flex items-start gap-3 bg-primary/8 border border-primary/20 rounded-2xl p-4">
+          <MapPin size={16} className="text-primary shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-ink">{t('dashboard.addressBannerTitle')}</p>
+            <p className="text-xs text-ink-muted mt-0.5">{t('dashboard.addressBannerHint')}</p>
+          </div>
+          <Link
+            to="/profile/address"
+            className="shrink-0 text-xs font-semibold text-primary underline underline-offset-2 mt-0.5"
+          >
+            {t('dashboard.addressBannerCta')}
+          </Link>
+        </div>
+      )}
 
       {/* Row 1: Stat Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">

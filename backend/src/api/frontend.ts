@@ -30,6 +30,7 @@ import {
 	imagesByProduct,
 } from "../services/productService.js";
 import { getSetting } from "../services/settings.js";
+import { AddressBody, isCompleteAddress } from "../lib/address.js";
 
 // Display names the frontend expects (index 1..12)
 const RANK_NAMES: Record<number, string> = {
@@ -76,11 +77,20 @@ export async function buildMe(memberId: string) {
 		bank_account_number: string | null;
 		bank_ifsc: string | null;
 		notifications_seen_at: string | null;
+		addr_recipient_name: string | null;
+		addr_phone: string | null;
+		addr_line1: string | null;
+		addr_line2: string | null;
+		addr_city: string | null;
+		addr_state: string | null;
+		addr_pincode: string | null;
 	}>(
 		`SELECT m.member_code, m.name, m.phone, m.email, m.kyc_status, m.bank_status,
             m.is_active, m.created_at, m.role, m.blocked, s.member_code AS sponsor_code,
             m.pan, m.aadhaar_last4, m.bank_account_name, m.bank_account_number, m.bank_ifsc,
-            m.notifications_seen_at
+            m.notifications_seen_at,
+            m.addr_recipient_name, m.addr_phone, m.addr_line1, m.addr_line2,
+            m.addr_city, m.addr_state, m.addr_pincode
      FROM members m LEFT JOIN members s ON s.id = m.sponsor_id
      WHERE m.id = $1`,
 		[memberId],
@@ -117,6 +127,19 @@ export async function buildMe(memberId: string) {
 		kycMandatory: !kycOptional,
 		// Server-side "notifications seen" timestamp — drives cross-device badge state.
 		notificationsSeenAt: m.notifications_seen_at ?? null,
+		// Delivery address — set once by the member; editable only by management.
+		// null fields means the member has not yet set their address.
+		deliveryAddress: m.addr_recipient_name
+			? {
+				recipientName: m.addr_recipient_name,
+				phone:         m.addr_phone ?? "",
+				line1:         m.addr_line1 ?? "",
+				line2:         m.addr_line2 ?? undefined,
+				city:          m.addr_city ?? "",
+				state:         m.addr_state ?? "",
+				pincode:       m.addr_pincode ?? "",
+			}
+			: null,
 	};
 }
 
@@ -563,6 +586,48 @@ export async function frontendRoutes(app: FastifyInstance) {
 		return reply.send(me);
 	});
 
+	// PUT /me/address — member sets their delivery address exactly once.
+	// Write-once: a second call is rejected with 409 ADDRESS_ALREADY_SET.
+	// Management can always update it via PUT /admin/members/:id/address.
+	app.put("/me/address", auth, async (req, reply) => {
+		const body = AddressBody.safeParse(req.body);
+		if (!body.success)
+			return reply.status(400).send({ error: body.error.flatten() });
+		const memberId = (req.user as Auth).sub;
+
+		// Enforce write-once: read current row and reject if address is already set.
+		const { rows: cur } = await pool().query<{
+			addr_recipient_name: string | null;
+		}>(
+			"SELECT addr_recipient_name FROM members WHERE id = $1",
+			[memberId],
+		);
+		if (cur[0]?.addr_recipient_name) {
+			return reply.status(409).send({
+				error: { code: "ADDRESS_ALREADY_SET", message: "Address has already been set and cannot be changed. Contact management to update it." },
+			});
+		}
+
+		await pool().query(
+			`UPDATE members
+			    SET addr_recipient_name = $2, addr_phone = $3, addr_line1 = $4,
+			        addr_line2 = $5, addr_city = $6, addr_state = $7, addr_pincode = $8
+			  WHERE id = $1`,
+			[
+				memberId,
+				body.data.recipientName,
+				body.data.phone,
+				body.data.line1,
+				body.data.line2 ?? null,
+				body.data.city,
+				body.data.state,
+				body.data.pincode,
+			],
+		);
+		const me = await buildMe(memberId);
+		return reply.send(me);
+	});
+
 	// ===== products & orders =====
 	app.get("/products", async () => {
 		const { rows } = await pool().query<{
@@ -653,6 +718,29 @@ export async function frontendRoutes(app: FastifyInstance) {
 					error: {
 						code: "KYC_REQUIRED",
 						message: "KYC verification is required before purchase",
+					},
+				});
+		}
+
+		// Address gate — skipped when management has enabled the address_optional toggle.
+		const addressOptionalFlag = await getSetting<boolean>("address_optional");
+		if (!addressOptionalFlag) {
+			const { rows: addrRows } = await pool().query<{
+				addr_recipient_name: string | null;
+				addr_phone: string | null;
+				addr_line1: string | null;
+				addr_city: string | null;
+				addr_state: string | null;
+				addr_pincode: string | null;
+			}>(
+				"SELECT addr_recipient_name, addr_phone, addr_line1, addr_city, addr_state, addr_pincode FROM members WHERE id = $1",
+				[memberId],
+			);
+			if (!isCompleteAddress(addrRows[0] ?? {}))
+				return reply.status(409).send({
+					error: {
+						code: "ADDRESS_REQUIRED",
+						message: "A delivery address is required before purchase. Please set it in your profile.",
 					},
 				});
 		}

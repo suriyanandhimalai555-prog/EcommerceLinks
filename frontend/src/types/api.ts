@@ -1,4 +1,16 @@
 // ---- auth ----
+
+/** Delivery address stored on a member (set once by them; editable by management). */
+export interface DeliveryAddress {
+  recipientName: string
+  phone: string
+  line1: string
+  line2?: string
+  city: string
+  state: string
+  pincode: string
+}
+
 export interface Me {
   memberCode: string
   name: string
@@ -25,6 +37,9 @@ export interface Me {
   /** Server-side "notifications last seen" ISO timestamp. null = never seen.
    *  Drives the bell's unread count so read-state is consistent across devices. */
   notificationsSeenAt?: string | null
+  /** Delivery address — null until the member sets it (write-once for members;
+   *  management can always edit it). */
+  deliveryAddress?: DeliveryAddress | null
 }
 
 // ---- system settings (management) ----
@@ -37,6 +52,8 @@ export interface SystemSettings {
   loginOtpEnabled: boolean
   /** When true, registration requires email-OTP verification before the account is created. */
   registerOtpEnabled: boolean
+  /** When true, a delivery address is not required before placing an order. Default false = mandatory. */
+  addressOptional: boolean
 }
 
 /** Returned by POST /auth/register or POST /auth/login when OTP is required. */
@@ -475,6 +492,8 @@ export interface AdminMemberRow {
   /** Sponsor (who referred this member). Null for the tree root and management. */
   sponsorCode: string | null
   sponsorName: string | null
+  /** Delivery address on file for this member. Null = not yet set. */
+  deliveryAddress: DeliveryAddress | null
 }
 
 export interface AdminMembersPage {

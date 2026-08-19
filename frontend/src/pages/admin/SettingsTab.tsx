@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { ShieldCheck, Mail, Lock, LockOpen, AlertCircle, Loader2, UserCheck } from 'lucide-react'
+import { ShieldCheck, Mail, Lock, LockOpen, AlertCircle, Loader2, UserCheck, MapPin } from 'lucide-react'
 import api from '../../lib/api'
 import type { SystemSettings } from '../../types/api'
 import { PasswordTab } from '../profile/PasswordTab'
@@ -70,6 +70,7 @@ export function SettingsTab() {
   const welcomeEmailEnabled = settings?.welcomeEmailEnabled ?? false
   const loginOtpEnabled = settings?.loginOtpEnabled ?? false
   const registerOtpEnabled = settings?.registerOtpEnabled ?? false
+  const addressOptional = settings?.addressOptional ?? false
 
   return (
     <div className="space-y-6 max-w-2xl">
@@ -112,6 +113,45 @@ export function SettingsTab() {
               on={kycOptional}
               labelOn={t('adminSettings.statusOptional')}
               labelOff={t('adminSettings.statusMandatory')}
+            />
+          </div>
+        )}
+      </div>
+
+      {/* ── Delivery address toggle card ── */}
+      <div className="avg-card p-5 space-y-4">
+        <div className="flex items-center gap-2">
+          <MapPin size={16} className="text-primary" />
+          <h3 className="text-sm font-semibold text-ink">{t('adminSettings.addressSection')}</h3>
+        </div>
+
+        <div className="flex items-center justify-between gap-4">
+          <div className="space-y-0.5">
+            <p className="text-sm text-ink">{t('adminSettings.addressToggleLabel')}</p>
+            <p className="text-xs text-ink-muted">{t('adminSettings.addressToggleHint')}</p>
+          </div>
+          {isPending ? (
+            <Loader2 size={20} className="animate-spin text-ink-muted shrink-0" />
+          ) : (
+            <div className="flex items-center gap-2 shrink-0">
+              {update.isPending && <Loader2 size={14} className="animate-spin text-ink-muted" />}
+              <ToggleSwitch
+                checked={addressOptional}
+                onChange={(v) => update.mutate({ addressOptional: v })}
+                disabled={update.isPending}
+                label={t('adminSettings.addressToggleLabel')}
+              />
+            </div>
+          )}
+        </div>
+
+        {!isPending && (
+          <div className="flex items-center gap-2 pt-1 border-t border-white/5">
+            <span className="text-xs text-ink-muted">{t('adminSettings.currentStatus')}</span>
+            <StatusBadge
+              on={addressOptional}
+              labelOn={t('adminSettings.addressStatusOptional')}
+              labelOff={t('adminSettings.addressStatusMandatory')}
             />
           </div>
         )}

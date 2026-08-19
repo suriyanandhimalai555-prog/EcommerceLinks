@@ -9,6 +9,7 @@ import { PersonalTab } from './profile/PersonalTab'
 import { KycTab } from './profile/KycTab'
 import { BankTab } from './profile/BankTab'
 import { PasswordTab } from './profile/PasswordTab'
+import { AddressTab } from './profile/AddressTab'
 
 function initials(name: string) {
   return name.split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 2)
@@ -18,6 +19,7 @@ const tabs = [
   { path: '/profile', label: 'Personal', end: true },
   { path: '/profile/kyc', label: 'KYC', end: false },
   { path: '/profile/bank', label: 'Bank', end: false },
+  { path: '/profile/address', label: 'Address', end: false },
   { path: '/profile/password', label: 'Password', end: false },
 ]
 
@@ -86,6 +88,7 @@ export default function Profile() {
             <Route index element={<PersonalTab />} />
             <Route path="kyc" element={<KycTab />} />
             <Route path="bank" element={<BankTab />} />
+            <Route path="address" element={<AddressTab />} />
             <Route path="password" element={<PasswordTab />} />
             <Route path="*" element={<Navigate to="/profile" replace />} />
           </Routes>

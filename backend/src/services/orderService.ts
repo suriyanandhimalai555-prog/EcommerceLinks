@@ -18,15 +18,33 @@ export async function confirmOrder(
 ): Promise<{ activated: boolean }> {
 	let activated = false;
 	await withTxn(async (c) => {
+		// Confirm the order and snapshot the member's current delivery address into
+		// the order's ship_* columns in one UPDATE … FROM.  Using a JOIN on member_id
+		// guarantees the address reflects whatever the admin last set, even when
+		// createOrder() returned a pre-existing order (dedup path).
 		const { rowCount, rows } = await c.query<{
 			member_id: string;
 			product_id: string;
 			base_amount: string;
 			status: string;
 		}>(
-			`UPDATE orders SET status = 'confirmed', confirmed_at = now(), payment_ref = $1
-       WHERE id = $2 AND idempotency_key = $3 AND status IN ('created','paid')
-       RETURNING member_id, product_id, base_amount, status`,
+			`UPDATE orders o
+			    SET status        = 'confirmed',
+			        confirmed_at  = now(),
+			        payment_ref   = $1,
+			        ship_recipient_name = m.addr_recipient_name,
+			        ship_phone          = m.addr_phone,
+			        ship_line1          = m.addr_line1,
+			        ship_line2          = m.addr_line2,
+			        ship_city           = m.addr_city,
+			        ship_state          = m.addr_state,
+			        ship_pincode        = m.addr_pincode
+			   FROM members m
+			  WHERE o.id = $2
+			    AND o.member_id = m.id
+			    AND o.idempotency_key = $3
+			    AND o.status IN ('created','paid')
+			  RETURNING o.member_id, o.product_id, o.base_amount, o.status`,
 			[paymentRef, orderId, gatewayEventId],
 		);
 		if (!rowCount || rowCount === 0) return; // already confirmed or not found

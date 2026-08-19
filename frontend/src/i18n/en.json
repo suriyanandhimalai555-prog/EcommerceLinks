@@ -54,7 +54,12 @@
     "otpStatusOff": "OTP login disabled",
     "registerOtpSection": "Registration Email Verification",
     "registerOtpToggleLabel": "Verify email before creating account",
-    "registerOtpToggleHint": "When ON, a 6-digit code is sent to the email entered during sign-up. The account is only created after the code is verified."
+    "registerOtpToggleHint": "When ON, a 6-digit code is sent to the email entered during sign-up. The account is only created after the code is verified.",
+    "addressSection": "Delivery Address Policy",
+    "addressToggleLabel": "Make delivery address optional for purchases",
+    "addressToggleHint": "When ON, members can buy products without setting a delivery address. Default OFF = address is mandatory.",
+    "addressStatusOptional": "Address optional",
+    "addressStatusMandatory": "Address mandatory"
   },
   "counters": {
     "active": "Active",
@@ -90,7 +95,10 @@
     "recentTransactions": "Recent Transactions",
     "rankStatus": "Rank & Status",
     "referEarn": "Refer & Earn",
-    "pendingBonus": "Pending Bonus"
+    "pendingBonus": "Pending Bonus",
+    "addressBannerTitle": "Add your delivery address",
+    "addressBannerHint": "A delivery address is required before placing future orders. Set it now in your profile.",
+    "addressBannerCta": "Add address →"
   },
   "auth": {
     "sessionExpired": "Your session has expired. Please log in again.",
@@ -182,7 +190,11 @@
     "proofUploaded": "Payment screenshot received — our team will review and activate your account shortly.",
     "alreadyActive": "Additional purchase — does not create a second activation.",
     "kycRequired": "KYC verification is required before you can buy. Upload your document and wait for approval.",
-    "kycRequiredCta": "Complete KYC"
+    "kycRequiredCta": "Complete KYC",
+    "addressRequired": "Delivery address required",
+    "addressRequiredHint": "Please set your delivery address before placing an order.",
+    "addressRequiredCta": "Set Address →",
+    "deliverTo": "Deliver to"
   },
   "profile": {
     "kycUploadTitle": "KYC Documents",
@@ -190,7 +202,30 @@
     "kycDocType": "Document type",
     "kycDocOther": "Other",
     "kycDocuments": "Uploaded documents",
-    "kycDocDelete": "Remove document"
+    "kycDocDelete": "Remove document",
+    "address": {
+      "title": "Delivery Address",
+      "hint": "Set your delivery address. This can only be set once — contact management if you need it changed.",
+      "recipientName": "Recipient Name",
+      "recipientNamePlaceholder": "Full name of the person receiving the delivery",
+      "phone": "Contact Phone",
+      "phonePlaceholder": "10-digit mobile number",
+      "line1": "Address Line 1",
+      "line1Placeholder": "House / flat / street / building",
+      "line2": "Address Line 2 (optional)",
+      "line2Placeholder": "Landmark, area, etc.",
+      "city": "City",
+      "cityPlaceholder": "City",
+      "state": "State",
+      "statePlaceholder": "State",
+      "pincode": "Pincode",
+      "save": "Save Address",
+      "saved": "Address saved successfully.",
+      "lockedTitle": "Delivery Address",
+      "lockedNotice": "Your delivery address has been saved and cannot be changed. If you need to update it, please contact management.",
+      "warningTitle": "Read carefully before saving",
+      "warningBody": "Once you save your delivery address it is permanent and cannot be changed by you. Double-check every field — if you need a correction after saving, you must contact management."
+    }
   },
   "uploader": {
     "add": "Add image",
@@ -437,7 +472,19 @@
       "submit": "Confirm & Activate",
       "successActivated": "Member Activated!",
       "successAlreadyActive": "Payment Recorded",
-      "recordAnother": "Record Another Payment"
+      "recordAnother": "Record Another Payment",
+      "addressTitle": "Delivery Address",
+      "addressMissing": "This member has no delivery address on file. Set it below before activating.",
+      "addressEdit": "Edit",
+      "addressSave": "Save Address",
+      "addressCancel": "Cancel",
+      "addrRecipient": "Recipient Name",
+      "addrPhone": "Contact Phone",
+      "addrLine1": "Address Line 1",
+      "addrLine2": "Address Line 2 (optional)",
+      "addrCity": "City",
+      "addrState": "State",
+      "addrPincode": "Pincode"
     },
     "orders": {
       "title": "Orders",

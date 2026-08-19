@@ -4,7 +4,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { CFG } from "../config.js";
 import { pool, withTxn } from "../lib/db.js";
-import { getAllSettings, setSetting } from "../services/settings.js";
+import { getAllSettings, getSetting, setSetting } from "../services/settings.js";
 import { fromPaise, pctRoundUp, toPaise } from "../lib/money.js";
 // DLQ replay is a sanctioned re-delivery of an already-published event — not a
 // new producer; consumers stay safe via processed_events idempotency.
@@ -31,6 +31,7 @@ import {
 import { postLedgerTxn } from "../workers/ledger.js";
 import { confirmOrder, createOrder } from "../services/orderService.js";
 import { deleteInactiveMember } from "../services/placement.js";
+import { AddressBody, isCompleteAddress } from "../lib/address.js";
 
 export async function adminRoutes(app: FastifyInstance) {
 	const auth = { preHandler: [app.requireAdmin] };
@@ -1227,11 +1228,20 @@ export async function adminRoutes(app: FastifyInstance) {
 			has_documents: boolean;
 			sponsor_code: string | null;
 			sponsor_name: string | null;
+			addr_recipient_name: string | null;
+			addr_phone: string | null;
+			addr_line1: string | null;
+			addr_line2: string | null;
+			addr_city: string | null;
+			addr_state: string | null;
+			addr_pincode: string | null;
 		}>(
 			`SELECT m.id, m.member_code, m.name, m.phone, m.email,
 			        m.is_active, m.is_qualified, m.role, m.kyc_status, m.bank_status, m.blocked, m.created_at,
 			        (SELECT COUNT(*) > 0 FROM kyc_documents kd WHERE kd.member_id = m.id) AS has_documents,
-			        sp.member_code AS sponsor_code, sp.name AS sponsor_name
+			        sp.member_code AS sponsor_code, sp.name AS sponsor_name,
+			        m.addr_recipient_name, m.addr_phone, m.addr_line1, m.addr_line2,
+			        m.addr_city, m.addr_state, m.addr_pincode
 			 FROM members m
 			 LEFT JOIN members sp ON sp.id = m.sponsor_id
 			 ${where}
@@ -1256,6 +1266,17 @@ export async function adminRoutes(app: FastifyInstance) {
 				hasDocuments: m.has_documents,
 				sponsorCode: m.sponsor_code,
 				sponsorName: m.sponsor_name,
+				deliveryAddress: m.addr_recipient_name
+					? {
+						recipientName: m.addr_recipient_name,
+						phone:         m.addr_phone ?? "",
+						line1:         m.addr_line1 ?? "",
+						line2:         m.addr_line2 ?? undefined,
+						city:          m.addr_city ?? "",
+						state:         m.addr_state ?? "",
+						pincode:       m.addr_pincode ?? "",
+					}
+					: null,
 			})),
 			total,
 			page,
@@ -1338,6 +1359,72 @@ export async function adminRoutes(app: FastifyInstance) {
 			if (e.statusCode === 403) return reply.status(403).send({ error: e.message });
 			throw err;
 		}
+		return { ok: true };
+	});
+
+	// PUT /admin/members/:id/address — management can set or update any member's
+	// delivery address at any time (no write-once restriction; audit-logged).
+	app.put("/members/:id/address", auth, async (req, reply) => {
+		const { id } = req.params as { id: string };
+		const body = AddressBody.safeParse(req.body);
+		if (!body.success)
+			return reply.status(400).send({ error: body.error.flatten() });
+
+		const actor = req.user as { sub: string };
+		if (!(await isManagement(actor.sub)))
+			return reply.status(403).send({ error: "Management only" });
+
+		const { rows: cur } = await pool().query<{
+			addr_recipient_name: string | null;
+			addr_phone: string | null;
+			addr_line1: string | null;
+			addr_city: string | null;
+			addr_state: string | null;
+			addr_pincode: string | null;
+		}>(
+			"SELECT addr_recipient_name, addr_phone, addr_line1, addr_city, addr_state, addr_pincode FROM members WHERE id=$1",
+			[id],
+		);
+		if (!cur[0])
+			return reply.status(404).send({ error: "Member not found" });
+
+		await withTxn(async (c) => {
+			await c.query(
+				`UPDATE members
+				    SET addr_recipient_name = $2, addr_phone = $3, addr_line1 = $4,
+				        addr_line2 = $5, addr_city = $6, addr_state = $7, addr_pincode = $8
+				  WHERE id = $1`,
+				[
+					id,
+					body.data.recipientName,
+					body.data.phone,
+					body.data.line1,
+					body.data.line2 ?? null,
+					body.data.city,
+					body.data.state,
+					body.data.pincode,
+				],
+			);
+			await c.query(
+				`INSERT INTO admin_audit_log
+				   (actor_id, action, target_type, target_id, before_state, after_state)
+				 VALUES ($1, 'set_address', 'member', $2, $3, $4)`,
+				[
+					actor.sub,
+					id,
+					{
+						addr_recipient_name: cur[0].addr_recipient_name,
+						addr_phone: cur[0].addr_phone,
+						addr_line1: cur[0].addr_line1,
+					},
+					{
+						addr_recipient_name: body.data.recipientName,
+						addr_phone: body.data.phone,
+						addr_line1: body.data.line1,
+					},
+				],
+			);
+		});
 		return { ok: true };
 	});
 
@@ -2692,6 +2779,7 @@ export async function adminRoutes(app: FastifyInstance) {
 			welcomeEmailEnabled: Boolean(raw["welcome_email_enabled"]),
 			loginOtpEnabled: Boolean(raw["login_otp_enabled"]),
 			registerOtpEnabled: Boolean(raw["register_otp_enabled"]),
+			addressOptional: Boolean(raw["address_optional"]),
 		};
 	});
 
@@ -2702,6 +2790,7 @@ export async function adminRoutes(app: FastifyInstance) {
 		welcomeEmailEnabled: z.boolean().optional(),
 		loginOtpEnabled: z.boolean().optional(),
 		registerOtpEnabled: z.boolean().optional(),
+		addressOptional: z.boolean().optional(),
 	});
 
 	app.patch("/settings", auth, async (req, reply) => {
@@ -2723,6 +2812,8 @@ export async function adminRoutes(app: FastifyInstance) {
 			patches.push({ dbKey: "login_otp_enabled", value: body.data.loginOtpEnabled });
 		if (body.data.registerOtpEnabled !== undefined)
 			patches.push({ dbKey: "register_otp_enabled", value: body.data.registerOtpEnabled });
+		if (body.data.addressOptional !== undefined)
+			patches.push({ dbKey: "address_optional", value: body.data.addressOptional });
 
 		if (patches.length === 0)
 			return reply.status(400).send({ error: "No settings fields provided" });
@@ -2759,6 +2850,7 @@ export async function adminRoutes(app: FastifyInstance) {
 			welcomeEmailEnabled: snapshot["welcome_email_enabled"] ?? false,
 			loginOtpEnabled: snapshot["login_otp_enabled"] ?? false,
 			registerOtpEnabled: snapshot["register_otp_enabled"] ?? false,
+			addressOptional: snapshot["address_optional"] ?? false,
 		};
 	});
 
@@ -2819,8 +2911,19 @@ export async function adminRoutes(app: FastifyInstance) {
 			return reply.status(403).send({ error: "Management only" });
 
 		// Resolve target member — must exist and must not be another management account.
-		const { rows: mRows } = await pool().query<{ id: string; role: string }>(
-			"SELECT id, role FROM members WHERE id = $1",
+		const { rows: mRows } = await pool().query<{
+			id: string;
+			role: string;
+			addr_recipient_name: string | null;
+			addr_phone: string | null;
+			addr_line1: string | null;
+			addr_city: string | null;
+			addr_state: string | null;
+			addr_pincode: string | null;
+		}>(
+			`SELECT id, role, addr_recipient_name, addr_phone, addr_line1,
+			        addr_city, addr_state, addr_pincode
+			   FROM members WHERE id = $1`,
 			[body.data.memberId],
 		);
 		if (!mRows[0])
@@ -2829,6 +2932,17 @@ export async function adminRoutes(app: FastifyInstance) {
 			return reply
 				.status(409)
 				.send({ error: "Cannot record payment for management account" });
+
+		// Address gate — management must set the member's address before activating
+		// (unless the address_optional flag is on).
+		const addrOptional = await getSetting<boolean>("address_optional");
+		if (!addrOptional && !isCompleteAddress(mRows[0]))
+			return reply.status(409).send({
+				error: {
+					code: "ADDRESS_REQUIRED",
+					message: "This member has no delivery address. Set it on this page before activating.",
+				},
+			});
 
 		// Create or reuse an open order for this member+product (KYC gate bypassed
 		// — management is confirming an offline payment, not gating purchase access).
