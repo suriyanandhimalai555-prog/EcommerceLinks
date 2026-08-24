@@ -149,6 +149,7 @@ export function WithdrawalsTab() {
       const headers = [
         t('admin.withdrawals.colCode'),
         t('admin.withdrawals.colName'),
+        t('admin.withdrawals.colMobile'),
         t('admin.withdrawals.colAmount'),
         t('admin.withdrawals.colNet'),
         t('admin.withdrawals.colStatus'),
@@ -165,6 +166,7 @@ export function WithdrawalsTab() {
       const rows = res.rows.map((r) => [
         r.memberCode,
         r.memberName,
+        r.memberPhone,
         (r.amountPaise / 100).toFixed(2),
         r.netPaise != null ? (r.netPaise / 100).toFixed(2) : '',
         r.status,
@@ -199,6 +201,7 @@ export function WithdrawalsTab() {
       render: (r) => <span className="font-mono text-xs font-semibold text-ink">{r.memberCode}</span>,
     },
     { key: 'name', header: t('admin.withdrawals.colName'), render: (r) => <span className="text-sm font-medium text-ink">{r.memberName}</span> },
+    { key: 'mobile', header: t('admin.withdrawals.colMobile'), render: (r) => <span className="font-mono text-xs text-ink-muted">{r.memberPhone}</span> },
     {
       key: 'amount', header: t('admin.withdrawals.colAmount'), align: 'right',
       render: (r) => <span className="font-bold text-sm">{formatINR(r.amountPaise)}</span>,

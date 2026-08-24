@@ -1,16 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Search, Loader2, ShieldCheck, ShieldOff, KeyRound, Wallet, UserCog, AlertTriangle, Trash2 } from 'lucide-react'
+import { Search, Loader2, ShieldCheck, ShieldOff, KeyRound, Wallet, UserCog, AlertTriangle, Trash2, Download } from 'lucide-react'
 import api from '../../lib/api'
 import { apiErrorMessage } from '../../lib/apiError'
 import { isManagement } from '../../lib/roles'
-import { formatDate } from '../../lib/format'
+import { formatDate, formatDateTime } from '../../lib/format'
+import { downloadCsv } from '../../lib/exportCsv'
 import { DataTable, type Column } from '../../components/ui/DataTable'
 import { Badge } from '../../components/ui/Badge'
 import { Modal } from '../../components/ui/Modal'
 import { FormField } from '../../components/ui/FormField'
-import type { AdminKycDetail, AdminMembersPage, AdminMemberRow, KycDocument, Me } from '../../types/api'
+import type { AdminKycDetail, AdminMembersPage, AdminMemberRow, AdminMembersExport, KycDocument, Me } from '../../types/api'
 
 export function MembersTab() {
   const { t } = useTranslation()
@@ -156,6 +157,49 @@ export function MembersTab() {
     onError: (err) => { setDeleteConfirm(false); fail(err) },
   })
 
+  const [exporting, setExporting] = useState(false)
+
+  const exportCSV = async () => {
+    setExporting(true)
+    try {
+      const params = new URLSearchParams({ q })
+      const res: AdminMembersExport = await api
+        .get(`/admin/members/export?${params}`)
+        .then((r) => r.data)
+      const headers = [
+        t('admin.members.exportColCode'),
+        t('admin.members.exportColName'),
+        t('admin.members.exportColMobile'),
+        t('admin.members.exportColEmail'),
+        t('admin.members.exportColSponsorCode'),
+        t('admin.members.exportColSponsorName'),
+        t('admin.members.exportColRole'),
+        t('admin.members.exportColKyc'),
+        t('admin.members.exportColBank'),
+        t('admin.members.exportColStatus'),
+        t('admin.members.exportColJoined'),
+        t('admin.members.exportColActivated'),
+      ]
+      const rows = res.rows.map((r) => [
+        r.memberCode,
+        r.name,
+        r.phone,
+        r.email ?? '',
+        r.sponsorCode ?? '',
+        r.sponsorName ?? '',
+        r.role,
+        r.kycStatus,
+        r.bankStatus,
+        r.blocked ? 'blocked' : r.isActive ? 'active' : 'inactive',
+        formatDate(r.createdAt),
+        r.activatedAt ? formatDateTime(r.activatedAt) : '',
+      ])
+      downloadCsv(`members-${formatDate(new Date().toISOString())}.csv`, headers, rows)
+    } finally {
+      setExporting(false)
+    }
+  }
+
   const columns: Column<AdminMemberRow>[] = [
     { key: 'code', header: 'Code', render: (r) => <span className="font-mono text-xs font-semibold text-ink">{r.memberCode}</span> },
     { key: 'name', header: 'Name', render: (r) => <span className="text-sm font-medium text-ink">{r.name}</span> },
@@ -184,6 +228,7 @@ export function MembersTab() {
         : r.isActive ? <Badge variant="success" size="sm">active</Badge> : <Badge variant="neutral" size="sm">inactive</Badge>,
     },
     { key: 'joined', header: 'Joined', render: (r) => <span className="text-xs text-ink-muted">{formatDate(r.createdAt)}</span> },
+    { key: 'activated', header: t('admin.members.colActivated'), render: (r) => <span className="text-xs text-ink-muted">{r.activatedAt ? formatDateTime(r.activatedAt) : '—'}</span> },
     {
       key: 'manage', header: '', align: 'right',
       render: (r) => <button onClick={() => openMember(r)} className="avg-btn-secondary py-1.5 px-3 text-xs"><UserCog size={12} /> Manage</button>,
@@ -193,7 +238,17 @@ export function MembersTab() {
   return (
     <div className="avg-card">
       <div className="p-5 pb-3">
-        <h2 className="text-sm font-semibold text-ink mb-3">Members</h2>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-3">
+          <h2 className="text-sm font-semibold text-ink">Members</h2>
+          <button
+            onClick={exportCSV}
+            disabled={exporting}
+            className="avg-btn-secondary flex items-center gap-1.5 text-xs py-2 disabled:opacity-40 self-start sm:self-auto"
+          >
+            <Download size={13} />
+            {exporting ? t('admin.members.exporting') : t('admin.members.exportBtn')}
+          </button>
+        </div>
         <div className="relative max-w-md">
           <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted" />
           <input

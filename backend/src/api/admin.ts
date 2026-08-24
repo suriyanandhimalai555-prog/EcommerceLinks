@@ -552,6 +552,7 @@ export async function adminRoutes(app: FastifyInstance) {
 		const { rows } = await pool().query<{
 			member_code: string;
 			name: string;
+			member_phone: string | null;
 			amount: string;
 			tds: string | null;
 			net: string | null;
@@ -568,7 +569,7 @@ export async function adminRoutes(app: FastifyInstance) {
 			bank_account_number: string | null;
 			bank_ifsc: string | null;
 		}>(
-			`SELECT m.member_code, m.name,
+			`SELECT m.member_code, m.name, m.phone AS member_phone,
               w.amount, w.tds, w.net, w.status,
               w.requested_at, w.processed_at, w.bank_ref, w.notes,
               m.kyc_status, m.bank_status,
@@ -590,6 +591,7 @@ export async function adminRoutes(app: FastifyInstance) {
 			rows: rows.map((r) => ({
 				memberCode: r.member_code,
 				memberName: r.name,
+				memberPhone: r.member_phone ?? "",
 				amountPaise: Number(toPaise(r.amount)),
 				tdsPaise: r.tds ? Number(toPaise(r.tds)) : null,
 				netPaise: r.net ? Number(toPaise(r.net)) : null,
@@ -640,6 +642,7 @@ export async function adminRoutes(app: FastifyInstance) {
 			id: string;
 			member_code: string;
 			name: string;
+			member_phone: string | null;
 			kyc_status: string;
 			bank_status: string;
 			amount: string;
@@ -654,7 +657,7 @@ export async function adminRoutes(app: FastifyInstance) {
 			window_start: string | null;
 			window_end: string | null;
 		}>(
-			`SELECT w.id, m.member_code, m.name, m.kyc_status, m.bank_status,
+			`SELECT w.id, m.member_code, m.name, m.phone AS member_phone, m.kyc_status, m.bank_status,
               w.amount, w.tds, w.net,
               w.status, w.requested_at, w.processed_at, w.notes, w.payout_seq,
               c.id::text AS source_cutoff_id, c.window_start, c.window_end
@@ -717,6 +720,7 @@ export async function adminRoutes(app: FastifyInstance) {
 					id: r.id,
 					memberCode: r.member_code,
 					memberName: r.name,
+					memberPhone: r.member_phone ?? "",
 					kycStatus: r.kyc_status,
 					bankStatus: r.bank_status,
 					amountPaise: Number(toPaise(r.amount)),
@@ -1225,6 +1229,7 @@ export async function adminRoutes(app: FastifyInstance) {
 			bank_status: string;
 			blocked: boolean;
 			created_at: string;
+			activated_at: string | null;
 			has_documents: boolean;
 			sponsor_code: string | null;
 			sponsor_name: string | null;
@@ -1237,7 +1242,7 @@ export async function adminRoutes(app: FastifyInstance) {
 			addr_pincode: string | null;
 		}>(
 			`SELECT m.id, m.member_code, m.name, m.phone, m.email,
-			        m.is_active, m.is_qualified, m.role, m.kyc_status, m.bank_status, m.blocked, m.created_at,
+			        m.is_active, m.is_qualified, m.role, m.kyc_status, m.bank_status, m.blocked, m.created_at, m.activated_at,
 			        (SELECT COUNT(*) > 0 FROM kyc_documents kd WHERE kd.member_id = m.id) AS has_documents,
 			        sp.member_code AS sponsor_code, sp.name AS sponsor_name,
 			        m.addr_recipient_name, m.addr_phone, m.addr_line1, m.addr_line2,
@@ -1263,6 +1268,7 @@ export async function adminRoutes(app: FastifyInstance) {
 				bankStatus: m.bank_status,
 				blocked: m.blocked,
 				createdAt: m.created_at,
+				activatedAt: m.activated_at,
 				hasDocuments: m.has_documents,
 				sponsorCode: m.sponsor_code,
 				sponsorName: m.sponsor_name,
@@ -1281,6 +1287,91 @@ export async function adminRoutes(app: FastifyInstance) {
 			total,
 			page,
 			limit,
+		};
+	});
+
+	// GET /admin/members/export — all rows matching the current filters (no
+	// pagination) for CSV download. Mirrors the filter logic of GET /admin/members.
+	// Static path — must remain above any GET /members/:id if that is ever added.
+	app.get("/members/export", auth, async (req, _reply) => {
+		const query = req.query as {
+			q?: string;
+			kycStatus?: string;
+			bankStatus?: string;
+			active?: string;
+		};
+		const q = query.q ?? "";
+		const kycStatus = query.kycStatus;
+		const bankStatus = query.bankStatus;
+		const active = query.active;
+
+		const baseParams: unknown[] = [`%${q}%`, `%${q}%`, `%${q}%`];
+		let where = `WHERE (m.name ILIKE $1 OR m.phone LIKE $2 OR m.member_code ILIKE $3)`;
+		if (kycStatus) {
+			if (kycStatus === "awaiting") {
+				where += ` AND m.kyc_status = 'pending' AND EXISTS (SELECT 1 FROM kyc_documents kd WHERE kd.member_id = m.id) AND m.role NOT IN ('management', 'payout')`;
+			} else if (kycStatus === "pending") {
+				where += ` AND m.kyc_status = 'pending' AND NOT EXISTS (SELECT 1 FROM kyc_documents kd WHERE kd.member_id = m.id) AND m.role NOT IN ('management', 'payout')`;
+			} else {
+				baseParams.push(kycStatus);
+				where += ` AND m.kyc_status = $${baseParams.length} AND m.role NOT IN ('management', 'payout')`;
+			}
+		}
+		if (bankStatus) {
+			if (bankStatus === "awaiting") {
+				where += ` AND m.bank_status = 'pending' AND m.bank_account_number IS NOT NULL AND m.role NOT IN ('management', 'payout')`;
+			} else if (bankStatus === "pending") {
+				where += ` AND m.bank_status = 'pending' AND m.bank_account_number IS NULL AND m.role NOT IN ('management', 'payout')`;
+			} else {
+				baseParams.push(bankStatus);
+				where += ` AND m.bank_status = $${baseParams.length} AND m.role NOT IN ('management', 'payout')`;
+			}
+		}
+		if (active === "true")  where += ` AND m.is_active = true`;
+		if (active === "false") where += ` AND m.is_active = false`;
+
+		const { rows } = await pool().query<{
+			member_code: string;
+			name: string;
+			phone: string;
+			email: string | null;
+			is_active: boolean;
+			blocked: boolean;
+			role: string;
+			kyc_status: string;
+			bank_status: string;
+			created_at: string;
+			activated_at: string | null;
+			sponsor_code: string | null;
+			sponsor_name: string | null;
+		}>(
+			`SELECT m.member_code, m.name, m.phone, m.email,
+			        m.is_active, m.blocked, m.role, m.kyc_status, m.bank_status,
+			        m.created_at, m.activated_at,
+			        sp.member_code AS sponsor_code, sp.name AS sponsor_name
+			   FROM members m
+			   LEFT JOIN members sp ON sp.id = m.sponsor_id
+			   ${where}
+			   ORDER BY m.created_at DESC`,
+			baseParams,
+		);
+
+		return {
+			rows: rows.map((m) => ({
+				memberCode: m.member_code,
+				name: m.name,
+				phone: m.phone,
+				email: m.email,
+				isActive: m.is_active,
+				blocked: m.blocked,
+				role: m.role,
+				kycStatus: m.kyc_status,
+				bankStatus: m.bank_status,
+				createdAt: m.created_at,
+				activatedAt: m.activated_at,
+				sponsorCode: m.sponsor_code,
+				sponsorName: m.sponsor_name,
+			})),
 		};
 	});
 

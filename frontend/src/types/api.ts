@@ -346,6 +346,7 @@ export interface AdminWithdrawal {
   id: string
   memberCode: string
   memberName: string
+  memberPhone: string
   kycStatus: string
   bankStatus: string
   amountPaise: number
@@ -392,6 +393,7 @@ export interface AdminWithdrawalWeeksRes {
 export interface AdminWithdrawalExportRow {
   memberCode: string
   memberName: string
+  memberPhone: string
   amountPaise: number
   tdsPaise: number | null
   netPaise: number | null
@@ -488,12 +490,34 @@ export interface AdminMemberRow {
   bankStatus: 'pending' | 'verified' | 'rejected'
   blocked: boolean
   createdAt: string
+  /** ISO timestamp of when the member paid and was activated. Null = not yet activated. */
+  activatedAt: string | null
   hasDocuments: boolean
   /** Sponsor (who referred this member). Null for the tree root and management. */
   sponsorCode: string | null
   sponsorName: string | null
   /** Delivery address on file for this member. Null = not yet set. */
   deliveryAddress: DeliveryAddress | null
+}
+
+export interface AdminMemberExportRow {
+  memberCode: string
+  name: string
+  phone: string
+  email: string | null
+  isActive: boolean
+  blocked: boolean
+  role: string
+  kycStatus: string
+  bankStatus: string
+  createdAt: string
+  activatedAt: string | null
+  sponsorCode: string | null
+  sponsorName: string | null
+}
+
+export interface AdminMembersExport {
+  rows: AdminMemberExportRow[]
 }
 
 export interface AdminMembersPage {
