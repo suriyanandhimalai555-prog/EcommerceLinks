@@ -166,6 +166,10 @@ export interface AdminOrder {
   createdAt: string
   paymentRef?: string
   confirmedAt?: string
+  /** Set when management has marked physical delivery complete (status stays 'confirmed'). */
+  deliveredAt?: string
+  /** True when the customer has a complete delivery address on file. Returned for confirmed-queue rows. */
+  hasDeliveryAddress?: boolean
   /** Raw S3 keys for uploaded payment-proof screenshots — used by the edit modal to diff additions/removals. */
   paymentProofKeys?: string[]
   /** Short-lived presigned GET URLs for uploaded payment-proof screenshots (status=paid only). */
@@ -727,6 +731,10 @@ export interface AdminAllOrderRow {
   rejectionReason?: string
   createdAt: string
   confirmedAt?: string
+  /** Set when management has marked physical delivery complete. Status stays 'confirmed'. */
+  deliveredAt?: string
+  /** True when the member's live addr_* columns form a complete delivery address. */
+  hasDeliveryAddress?: boolean
 }
 
 export interface AdminOrdersPage {

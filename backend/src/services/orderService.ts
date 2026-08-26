@@ -82,6 +82,55 @@ export async function confirmOrder(
 }
 
 /**
+ * markDelivered — record that a confirmed order has been physically delivered.
+ *
+ * Only confirmed, not-yet-delivered orders are eligible (guard:
+ * status = 'confirmed' AND delivered_at IS NULL).  Returns rowCount so the
+ * caller can distinguish "ok" (1) from "already delivered or wrong status" (0).
+ *
+ * Idempotent: calling twice returns rowCount 0 on the second call — no data
+ * is changed and no error is thrown, letting the route reply 409.
+ */
+export async function markDelivered(
+	orderId: string,
+	actorId: string,
+): Promise<{ rowCount: number }> {
+	const { rowCount } = await pool().query(
+		`UPDATE orders
+		    SET delivered_at = now(),
+		        delivered_by = $2
+		  WHERE id = $1
+		    AND status = 'confirmed'
+		    AND delivered_at IS NULL`,
+		[orderId, actorId],
+	);
+	return { rowCount: rowCount ?? 0 };
+}
+
+/**
+ * unmarkDelivered — revert a delivered order back to "not yet delivered".
+ *
+ * Only orders that are confirmed AND already delivered (delivered_at IS NOT NULL)
+ * are eligible.  Returns rowCount so the route can distinguish ok (1) from
+ * "order not delivered / wrong status" (0).  No pipeline side-effects: status
+ * stays 'confirmed' throughout, so MemberActivated / counters / money are unaffected.
+ */
+export async function unmarkDelivered(
+	orderId: string,
+): Promise<{ rowCount: number }> {
+	const { rowCount } = await pool().query(
+		`UPDATE orders
+		    SET delivered_at = NULL,
+		        delivered_by = NULL
+		  WHERE id = $1
+		    AND status = 'confirmed'
+		    AND delivered_at IS NOT NULL`,
+		[orderId],
+	);
+	return { rowCount: rowCount ?? 0 };
+}
+
+/**
  * createOrder — find or create an open order for the given member + product.
  *
  * Encapsulates the pricing and the dedupe logic

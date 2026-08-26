@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { CheckCircle2, Loader2, Pencil, XCircle } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Loader2, Pencil, RotateCcw, Truck, XCircle } from 'lucide-react'
 import api from '../../lib/api'
 import { formatINR, formatDate } from '../../lib/format'
 import { isManagement } from '../../lib/roles'
@@ -15,12 +15,13 @@ import { RepeatBuyersTab } from './RepeatBuyersTab'
 
 const PAGE = 50
 
-type Filter = 'paid' | 'created' | 'confirmed'
+type Filter = 'paid' | 'created' | 'confirmed' | 'delivered'
 
 const FILTERS: { value: Filter; label: string }[] = [
   { value: 'paid',      label: 'filterPaid' },
   { value: 'created',   label: 'filterPending' },
   { value: 'confirmed', label: 'filterConfirmed' },
+  { value: 'delivered', label: 'filterDelivered' },
 ]
 
 export function OrdersTab() {
@@ -43,6 +44,12 @@ export function OrdersTab() {
   // Reject modal state (separate from approve)
   const [rejectTarget, setRejectTarget] = useState<AdminOrder | null>(null)
   const [rejectReason, setRejectReason] = useState('')
+
+  // Mark-delivered state — deliverTarget is set when showing the no-address warning modal
+  const [deliverTarget, setDeliverTarget] = useState<AdminOrder | null>(null)
+
+  // Revert-delivery state — revertTarget is set when showing the confirm-revert modal
+  const [revertTarget, setRevertTarget] = useState<AdminOrder | null>(null)
 
   // Edit modal state
   const [editTarget, setEditTarget] = useState<AdminOrder | null>(null)
@@ -123,6 +130,38 @@ export function OrdersTab() {
       setEditError(t('errors.generic'))
     },
   })
+
+  const markDelivered = useMutation({
+    mutationFn: (order: AdminOrder) =>
+      api.post(`/admin/orders/${order.orderId}/mark-delivered`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin', 'orders'] })
+      qc.invalidateQueries({ queryKey: ['admin-overview'] })
+      setDeliverTarget(null)
+    },
+  })
+
+  const unmarkDelivered = useMutation({
+    mutationFn: (order: AdminOrder) =>
+      api.post(`/admin/orders/${order.orderId}/unmark-delivered`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin', 'orders'] })
+      qc.invalidateQueries({ queryKey: ['admin-overview'] })
+      setRevertTarget(null)
+    },
+  })
+
+  // Called when the Mark Delivered button is clicked.
+  // If the customer has no delivery address on file → open the warning modal.
+  // Otherwise fire the mutation directly (no interruption needed).
+  function handleMarkDelivered(order: AdminOrder, e: React.MouseEvent) {
+    e.stopPropagation()
+    if (order.hasDeliveryAddress) {
+      markDelivered.mutate(order)
+    } else {
+      setDeliverTarget(order)
+    }
+  }
 
   function openEdit(order: AdminOrder, e: React.MouseEvent) {
     e.stopPropagation()
@@ -307,7 +346,7 @@ export function OrdersTab() {
     },
   ]
 
-  // ── Confirmed (history) columns ───────────────────────────────────────────
+  // ── Confirmed (awaiting delivery) columns ────────────────────────────────
   const confirmedColumns: Column<AdminOrder>[] = [
     {
       key: 'member',
@@ -346,7 +385,74 @@ export function OrdersTab() {
     {
       key: 'status',
       header: 'Status',
-      render: () => <Badge variant="success">Confirmed</Badge>,
+      render: () => <Badge variant="success">{t('admin.orders.statusConfirmed')}</Badge>,
+    },
+    {
+      key: 'actions',
+      header: '',
+      align: 'right',
+      render: (r) => (
+        <div className="flex items-center gap-2 justify-end">
+          <button
+            onClick={(e) => openEdit(r, e)}
+            className="py-1.5 px-3 text-xs rounded-lg border border-surface-line text-ink-muted font-semibold flex items-center gap-1.5 hover:bg-white/5 hover:text-ink transition-colors"
+          >
+            <Pencil size={12} />
+            {t('admin.orders.editBtn')}
+          </button>
+          <button
+            onClick={(e) => handleMarkDelivered(r, e)}
+            disabled={markDelivered.isPending}
+            className="py-1.5 px-3 text-xs rounded-lg border border-violet text-violet font-semibold flex items-center gap-1.5 hover:bg-violet/10 transition-colors disabled:opacity-50"
+          >
+            <Truck size={12} />
+            {t('admin.orders.markDeliveredBtn')}
+          </button>
+        </div>
+      ),
+    },
+  ]
+
+  // ── Delivered columns (read-only, shows when filter = 'delivered') ────────
+  const deliveredColumns: Column<AdminOrder>[] = [
+    {
+      key: 'member',
+      header: t('admin.orders.colMember'),
+      render: (r) => (
+        <div>
+          <p className="font-mono text-xs font-semibold text-ink">{r.memberCode}</p>
+          <p className="text-xs text-ink-muted mt-0.5">{r.memberName}</p>
+        </div>
+      ),
+    },
+    {
+      key: 'product',
+      header: t('admin.orders.colProduct'),
+      render: (r) => <span className="text-sm text-ink">{r.productName}</span>,
+    },
+    {
+      key: 'amount',
+      header: t('admin.orders.colAmount'),
+      render: (r) => <span className="text-sm font-semibold text-primary">{formatINR(r.totalPaise)}</span>,
+    },
+    {
+      key: 'paymentRef',
+      header: t('admin.orders.colPaymentRef'),
+      render: (r) => (
+        <span className="font-mono text-xs text-ink bg-white/5 px-2 py-0.5 rounded">
+          {r.paymentRef ?? '—'}
+        </span>
+      ),
+    },
+    {
+      key: 'confirmedAt',
+      header: t('admin.orders.colConfirmedAt'),
+      render: (r) => <span className="text-xs text-ink-muted">{r.confirmedAt ? formatDate(r.confirmedAt) : '—'}</span>,
+    },
+    {
+      key: 'status',
+      header: 'Status',
+      render: () => <Badge variant="violet">{t('admin.orders.statusDelivered')}</Badge>,
     },
     {
       key: 'actions',
@@ -354,24 +460,33 @@ export function OrdersTab() {
       align: 'right',
       render: (r) => (
         <button
-          onClick={(e) => openEdit(r, e)}
-          className="py-1.5 px-3 text-xs rounded-lg border border-surface-line text-ink-muted font-semibold flex items-center gap-1.5 hover:bg-white/5 hover:text-ink transition-colors"
+          onClick={(e) => { e.stopPropagation(); setRevertTarget(r) }}
+          disabled={unmarkDelivered.isPending}
+          className="py-1.5 px-3 text-xs rounded-lg border border-surface-line text-ink-muted font-semibold flex items-center gap-1.5 hover:bg-white/5 hover:text-ink transition-colors disabled:opacity-50"
         >
-          <Pencil size={12} />
-          {t('admin.orders.editBtn')}
+          <RotateCcw size={12} />
+          {t('admin.orders.revertDeliveredBtn')}
         </button>
       ),
     },
   ]
 
   const activeColumns =
-    filter === 'paid' ? paidColumns : filter === 'created' ? pendingColumns : confirmedColumns
+    filter === 'paid'
+      ? paidColumns
+      : filter === 'created'
+      ? pendingColumns
+      : filter === 'delivered'
+      ? deliveredColumns
+      : confirmedColumns
 
   const emptyTitle =
     filter === 'paid'
       ? t('admin.orders.paidEmptyTitle')
       : filter === 'created'
       ? t('admin.orders.emptyTitle')
+      : filter === 'delivered'
+      ? t('admin.orders.deliveredEmptyTitle')
       : t('admin.orders.confirmedEmptyTitle')
 
   const emptyDesc =
@@ -379,6 +494,8 @@ export function OrdersTab() {
       ? t('admin.orders.paidEmptyDesc')
       : filter === 'created'
       ? t('admin.orders.emptyDesc')
+      : filter === 'delivered'
+      ? t('admin.orders.deliveredEmptyDesc')
       : t('admin.orders.confirmedEmptyDesc')
 
   return (
@@ -576,6 +693,103 @@ export function OrdersTab() {
               >
                 {reject.isPending ? <Loader2 size={15} className="animate-spin" /> : <XCircle size={15} />}
                 {t('admin.orders.rejectConfirm')}
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* ── Mark Delivered — no-address warning modal ─────────────────────── */}
+      <Modal
+        open={!!deliverTarget}
+        onClose={() => setDeliverTarget(null)}
+        title={t('admin.orders.deliverNoAddressTitle')}
+        size="sm"
+      >
+        {deliverTarget && (
+          <div className="space-y-4">
+            <div className="flex items-start gap-3 bg-warning/10 border border-warning/30 rounded-xl p-4">
+              <AlertTriangle size={18} className="text-warning shrink-0 mt-0.5" />
+              <p className="text-sm text-ink">{t('admin.orders.deliverNoAddressWarning')}</p>
+            </div>
+
+            <div className="bg-white/5 rounded-xl p-4 space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-ink-muted">Member</span>
+                <span className="font-semibold text-ink">{deliverTarget.memberName} ({deliverTarget.memberCode})</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-ink-muted">Product</span>
+                <span className="text-ink">{deliverTarget.productName}</span>
+              </div>
+            </div>
+
+            {markDelivered.isError && (
+              <p className="text-xs text-danger">{t('errors.generic')}</p>
+            )}
+
+            <div className="flex gap-2">
+              <button
+                onClick={() => setDeliverTarget(null)}
+                disabled={markDelivered.isPending}
+                className="flex-1 py-2.5 rounded-xl border border-surface-line text-ink-muted text-sm font-semibold hover:bg-white/5 transition-colors"
+              >
+                {t('common.cancel')}
+              </button>
+              <button
+                onClick={() => markDelivered.mutate(deliverTarget)}
+                disabled={markDelivered.isPending}
+                className="flex-1 py-2.5 rounded-xl bg-violet text-white text-sm font-semibold flex items-center justify-center gap-2 hover:bg-violet/90 transition-colors disabled:opacity-50"
+              >
+                {markDelivered.isPending ? <Loader2 size={15} className="animate-spin" /> : <Truck size={15} />}
+                {t('admin.orders.deliverConfirmBtn')}
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* ── Revert delivery confirm modal ────────────────────────────────── */}
+      <Modal
+        open={!!revertTarget}
+        onClose={() => setRevertTarget(null)}
+        title={t('admin.orders.revertDeliveredTitle')}
+        size="sm"
+      >
+        {revertTarget && (
+          <div className="space-y-4">
+            <p className="text-sm text-ink-muted">{t('admin.orders.revertDeliveredWarning')}</p>
+
+            <div className="bg-white/5 rounded-xl p-4 space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-ink-muted">Member</span>
+                <span className="font-semibold text-ink">{revertTarget.memberName} ({revertTarget.memberCode})</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-ink-muted">Product</span>
+                <span className="text-ink">{revertTarget.productName}</span>
+              </div>
+            </div>
+
+            {unmarkDelivered.isError && (
+              <p className="text-xs text-danger">{t('errors.generic')}</p>
+            )}
+
+            <div className="flex gap-2">
+              <button
+                onClick={() => setRevertTarget(null)}
+                disabled={unmarkDelivered.isPending}
+                className="flex-1 py-2.5 rounded-xl border border-surface-line text-ink-muted text-sm font-semibold hover:bg-white/5 transition-colors"
+              >
+                {t('common.cancel')}
+              </button>
+              <button
+                onClick={() => unmarkDelivered.mutate(revertTarget)}
+                disabled={unmarkDelivered.isPending}
+                className="flex-1 py-2.5 rounded-xl bg-warning text-white text-sm font-semibold flex items-center justify-center gap-2 hover:bg-warning/90 transition-colors disabled:opacity-50"
+              >
+                {unmarkDelivered.isPending ? <Loader2 size={15} className="animate-spin" /> : <RotateCcw size={15} />}
+                {t('admin.orders.revertConfirmBtn')}
               </button>
             </div>
           </div>

@@ -1,15 +1,16 @@
 import { useEffect, useState } from 'react'
-import { useQuery, keepPreviousData } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Download, Loader2, Search } from 'lucide-react'
+import { AlertTriangle, Download, Loader2, RotateCcw, Search, Truck } from 'lucide-react'
 import api from '../../lib/api'
 import { downloadCsv } from '../../lib/exportCsv'
 import { formatINR, formatDate } from '../../lib/format'
 import { DataTable, type Column } from '../../components/ui/DataTable'
 import { Badge } from '../../components/ui/Badge'
+import { Modal } from '../../components/ui/Modal'
 import type { AdminAllOrderRow, AdminOrdersPage, AdminProduct } from '../../types/api'
 
-type StatusFilter = 'all' | 'created' | 'paid' | 'confirmed' | 'rejected' | 'failed' | 'refunded'
+type StatusFilter = 'all' | 'created' | 'paid' | 'confirmed' | 'delivered' | 'rejected' | 'failed' | 'refunded'
 
 const PAGE_SIZE = 20
 
@@ -18,12 +19,17 @@ const STATUS_PILLS: { key: StatusFilter; labelKey: string }[] = [
   { key: 'created',   labelKey: 'statusCreated' },
   { key: 'paid',      labelKey: 'statusPaid' },
   { key: 'confirmed', labelKey: 'statusConfirmed' },
+  { key: 'delivered', labelKey: 'statusDelivered' },
   { key: 'rejected',  labelKey: 'statusRejected' },
   { key: 'failed',    labelKey: 'statusFailed' },
   { key: 'refunded',  labelKey: 'statusRefunded' },
 ]
 
-function statusBadge(status: string, t: (k: string) => string) {
+function statusBadge(status: string, t: (k: string) => string, deliveredAt?: string) {
+  // A delivered order keeps status='confirmed'; show Delivered badge when deliveredAt is set.
+  if (status === 'confirmed' && deliveredAt) {
+    return <Badge variant="violet">{t('admin.orders.statusDelivered')}</Badge>
+  }
   switch (status) {
     case 'confirmed': return <Badge variant="success">{t('admin.orders.statusConfirmed')}</Badge>
     case 'paid':      return <Badge variant="warning">{t('admin.orders.statusPaid')}</Badge>
@@ -37,6 +43,42 @@ function statusBadge(status: string, t: (k: string) => string) {
 
 export function AllOrdersTab() {
   const { t } = useTranslation()
+  const qc = useQueryClient()
+
+  // Mark-delivered: null = no modal open; set to a row = show no-address warning modal.
+  const [deliverTarget, setDeliverTarget] = useState<AdminAllOrderRow | null>(null)
+  // Revert-delivery: set to a row to show the confirm-revert modal.
+  const [revertTarget, setRevertTarget] = useState<AdminAllOrderRow | null>(null)
+
+  const markDelivered = useMutation({
+    mutationFn: (row: AdminAllOrderRow) =>
+      api.post(`/admin/orders/${row.orderId}/mark-delivered`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin-orders-all'] })
+      qc.invalidateQueries({ queryKey: ['admin', 'orders'] })
+      qc.invalidateQueries({ queryKey: ['admin-overview'] })
+      setDeliverTarget(null)
+    },
+  })
+
+  const unmarkDelivered = useMutation({
+    mutationFn: (row: AdminAllOrderRow) =>
+      api.post(`/admin/orders/${row.orderId}/unmark-delivered`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin-orders-all'] })
+      qc.invalidateQueries({ queryKey: ['admin', 'orders'] })
+      qc.invalidateQueries({ queryKey: ['admin-overview'] })
+      setRevertTarget(null)
+    },
+  })
+
+  function handleMarkDelivered(row: AdminAllOrderRow) {
+    if (row.hasDeliveryAddress) {
+      markDelivered.mutate(row)
+    } else {
+      setDeliverTarget(row)
+    }
+  }
 
   // Search is debounced; other filters apply immediately.
   const [input, setInput] = useState('')
@@ -149,7 +191,7 @@ export function AllOrdersTab() {
     {
       key: 'status',
       header: t('admin.orders.allColStatus'),
-      render: (r) => statusBadge(r.status, t),
+      render: (r) => statusBadge(r.status, t, r.deliveredAt),
     },
     {
       key: 'paymentRef',
@@ -164,6 +206,38 @@ export function AllOrdersTab() {
       key: 'date',
       header: t('admin.orders.colDate'),
       render: (r) => <span className="text-xs text-ink-muted">{formatDate(r.createdAt)}</span>,
+    },
+    {
+      key: 'actions',
+      header: '',
+      align: 'right',
+      render: (r) => {
+        if (r.status === 'confirmed' && !r.deliveredAt) {
+          return (
+            <button
+              onClick={() => handleMarkDelivered(r)}
+              disabled={markDelivered.isPending}
+              className="py-1.5 px-3 text-xs rounded-lg border border-violet text-violet font-semibold flex items-center gap-1.5 hover:bg-violet/10 transition-colors disabled:opacity-50"
+            >
+              <Truck size={12} />
+              {t('admin.orders.markDeliveredBtn')}
+            </button>
+          )
+        }
+        if (r.status === 'confirmed' && r.deliveredAt) {
+          return (
+            <button
+              onClick={() => setRevertTarget(r)}
+              disabled={unmarkDelivered.isPending}
+              className="py-1.5 px-3 text-xs rounded-lg border border-surface-line text-ink-muted font-semibold flex items-center gap-1.5 hover:bg-white/5 hover:text-ink transition-colors disabled:opacity-50"
+            >
+              <RotateCcw size={12} />
+              {t('admin.orders.revertDeliveredBtn')}
+            </button>
+          )
+        }
+        return null
+      },
     },
   ]
 
@@ -291,6 +365,111 @@ export function AllOrdersTab() {
           </div>
         </div>
       )}
+
+      {/* ── Mark Delivered — no-address warning modal ────────────────────── */}
+      <Modal
+        open={!!deliverTarget}
+        onClose={() => setDeliverTarget(null)}
+        title={t('admin.orders.deliverNoAddressTitle')}
+        size="sm"
+      >
+        {deliverTarget && (
+          <div className="space-y-4">
+            <div className="flex items-start gap-3 bg-warning/10 border border-warning/30 rounded-xl p-4">
+              <AlertTriangle size={18} className="text-warning shrink-0 mt-0.5" />
+              <p className="text-sm text-ink">{t('admin.orders.deliverNoAddressWarning')}</p>
+            </div>
+
+            <div className="bg-white/5 rounded-xl p-4 space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-ink-muted">Member</span>
+                <span className="font-semibold text-ink">
+                  {deliverTarget.memberName} ({deliverTarget.memberCode})
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-ink-muted">Product</span>
+                <span className="text-ink">{deliverTarget.productName}</span>
+              </div>
+            </div>
+
+            {markDelivered.isError && (
+              <p className="text-xs text-danger">{t('errors.generic')}</p>
+            )}
+
+            <div className="flex gap-2">
+              <button
+                onClick={() => setDeliverTarget(null)}
+                disabled={markDelivered.isPending}
+                className="flex-1 py-2.5 rounded-xl border border-surface-line text-ink-muted text-sm font-semibold hover:bg-white/5 transition-colors"
+              >
+                {t('common.cancel')}
+              </button>
+              <button
+                onClick={() => markDelivered.mutate(deliverTarget)}
+                disabled={markDelivered.isPending}
+                className="flex-1 py-2.5 rounded-xl bg-violet text-white text-sm font-semibold flex items-center justify-center gap-2 hover:bg-violet/90 transition-colors disabled:opacity-50"
+              >
+                {markDelivered.isPending
+                  ? <Loader2 size={15} className="animate-spin" />
+                  : <Truck size={15} />}
+                {t('admin.orders.deliverConfirmBtn')}
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* ── Revert delivery confirm modal ────────────────────────────────── */}
+      <Modal
+        open={!!revertTarget}
+        onClose={() => setRevertTarget(null)}
+        title={t('admin.orders.revertDeliveredTitle')}
+        size="sm"
+      >
+        {revertTarget && (
+          <div className="space-y-4">
+            <p className="text-sm text-ink-muted">{t('admin.orders.revertDeliveredWarning')}</p>
+
+            <div className="bg-white/5 rounded-xl p-4 space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-ink-muted">Member</span>
+                <span className="font-semibold text-ink">
+                  {revertTarget.memberName} ({revertTarget.memberCode})
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-ink-muted">Product</span>
+                <span className="text-ink">{revertTarget.productName}</span>
+              </div>
+            </div>
+
+            {unmarkDelivered.isError && (
+              <p className="text-xs text-danger">{t('errors.generic')}</p>
+            )}
+
+            <div className="flex gap-2">
+              <button
+                onClick={() => setRevertTarget(null)}
+                disabled={unmarkDelivered.isPending}
+                className="flex-1 py-2.5 rounded-xl border border-surface-line text-ink-muted text-sm font-semibold hover:bg-white/5 transition-colors"
+              >
+                {t('common.cancel')}
+              </button>
+              <button
+                onClick={() => unmarkDelivered.mutate(revertTarget)}
+                disabled={unmarkDelivered.isPending}
+                className="flex-1 py-2.5 rounded-xl bg-warning text-white text-sm font-semibold flex items-center justify-center gap-2 hover:bg-warning/90 transition-colors disabled:opacity-50"
+              >
+                {unmarkDelivered.isPending
+                  ? <Loader2 size={15} className="animate-spin" />
+                  : <RotateCcw size={15} />}
+                {t('admin.orders.revertConfirmBtn')}
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   )
 }

@@ -29,7 +29,7 @@ import {
 	updateProduct,
 } from "../services/productService.js";
 import { postLedgerTxn } from "../workers/ledger.js";
-import { confirmOrder, createOrder } from "../services/orderService.js";
+import { confirmOrder, createOrder, markDelivered, unmarkDelivered } from "../services/orderService.js";
 import { deleteInactiveMember } from "../services/placement.js";
 import { AddressBody, isCompleteAddress } from "../lib/address.js";
 
@@ -2257,9 +2257,31 @@ export async function adminRoutes(app: FastifyInstance) {
 			limit?: string;
 			offset?: string;
 		};
-		const status = query.status ?? "paid";
+		const statusFilter = query.status ?? "paid";
 		const limit = Math.min(Number(query.limit ?? "50"), 200);
 		const offset = Number(query.offset ?? "0");
+
+		// 'delivered' is not a real status value — it is a pseudo-filter meaning
+		// status='confirmed' AND delivered_at IS NOT NULL.  The confirmed queue
+		// shows undelivered confirmed orders (delivered_at IS NULL) so delivered
+		// rows leave it once marked.
+		let whereClause: string;
+		if (statusFilter === "delivered") {
+			whereClause = "o.status = 'confirmed' AND o.delivered_at IS NOT NULL";
+		} else if (statusFilter === "confirmed") {
+			whereClause = "o.status = 'confirmed' AND o.delivered_at IS NULL";
+		} else {
+			whereClause = "o.status = $1";
+		}
+
+		const queryParams =
+			statusFilter === "delivered" || statusFilter === "confirmed"
+				? [limit, offset]
+				: [statusFilter, limit, offset];
+
+		const limitParam = statusFilter === "delivered" || statusFilter === "confirmed" ? "$1" : "$2";
+		const offsetParam = statusFilter === "delivered" || statusFilter === "confirmed" ? "$2" : "$3";
+
 		const { rows } = await pool().query<{
 			id: string;
 			member_code: string;
@@ -2271,23 +2293,36 @@ export async function adminRoutes(app: FastifyInstance) {
 			created_at: string;
 			payment_ref: string | null;
 			confirmed_at: string | null;
+			delivered_at: string | null;
 			proof_keys: string[] | null;
+			// member addr_* columns for isCompleteAddress check
+			addr_recipient_name: string | null;
+			addr_phone: string | null;
+			addr_line1: string | null;
+			addr_city: string | null;
+			addr_state: string | null;
+			addr_pincode: string | null;
 		}>(
 			`SELECT o.id, m.member_code, m.name AS member_name,
 			        o.product_id, p.name AS product_name,
 			        o.total_amount, o.status, o.created_at,
-			        o.payment_ref, o.confirmed_at,
+			        o.payment_ref, o.confirmed_at, o.delivered_at,
 			        array_agg(opp.s3_key ORDER BY opp.uploaded_at)
-			          FILTER (WHERE opp.s3_key IS NOT NULL) AS proof_keys
+			          FILTER (WHERE opp.s3_key IS NOT NULL) AS proof_keys,
+			        m.addr_recipient_name, m.addr_phone, m.addr_line1,
+			        m.addr_city, m.addr_state, m.addr_pincode
 			   FROM orders o
 			   JOIN members m  ON m.id  = o.member_id
 			   JOIN products p ON p.id  = o.product_id
 			   LEFT JOIN order_payment_proofs opp ON opp.order_id = o.id
-			  WHERE o.status = $1
-			  GROUP BY o.id, m.member_code, m.name, o.product_id, p.name
+			  WHERE ${whereClause}
+			  GROUP BY o.id, m.member_code, m.name, o.product_id, p.name,
+			           o.delivered_at,
+			           m.addr_recipient_name, m.addr_phone, m.addr_line1,
+			           m.addr_city, m.addr_state, m.addr_pincode
 			  ORDER BY o.created_at DESC
-			  LIMIT $2 OFFSET $3`,
-			[status, limit, offset],
+			  LIMIT ${limitParam} OFFSET ${offsetParam}`,
+			queryParams,
 		);
 		return Promise.all(
 			rows.map(async (r) => {
@@ -2304,6 +2339,8 @@ export async function adminRoutes(app: FastifyInstance) {
 					createdAt: r.created_at,
 					paymentRef: r.payment_ref ?? undefined,
 					confirmedAt: r.confirmed_at ?? undefined,
+					deliveredAt: r.delivered_at ?? undefined,
+					hasDeliveryAddress: isCompleteAddress(r),
 					paymentProofKeys: keys.length > 0 ? keys : undefined,
 					paymentProofUrls: paymentProofUrls.length > 0 ? paymentProofUrls : undefined,
 				};
@@ -2421,6 +2458,89 @@ export async function adminRoutes(app: FastifyInstance) {
 				],
 			);
 		});
+
+		return { ok: true };
+	});
+
+	// POST /admin/orders/:orderId/mark-delivered — management records that the
+	// physical product has been dispatched / handed to the customer.
+	// Transition: confirmed (delivered_at IS NULL) → delivered_at = now().
+	// Status stays 'confirmed' — see migration 044 rationale.
+	app.post("/orders/:orderId/mark-delivered", auth, async (req, reply) => {
+		const { orderId } = req.params as { orderId: string };
+		const actor = req.user as { sub: string };
+
+		if (!(await isManagement(actor.sub)))
+			return reply
+				.status(403)
+				.send({ error: "Only management can mark orders as delivered" });
+
+		const { rowCount } = await markDelivered(orderId, actor.sub);
+		if (rowCount === 0) {
+			// Either the order doesn't exist, isn't confirmed, or is already delivered.
+			const { rows } = await pool().query<{ status: string; delivered_at: string | null }>(
+				"SELECT status, delivered_at FROM orders WHERE id = $1",
+				[orderId],
+			);
+			if (!rows[0]) return reply.status(404).send({ error: "Order not found" });
+			if (rows[0].delivered_at)
+				return reply.status(409).send({ error: "Order has already been marked delivered" });
+			return reply
+				.status(409)
+				.send({ error: "Only confirmed orders can be marked as delivered" });
+		}
+
+		await pool().query(
+			`INSERT INTO admin_audit_log
+			   (actor_id, action, target_type, target_id, before_state, after_state)
+			 VALUES ($1, 'order_deliver', 'order', $2, $3, $4)`,
+			[
+				actor.sub,
+				orderId,
+				{ delivered: false },
+				{ delivered: true },
+			],
+		);
+
+		return { ok: true };
+	});
+
+	// POST /admin/orders/:orderId/unmark-delivered — management reverts a delivered
+	// order back to "not yet delivered", clearing delivered_at/delivered_by.
+	// Transition: delivered (delivered_at IS NOT NULL) → delivered_at = NULL.
+	// Status stays 'confirmed' — no pipeline side-effects.
+	app.post("/orders/:orderId/unmark-delivered", auth, async (req, reply) => {
+		const { orderId } = req.params as { orderId: string };
+		const actor = req.user as { sub: string };
+
+		if (!(await isManagement(actor.sub)))
+			return reply
+				.status(403)
+				.send({ error: "Only management can revert a delivery" });
+
+		const { rowCount } = await unmarkDelivered(orderId);
+		if (rowCount === 0) {
+			const { rows } = await pool().query<{ status: string; delivered_at: string | null }>(
+				"SELECT status, delivered_at FROM orders WHERE id = $1",
+				[orderId],
+			);
+			if (!rows[0]) return reply.status(404).send({ error: "Order not found" });
+			if (!rows[0].delivered_at)
+				return reply.status(409).send({ error: "Order is not marked as delivered" });
+			return reply.status(409).send({ error: "Order cannot be reverted in its current state" });
+		}
+
+		await pool().query(
+			`INSERT INTO admin_audit_log
+			   (actor_id, action, target_type, target_id, before_state, after_state)
+			 VALUES ($1, 'order_undeliver', 'order', $2, $3, $4)`,
+			[
+				actor.sub,
+				orderId,
+				{ delivered: true },
+				{ delivered: false },
+			],
+		);
 
 		return { ok: true };
 	});
@@ -2653,6 +2773,7 @@ export async function adminRoutes(app: FastifyInstance) {
 		"created",
 		"paid",
 		"confirmed",
+		"delivered",
 		"rejected",
 		"failed",
 		"refunded",
@@ -2713,7 +2834,11 @@ export async function adminRoutes(app: FastifyInstance) {
 				`(m.name ILIKE $${baseParams.length - 2} OR m.phone ILIKE $${baseParams.length - 1} OR m.member_code ILIKE $${baseParams.length})`,
 			);
 		}
-		if (orderStatus) {
+		if (orderStatus === "delivered") {
+			conditions.push(`o.status = 'confirmed' AND o.delivered_at IS NOT NULL`);
+		} else if (orderStatus === "confirmed") {
+			conditions.push(`o.status = 'confirmed' AND o.delivered_at IS NULL`);
+		} else if (orderStatus) {
 			baseParams.push(orderStatus);
 			conditions.push(`o.status = $${baseParams.length}`);
 		}
@@ -2763,11 +2888,20 @@ export async function adminRoutes(app: FastifyInstance) {
 			rejection_reason: string | null;
 			created_at: string;
 			confirmed_at: string | null;
+			delivered_at: string | null;
+			addr_recipient_name: string | null;
+			addr_phone: string | null;
+			addr_line1: string | null;
+			addr_city: string | null;
+			addr_state: string | null;
+			addr_pincode: string | null;
 		}>(
 			`SELECT o.id, m.member_code, m.name AS member_name, m.phone AS member_phone,
 			        o.product_id, p.name AS product_name,
 			        o.total_amount, o.status, o.payment_ref, o.rejection_reason,
-			        o.created_at, o.confirmed_at
+			        o.created_at, o.confirmed_at, o.delivered_at,
+			        m.addr_recipient_name, m.addr_phone, m.addr_line1,
+			        m.addr_city, m.addr_state, m.addr_pincode
 			   FROM orders o
 			   JOIN members m  ON m.id = o.member_id
 			   JOIN products p ON p.id = o.product_id
@@ -2791,6 +2925,8 @@ export async function adminRoutes(app: FastifyInstance) {
 				rejectionReason: r.rejection_reason ?? undefined,
 				createdAt: r.created_at,
 				confirmedAt: r.confirmed_at ?? undefined,
+				deliveredAt: r.delivered_at ?? undefined,
+				hasDeliveryAddress: isCompleteAddress(r),
 			})),
 			total,
 			page,
