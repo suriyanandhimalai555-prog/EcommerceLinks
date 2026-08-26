@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate, Link, useSearchParams } from 'react-router-dom'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -21,6 +21,14 @@ const schema = z.object({
   email: z.string().email('Enter a valid email address'),
   password: z.string().min(8, 'Password must be at least 8 characters'),
   confirmPassword: z.string(),
+  // Delivery address — required at signup
+  recipientName: z.string().min(1, 'Recipient name is required'),
+  addrPhone: z.string().regex(/^\d{10}$/, 'Enter a valid 10-digit mobile number'),
+  line1: z.string().min(1, 'Address line 1 is required'),
+  line2: z.string().optional(),
+  city: z.string().min(1, 'City is required'),
+  state: z.string().min(1, 'State is required'),
+  pincode: z.string().regex(/^\d{6}$/, 'Pincode must be exactly 6 digits'),
   terms: z.literal(true, { error: 'You must accept the terms' }),
 }).refine((d) => d.password === d.confirmPassword, {
   message: 'Passwords do not match',
@@ -41,6 +49,7 @@ export default function Register() {
   const [registerOtpPayload, setRegisterOtpPayload] = useState<{
     sponsorCode: string; name: string; phone: string
     email: string; password: string; leg?: 'L' | 'R'
+    address: { recipientName: string; phone: string; line1: string; line2?: string; city: string; state: string; pincode: string }
   } | null>(null)
   const sponsorParam = searchParams.get('sponsor') || ''
   // Optional placement side from a leg-specific referral link (tapped vacant
@@ -48,12 +57,23 @@ export default function Register() {
   const legRaw = searchParams.get('leg')
   const legParam: 'L' | 'R' | undefined = legRaw === 'L' || legRaw === 'R' ? legRaw : undefined
 
-  const { register, handleSubmit, formState: { errors, isSubmitting }, setError } = useForm<FormData>({
+  const { register, handleSubmit, watch, setValue, formState: { errors, isSubmitting, dirtyFields }, setError } = useForm<FormData>({
     resolver: zodResolver(schema),
     defaultValues: {
       sponsorCode: sponsorParam,
     },
   })
+
+  // Mirror account name/phone into the address recipient fields while the user
+  // hasn't manually changed them — stops mirroring once the field is dirtied.
+  const watchedName = watch('name')
+  const watchedPhone = watch('phone')
+  useEffect(() => {
+    if (!dirtyFields.recipientName) setValue('recipientName', watchedName ?? '')
+  }, [watchedName, dirtyFields.recipientName, setValue])
+  useEffect(() => {
+    if (!dirtyFields.addrPhone) setValue('addrPhone', watchedPhone ?? '')
+  }, [watchedPhone, dirtyFields.addrPhone, setValue])
 
   /** Shared: store tokens and navigate after a successful login/OTP session. */
   const handleSession = (session: SessionPayload) => {
@@ -72,6 +92,15 @@ export default function Register() {
       email: data.email,
       password: data.password,
       ...(legParam ? { leg: legParam } : {}),
+      address: {
+        recipientName: data.recipientName,
+        phone: data.addrPhone,
+        line1: data.line1,
+        ...(data.line2 ? { line2: data.line2 } : {}),
+        city: data.city,
+        state: data.state,
+        pincode: data.pincode,
+      },
     }
     try {
       const regRes = await api.post('/auth/register', payload)
@@ -197,14 +226,14 @@ export default function Register() {
               error={errors.sponsorCode?.message}
             />
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField label={t('auth.name')} placeholder="Full Name" {...register('name')} error={errors.name?.message} />
               <FormField label={t('auth.phone')} type="tel" placeholder="9XXXXXXXXX" maxLength={10} {...register('phone')} error={errors.phone?.message} />
             </div>
 
             <FormField label={t('auth.email')} type="email" placeholder="email@example.com" {...register('email')} error={errors.email?.message} />
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField
                 label={t('auth.password')} type={showPw ? 'text' : 'password'} placeholder="Min 8 chars"
                 {...register('password')} error={errors.password?.message}
@@ -218,6 +247,65 @@ export default function Register() {
                 label={t('auth.confirmPassword')} type={showPw ? 'text' : 'password'} placeholder="Repeat password"
                 {...register('confirmPassword')} error={errors.confirmPassword?.message}
               />
+            </div>
+
+            {/* ── Delivery Address ── */}
+            <div className="pt-1">
+              <h3 className="text-sm font-semibold text-ink mb-3">{t('auth.deliveryAddressTitle')}</h3>
+              <div className="space-y-3 rounded-xl border border-white/8 bg-white/[0.03] p-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <FormField
+                    label={t('profile.address.recipientName')}
+                    placeholder={t('profile.address.recipientNamePlaceholder')}
+                    {...register('recipientName')}
+                    error={errors.recipientName?.message}
+                  />
+                  <FormField
+                    label={t('profile.address.phone')}
+                    type="tel"
+                    placeholder={t('profile.address.phonePlaceholder')}
+                    maxLength={10}
+                    {...register('addrPhone')}
+                    error={errors.addrPhone?.message}
+                  />
+                </div>
+                <FormField
+                  label={t('profile.address.line1')}
+                  placeholder={t('profile.address.line1Placeholder')}
+                  {...register('line1')}
+                  error={errors.line1?.message}
+                />
+                <FormField
+                  label={t('profile.address.line2')}
+                  placeholder={t('profile.address.line2Placeholder')}
+                  {...register('line2')}
+                  error={errors.line2?.message}
+                />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <FormField
+                    label={t('profile.address.city')}
+                    placeholder={t('profile.address.cityPlaceholder')}
+                    {...register('city')}
+                    error={errors.city?.message}
+                  />
+                  <FormField
+                    label={t('profile.address.state')}
+                    placeholder={t('profile.address.statePlaceholder')}
+                    {...register('state')}
+                    error={errors.state?.message}
+                  />
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <FormField
+                    label={t('profile.address.pincode')}
+                    placeholder="000000"
+                    maxLength={6}
+                    inputMode="numeric"
+                    {...register('pincode')}
+                    error={errors.pincode?.message}
+                  />
+                </div>
+              </div>
             </div>
 
             <label className="flex items-start gap-3 cursor-pointer">

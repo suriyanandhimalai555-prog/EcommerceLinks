@@ -7,6 +7,7 @@ import { pool, withTxn } from "../lib/db.js";
 import { claimNextMemberCode } from "../lib/ids.js";
 import { redis } from "../lib/redis.js";
 import { deleteObject } from "../lib/s3.js";
+import type { AddressInput } from "../lib/address.js";
 
 // Each member may refer at most 2 people; a new registrant is always placed
 // directly under their sponsor. Without a requested leg, the slot auto-fills —
@@ -56,6 +57,11 @@ interface RegisterInput {
 	// link), the recruit is pinned to this slot or the registration 409s if it
 	// is taken. Omitted → auto L-then-R (unchanged legacy behavior).
 	leg?: "L" | "R";
+	// Delivery address — written to addr_* columns on the member row.
+	// Mandatory via the API's Zod schema (auth.ts); optional here so that
+	// scripts (simulate.ts) and integration tests can call registerMember
+	// without a full address — the DB columns are nullable.
+	address?: AddressInput;
 }
 
 export async function registerMember(
@@ -122,8 +128,10 @@ export async function registerMember(
 				const { rows: ins } = await c.query<{ id: string }>(
 					`INSERT INTO members
              (member_code, name, phone, email, password_hash,
-              sponsor_id, parent_id, position, placement_path, placement_sides)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+              sponsor_id, parent_id, position, placement_path, placement_sides,
+              addr_recipient_name, addr_phone, addr_line1, addr_line2,
+              addr_city, addr_state, addr_pincode)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
            RETURNING id`,
 					[
 						memberCode,
@@ -136,6 +144,13 @@ export async function registerMember(
 						position,
 						newPath,
 						newSides,
+						input.address?.recipientName ?? null,
+						input.address?.phone ?? null,
+						input.address?.line1 ?? null,
+						input.address?.line2 ?? null,
+						input.address?.city ?? null,
+						input.address?.state ?? null,
+						input.address?.pincode ?? null,
 					],
 				);
 				const memberId = BigInt(ins[0].id);

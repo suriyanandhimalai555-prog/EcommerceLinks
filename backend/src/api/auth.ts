@@ -19,6 +19,7 @@ import {
 	verifyOtp,
 } from "../services/loginOtp.js";
 import { buildMe } from "./frontend.js";
+import { AddressBody } from "../lib/address.js";
 
 const RegisterBody = z.object({
 	sponsorCode: z.string().min(1),
@@ -29,6 +30,8 @@ const RegisterBody = z.object({
 	// Optional requested placement side, sent when the recruit registers via a
 	// leg-specific referral link (tapped vacant slot). Omitted → auto L-then-R.
 	leg: z.enum(["L", "R"]).optional(),
+	// Delivery address — mandatory at registration; stored directly on the member row.
+	address: AddressBody,
 });
 
 // Full registration payload + OTP code — sent to verify-otp to create the account.

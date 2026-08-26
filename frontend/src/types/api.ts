@@ -69,6 +69,8 @@ export interface RegisterReq {
   password: string
   /** Optional placement side from a leg-specific referral link; omit for auto L-then-R. */
   leg?: 'L' | 'R'
+  /** Delivery address — mandatory at signup; stored immediately on the member row. */
+  address: DeliveryAddress
 }
 
 /** Sent to POST /auth/register/verify-otp — full signup payload + OTP code. */

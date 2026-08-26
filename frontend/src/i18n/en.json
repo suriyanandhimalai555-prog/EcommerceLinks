@@ -141,7 +141,8 @@
     "passwordsMismatch": "Passwords do not match",
     "resetBtn": "Reset Password & Sign In",
     "changeEmail": "Change email",
-    "backToLogin": "Back to Login"
+    "backToLogin": "Back to Login",
+    "deliveryAddressTitle": "Delivery Address"
   },
   "errors": {
     "network": "Cannot reach the server. Check your internet connection and try again.",
@@ -597,6 +598,20 @@
       "colSponsorCode": "Sponsor Code",
       "colSponsorName": "Sponsor Name",
       "colJoined": "Joined"
+    },
+    "audit": {
+      "title": "Admin audit trail",
+      "searchPlaceholder": "Search by actor name, action, target, or change details…",
+      "fromLabel": "From",
+      "toLabel": "To",
+      "clear": "Clear filters",
+      "colWhen": "When",
+      "colActor": "Actor",
+      "colAction": "Action",
+      "colTarget": "Target",
+      "colChange": "Change",
+      "emptyTitle": "No admin actions yet",
+      "emptyFiltered": "No results match your search or date range."
     }
   },
   "payout": {

@@ -2192,30 +2192,47 @@ export async function adminRoutes(app: FastifyInstance) {
 	// ===== Audit log =====
 	app.get("/audit-log", auth, async (req) => {
 		const query = req.query as {
+			q?: string;
+			from?: string;
+			to?: string;
 			target_id?: string;
 			limit?: string;
 			offset?: string;
 		};
 		const limit = Math.min(Number(query.limit ?? "50"), 200);
 		const offset = Number(query.offset ?? "0");
+		const q = (query.q ?? "").trim();
+		const from = (query.from ?? "").trim();
+		const to   = (query.to   ?? "").trim();
 
-		const conditions: string[] = [];
-		const values: unknown[] = [];
-		if (query.target_id)
-			conditions.push(`al.target_id=$${values.push(query.target_id)}`);
+		// Positional params: $1=q, $2=from, $3=to; legacy target_id appended if present.
+		const values: unknown[] = [q, from, to];
+		let where = `WHERE ($1 = '' OR m.name         ILIKE '%'||$1||'%'
+		                           OR al.action       ILIKE '%'||$1||'%'
+		                           OR al.target_type  ILIKE '%'||$1||'%'
+		                           OR al.target_id::text ILIKE '%'||$1||'%'
+		                           OR al.before_state::text ILIKE '%'||$1||'%'
+		                           OR al.after_state::text  ILIKE '%'||$1||'%')
+		  AND ($2 = '' OR (al.created_at AT TIME ZONE 'Asia/Kolkata')::date >= $2::date)
+		  AND ($3 = '' OR (al.created_at AT TIME ZONE 'Asia/Kolkata')::date <= $3::date)`;
 
-		const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+		// Legacy exact-match filter (not sent by the frontend, kept for completeness).
+		if (query.target_id) {
+			values.push(query.target_id);
+			where += ` AND al.target_id = $${values.length}`;
+		}
+
 		values.push(limit);
 		values.push(offset);
 
 		const { rows } = await pool().query(
 			`SELECT al.id, al.actor_id, m.name AS actor_name, al.action,
-              al.target_type, al.target_id, al.before_state, al.after_state, al.created_at
-       FROM admin_audit_log al
-       JOIN members m ON m.id = al.actor_id
-       ${where}
-       ORDER BY al.created_at DESC
-       LIMIT $${values.length - 1} OFFSET $${values.length}`,
+			        al.target_type, al.target_id, al.before_state, al.after_state, al.created_at
+			   FROM admin_audit_log al
+			   JOIN members m ON m.id = al.actor_id
+			   ${where}
+			   ORDER BY al.created_at DESC
+			   LIMIT $${values.length - 1} OFFSET $${values.length}`,
 			values,
 		);
 		return rows.map((r) => ({
