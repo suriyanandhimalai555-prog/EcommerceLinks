@@ -5,11 +5,11 @@ import AppShell from './components/layout/AppShell'
 import { RequireAuth, RequireAdmin, MemberHome } from './routes/guard'
 import { SkeletonCard } from './components/ui/Skeleton'
 import Login from './pages/auth/Login'
+import Register from './pages/auth/Register'
+import ForgotPassword from './pages/auth/ForgotPassword'
 
 // Route-level code splitting: each page loads on first visit, keeping the
 // initial bundle free of heavy deps (recharts ships only with chart pages).
-const Register = lazy(() => import('./pages/auth/Register'))
-const ForgotPassword = lazy(() => import('./pages/auth/ForgotPassword'))
 const Dashboard = lazy(() => import('./pages/Dashboard'))
 const Network = lazy(() => import('./pages/Network'))
 const BuyProduct = lazy(() => import('./pages/BuyProduct'))

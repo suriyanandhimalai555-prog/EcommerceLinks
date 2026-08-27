@@ -40,6 +40,7 @@ export function AdminNetworkTab() {
   const [activeFilter, setActiveFilter] = useState<'all' | 'active' | 'inactive'>('all')
   const [kycFilter, setKycFilter] = useState<'all' | 'done' | 'notdone'>('all')
   const [bankFilter, setBankFilter] = useState<'all' | 'done' | 'notdone'>('all')
+  const [orderFilter, setOrderFilter] = useState<'all' | 'confirmed' | 'delivered'>('all')
   const [exporting, setExporting] = useState(false)
   const [exportError, setExportError] = useState<string | null>(null)
 
@@ -58,6 +59,7 @@ export function AdminNetworkTab() {
       if (activeFilter !== 'all') params.set('active', activeFilter)
       if (kycFilter !== 'all')    params.set('kyc', kycFilter)
       if (bankFilter !== 'all')   params.set('bank', bankFilter)
+      if (orderFilter !== 'all')  params.set('orderStatus', orderFilter)
 
       const res = await api
         .get<AdminDownlineExport>(`/admin/network/${rootCode}/downline/export?${params}`)
@@ -187,6 +189,19 @@ export function AdminNetworkTab() {
               <option value="all">{t('adminNetwork.filterBankAll')}</option>
               <option value="done">{t('adminNetwork.filterBankDone')}</option>
               <option value="notdone">{t('adminNetwork.filterBankNotDone')}</option>
+            </select>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-ink-muted whitespace-nowrap">{t('adminNetwork.filterOrder')}</span>
+            <select
+              value={orderFilter}
+              onChange={(e) => setOrderFilter(e.target.value as typeof orderFilter)}
+              className={SELECT_CLS}
+            >
+              <option value="all">{t('adminNetwork.filterOrderAll')}</option>
+              <option value="confirmed">{t('adminNetwork.filterOrderConfirmed')}</option>
+              <option value="delivered">{t('adminNetwork.filterOrderDelivered')}</option>
             </select>
           </div>
 

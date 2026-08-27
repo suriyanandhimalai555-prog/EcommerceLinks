@@ -1917,7 +1917,7 @@ export async function adminRoutes(app: FastifyInstance) {
 			return reply.status(403).send({ error: "Management only" });
 
 		const { memberCode } = req.params as { memberCode: string };
-		const query = req.query as { active?: string; kyc?: string; bank?: string };
+		const query = req.query as { active?: string; kyc?: string; bank?: string; orderStatus?: string };
 
 		// Validate filters against fixed enums; unknown values fall back to 'all'.
 		const activeFilter =
@@ -1928,6 +1928,10 @@ export async function adminRoutes(app: FastifyInstance) {
 			query.kyc === "done" || query.kyc === "notdone" ? query.kyc : "all";
 		const bankFilter =
 			query.bank === "done" || query.bank === "notdone" ? query.bank : "all";
+		const orderFilter =
+			query.orderStatus === "confirmed" || query.orderStatus === "delivered"
+				? query.orderStatus
+				: "all";
 
 		// Resolve member code → id + name. Payout/management have no placement subtree.
 		const { rows: memberRows } = await pool().query<{
@@ -1962,6 +1966,14 @@ export async function adminRoutes(app: FastifyInstance) {
 				: bankFilter === "notdone"
 					? "AND m.bank_status <> 'verified'"
 					: "";
+		// Delivered = confirmed status with a delivery timestamp; Confirmed = confirmed
+		// but not yet delivered. Mutually exclusive buckets, matching /orders/all semantics.
+		const orderClause =
+			orderFilter === "delivered"
+				? "AND EXISTS (SELECT 1 FROM orders o WHERE o.member_id = m.id AND o.status = 'confirmed' AND o.delivered_at IS NOT NULL)"
+				: orderFilter === "confirmed"
+					? "AND EXISTS (SELECT 1 FROM orders o WHERE o.member_id = m.id AND o.status = 'confirmed' AND o.delivered_at IS NULL)"
+					: "";
 
 		// GIN-indexed placement_path containment — same technique as /network/downline
 		// (frontend.ts). Strict @> containment excludes the root member itself.
@@ -1992,7 +2004,7 @@ export async function adminRoutes(app: FastifyInstance) {
          LEFT JOIN members s ON s.id = m.sponsor_id
         WHERE m.placement_path @> ARRAY[$1::bigint]
           AND m.role NOT IN ('management','payout')
-          ${activeClause} ${kycClause} ${bankClause}
+          ${activeClause} ${kycClause} ${bankClause} ${orderClause}
         ORDER BY cardinality(m.placement_path) ASC, m.created_at ASC`,
 			[memberId],
 		);
