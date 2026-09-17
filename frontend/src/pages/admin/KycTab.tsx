@@ -5,7 +5,7 @@ import { Download, ExternalLink, Loader2, Search, ShieldCheck } from 'lucide-rea
 import api from '../../lib/api'
 import { downloadCsv } from '../../lib/exportCsv'
 import { apiErrorMessage } from '../../lib/apiError'
-import { formatDate } from '../../lib/format'
+import { formatDate, formatDateTime, orDash } from '../../lib/format'
 import { DataTable, type Column } from '../../components/ui/DataTable'
 import { Badge } from '../../components/ui/Badge'
 import { Modal } from '../../components/ui/Modal'
@@ -111,6 +111,8 @@ export function KycTab() {
         t('admin.membersExport.colSponsorCode'),
         t('admin.membersExport.colSponsorName'),
         t('admin.membersExport.colJoined'),
+        t('admin.kyc.colSubmitted'),
+        t('admin.kyc.colApproved'),
       ]
       const rows = all.map((m) => [
         m.memberCode, m.name, m.phone, m.email ?? '', m.role,
@@ -121,6 +123,8 @@ export function KycTab() {
         m.hasDocuments ? 'Yes' : 'No',
         m.sponsorCode ?? '', m.sponsorName ?? '',
         formatDate(m.createdAt),
+        orDash(m.kycSubmittedAt, formatDate),
+        orDash(m.kycVerifiedAt, formatDate),
       ])
       downloadCsv(`kyc-members-${new Date().toISOString().slice(0, 10)}.csv`, headers, rows)
     } finally {
@@ -164,6 +168,14 @@ export function KycTab() {
       ),
     },
     { key: 'joined', header: 'Joined', render: (r) => <span className="text-xs text-ink-muted">{formatDate(r.createdAt)}</span> },
+    {
+      key: 'submitted', header: t('admin.kyc.colSubmitted'),
+      render: (r) => <span className="text-xs text-ink-muted">{orDash(r.kycSubmittedAt, formatDateTime)}</span>,
+    },
+    {
+      key: 'approved', header: t('admin.kyc.colApproved'),
+      render: (r) => <span className="text-xs text-ink-muted">{orDash(r.kycVerifiedAt, formatDateTime)}</span>,
+    },
     {
       key: 'action', header: '', align: 'right',
       render: (r) => (
@@ -302,6 +314,9 @@ export function KycTab() {
               <span className="text-ink-muted">{selected.phone}</span>
               {selected.email && <span className="text-ink-muted">{selected.email}</span>}
               <span className="text-ink-muted">Joined {formatDate(selected.createdAt)}</span>
+              {selected.kycVerifiedAt && (
+                <span className="text-ink-muted">Approved {formatDateTime(selected.kycVerifiedAt)}</span>
+              )}
               <Badge
                 size="sm"
                 variant={selected.kycStatus === 'verified' ? 'success' : selected.kycStatus === 'rejected' ? 'danger' : 'neutral'}

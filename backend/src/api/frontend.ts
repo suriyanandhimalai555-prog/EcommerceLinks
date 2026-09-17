@@ -573,7 +573,8 @@ export async function frontendRoutes(app: FastifyInstance) {
 		await pool().query(
 			`UPDATE members
 			    SET bank_account_name = $2, bank_account_number = $3, bank_ifsc = $4,
-			        bank_status = 'pending'
+			        bank_status = 'pending',
+			        bank_details_submitted_at = now()
 			  WHERE id = $1`,
 			[
 				memberId,

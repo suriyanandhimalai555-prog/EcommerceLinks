@@ -1230,7 +1230,11 @@ export async function adminRoutes(app: FastifyInstance) {
 			blocked: boolean;
 			created_at: string;
 			activated_at: string | null;
+			bank_details_submitted_at: string | null;
 			has_documents: boolean;
+			kyc_submitted_at: string | null;
+			kyc_verified_at: string | null;
+			bank_verified_at: string | null;
 			sponsor_code: string | null;
 			sponsor_name: string | null;
 			addr_recipient_name: string | null;
@@ -1242,8 +1246,15 @@ export async function adminRoutes(app: FastifyInstance) {
 			addr_pincode: string | null;
 		}>(
 			`SELECT m.id, m.member_code, m.name, m.phone, m.email,
-			        m.is_active, m.is_qualified, m.role, m.kyc_status, m.bank_status, m.blocked, m.created_at, m.activated_at,
+			        m.is_active, m.is_qualified, m.role, m.kyc_status, m.bank_status, m.blocked, m.created_at, m.activated_at, m.bank_details_submitted_at,
 			        (SELECT COUNT(*) > 0 FROM kyc_documents kd WHERE kd.member_id = m.id) AS has_documents,
+			        (SELECT MAX(kd.uploaded_at) FROM kyc_documents kd WHERE kd.member_id = m.id) AS kyc_submitted_at,
+			        (SELECT MAX(al.created_at) FROM admin_audit_log al
+			           WHERE al.target_type = 'member' AND al.target_id = m.id
+			             AND al.action = 'kyc_update' AND al.after_state->>'kyc_status' = 'verified') AS kyc_verified_at,
+			        (SELECT MAX(al.created_at) FROM admin_audit_log al
+			           WHERE al.target_type = 'member' AND al.target_id = m.id
+			             AND al.action = 'bank_update' AND al.after_state->>'bank_status' = 'verified') AS bank_verified_at,
 			        sp.member_code AS sponsor_code, sp.name AS sponsor_name,
 			        m.addr_recipient_name, m.addr_phone, m.addr_line1, m.addr_line2,
 			        m.addr_city, m.addr_state, m.addr_pincode
@@ -1269,7 +1280,11 @@ export async function adminRoutes(app: FastifyInstance) {
 				blocked: m.blocked,
 				createdAt: m.created_at,
 				activatedAt: m.activated_at,
+				bankSubmittedAt: m.bank_details_submitted_at,
 				hasDocuments: m.has_documents,
+				kycSubmittedAt: m.kyc_submitted_at,
+				kycVerifiedAt: m.kyc_status === 'verified' ? m.kyc_verified_at : null,
+				bankVerifiedAt: m.bank_status === 'verified' ? m.bank_verified_at : null,
 				sponsorCode: m.sponsor_code,
 				sponsorName: m.sponsor_name,
 				deliveryAddress: m.addr_recipient_name

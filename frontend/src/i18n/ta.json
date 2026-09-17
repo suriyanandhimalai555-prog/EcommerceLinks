@@ -300,7 +300,9 @@
       "activationAll": "அனைத்தும்",
       "activationActive": "செயலில்",
       "activationInactive": "செயலற்று",
-      "colActive": "கணக்கு"
+      "colActive": "கணக்கு",
+      "colSubmitted": "சமர்பிக்கப்பட்டது",
+      "colApproved": "அனுமதிக்கப்பட்டது"
     },
     "bank": {
       "title": "வங்கி அனுமதிகள்",
@@ -325,7 +327,9 @@
       "activationAll": "அனைத்தும்",
       "activationActive": "செயலில்",
       "activationInactive": "செயலற்று",
-      "colActive": "கணக்கு"
+      "colActive": "கணக்கு",
+      "colSubmitted": "சமர்பிக்கப்பட்டது",
+      "colApproved": "அனுமதிக்கப்பட்டது"
     },
     "withdrawals": {
       "title": "பணம் அனுப்புதல் வரிசை",

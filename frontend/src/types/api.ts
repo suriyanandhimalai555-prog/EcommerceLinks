@@ -499,6 +499,14 @@ export interface AdminMemberRow {
   /** ISO timestamp of when the member paid and was activated. Null = not yet activated. */
   activatedAt: string | null
   hasDocuments: boolean
+  /** ISO timestamp of the most recent KYC document upload. Null = no documents yet. */
+  kycSubmittedAt: string | null
+  /** ISO timestamp of when KYC was approved (derived from audit log). Null if not currently verified. */
+  kycVerifiedAt: string | null
+  /** ISO timestamp of when the member last submitted their bank details. Null for members who submitted before migration 045. */
+  bankSubmittedAt: string | null
+  /** ISO timestamp of when bank details were verified (derived from audit log). Null if not currently verified. */
+  bankVerifiedAt: string | null
   /** Sponsor (who referred this member). Null for the tree root and management. */
   sponsorCode: string | null
   sponsorName: string | null

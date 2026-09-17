@@ -301,7 +301,9 @@
       "activationAll": "All",
       "activationActive": "Active",
       "activationInactive": "Inactive",
-      "colActive": "Account"
+      "colActive": "Account",
+      "colSubmitted": "Submitted",
+      "colApproved": "Approved"
     },
     "bank": {
       "title": "Bank Approvals",
@@ -326,7 +328,9 @@
       "activationAll": "All",
       "activationActive": "Active",
       "activationInactive": "Inactive",
-      "colActive": "Account"
+      "colActive": "Account",
+      "colSubmitted": "Submitted",
+      "colApproved": "Approved"
     },
     "withdrawals": {
       "title": "Payout Queue",

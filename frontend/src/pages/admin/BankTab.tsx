@@ -5,7 +5,7 @@ import { Download, Loader2, Search, ShieldCheck } from 'lucide-react'
 import api from '../../lib/api'
 import { downloadCsv } from '../../lib/exportCsv'
 import { apiErrorMessage } from '../../lib/apiError'
-import { formatDate } from '../../lib/format'
+import { formatDate, formatDateTime, orDash } from '../../lib/format'
 import { DataTable, type Column } from '../../components/ui/DataTable'
 import { Badge } from '../../components/ui/Badge'
 import { Modal } from '../../components/ui/Modal'
@@ -103,6 +103,8 @@ export function BankTab() {
         t('admin.membersExport.colSponsorCode'),
         t('admin.membersExport.colSponsorName'),
         t('admin.membersExport.colJoined'),
+        t('admin.bank.colSubmitted'),
+        t('admin.bank.colApproved'),
       ]
       const rows = all.map((m) => [
         m.memberCode, m.name, m.phone, m.email ?? '', m.role,
@@ -113,6 +115,8 @@ export function BankTab() {
         m.hasDocuments ? 'Yes' : 'No',
         m.sponsorCode ?? '', m.sponsorName ?? '',
         formatDate(m.createdAt),
+        orDash(m.bankSubmittedAt, formatDateTime),
+        orDash(m.bankVerifiedAt, formatDateTime),
       ])
       downloadCsv(`bank-members-${new Date().toISOString().slice(0, 10)}.csv`, headers, rows)
     } finally {
@@ -156,6 +160,14 @@ export function BankTab() {
       ),
     },
     { key: 'joined', header: 'Joined', render: (r) => <span className="text-xs text-ink-muted">{formatDate(r.createdAt)}</span> },
+    {
+      key: 'submitted', header: t('admin.bank.colSubmitted'),
+      render: (r) => <span className="text-xs text-ink-muted">{orDash(r.bankSubmittedAt, formatDateTime)}</span>,
+    },
+    {
+      key: 'approved', header: t('admin.bank.colApproved'),
+      render: (r) => <span className="text-xs text-ink-muted">{orDash(r.bankVerifiedAt, formatDateTime)}</span>,
+    },
     {
       key: 'action', header: '', align: 'right',
       render: (r) => (
@@ -294,6 +306,9 @@ export function BankTab() {
               <span className="text-ink-muted">{selected.phone}</span>
               {selected.email && <span className="text-ink-muted">{selected.email}</span>}
               <span className="text-ink-muted">Joined {formatDate(selected.createdAt)}</span>
+              {selected.bankVerifiedAt && (
+                <span className="text-ink-muted">Approved {formatDateTime(selected.bankVerifiedAt)}</span>
+              )}
               <Badge
                 size="sm"
                 variant={selected.bankStatus === 'verified' ? 'success' : selected.bankStatus === 'rejected' ? 'danger' : 'neutral'}
