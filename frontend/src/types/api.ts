@@ -174,6 +174,8 @@ export interface AdminOrder {
   paymentProofKeys?: string[]
   /** Short-lived presigned GET URLs for uploaded payment-proof screenshots (status=paid only). */
   paymentProofUrls?: string[]
+  /** Number of confirmed orders this member already has. >0 means a duplicate is about to be created. */
+  memberConfirmedCount?: number
 }
 
 // ---- dashboard ----

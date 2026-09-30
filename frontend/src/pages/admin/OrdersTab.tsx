@@ -609,6 +609,18 @@ export function OrdersTab() {
               </div>
             </div>
 
+            {(selected.memberConfirmedCount ?? 0) > 0 && (
+              <div className="flex gap-2.5 rounded-xl border border-warning/40 bg-warning/10 p-3.5 text-sm">
+                <AlertTriangle size={16} className="mt-0.5 shrink-0 text-warning" />
+                <div>
+                  <p className="font-semibold text-warning">{t('admin.orders.dupWarningTitle')}</p>
+                  <p className="mt-0.5 text-ink-muted">
+                    {t('admin.orders.dupWarningBody', { count: selected.memberConfirmedCount })}
+                  </p>
+                </div>
+              </div>
+            )}
+
             <p className="text-xs text-ink-muted">{t('admin.orders.confirmHint')}</p>
 
             <div>

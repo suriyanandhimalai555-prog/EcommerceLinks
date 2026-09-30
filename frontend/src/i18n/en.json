@@ -517,6 +517,8 @@
       "paymentRefPlaceholder": "e.g. UTR number from bank transfer",
       "paymentRefRequired": "Bank reference is required",
       "confirmSubmit": "Confirm & Activate",
+      "dupWarningTitle": "Repeat purchase warning",
+      "dupWarningBody": "This member already has {{count}} confirmed order(s). Approving this will create a duplicate purchase — continue only if this is intentional.",
       "rejectTitle": "Reject payment proof",
       "rejectBtn": "Reject",
       "rejectReasonLabel": "Reason (optional)",

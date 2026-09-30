@@ -2329,6 +2329,8 @@ export async function adminRoutes(app: FastifyInstance) {
 			addr_city: string | null;
 			addr_state: string | null;
 			addr_pincode: string | null;
+			// how many confirmed orders this member already has (including this one if confirmed)
+			member_confirmed_count: string;
 		}>(
 			`SELECT o.id, m.member_code, m.name AS member_name,
 			        o.product_id, p.name AS product_name,
@@ -2337,7 +2339,10 @@ export async function adminRoutes(app: FastifyInstance) {
 			        array_agg(opp.s3_key ORDER BY opp.uploaded_at)
 			          FILTER (WHERE opp.s3_key IS NOT NULL) AS proof_keys,
 			        m.addr_recipient_name, m.addr_phone, m.addr_line1,
-			        m.addr_city, m.addr_state, m.addr_pincode
+			        m.addr_city, m.addr_state, m.addr_pincode,
+			        (SELECT COUNT(*) FROM orders o2
+			           WHERE o2.member_id = o.member_id
+			             AND o2.status = 'confirmed') AS member_confirmed_count
 			   FROM orders o
 			   JOIN members m  ON m.id  = o.member_id
 			   JOIN products p ON p.id  = o.product_id
@@ -2370,6 +2375,7 @@ export async function adminRoutes(app: FastifyInstance) {
 					hasDeliveryAddress: isCompleteAddress(r),
 					paymentProofKeys: keys.length > 0 ? keys : undefined,
 					paymentProofUrls: paymentProofUrls.length > 0 ? paymentProofUrls : undefined,
+					memberConfirmedCount: Number(r.member_confirmed_count),
 				};
 			}),
 		);
