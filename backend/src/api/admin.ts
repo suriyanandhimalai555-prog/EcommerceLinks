@@ -29,7 +29,7 @@ import {
 	updateProduct,
 } from "../services/productService.js";
 import { postLedgerTxn } from "../workers/ledger.js";
-import { confirmOrder, createOrder, markDelivered, unmarkDelivered } from "../services/orderService.js";
+import { confirmOrder, createOrder, createUpgradeOrder, markDelivered, unmarkDelivered } from "../services/orderService.js";
 import { deleteInactiveMember } from "../services/placement.js";
 import { AddressBody, isCompleteAddress } from "../lib/address.js";
 
@@ -3280,6 +3280,65 @@ export async function adminRoutes(app: FastifyInstance) {
 		);
 
 		return { ok: true, orderId, activated };
+	});
+
+	// ===== Campaign upgrade (management-only) =====
+	// Records an offline delta payment and upgrades a member's package tier.
+	// Only valid for active ₹10,000 members during the campaign window.
+	const UpgradeBody = z.object({
+		memberId: z.string().min(1),
+		targetTierPaise: z.union([z.literal(3000000), z.literal(5000000)]),
+		paymentRef: z.string().min(1),
+	});
+
+	app.post("/members/upgrade", auth, async (req, reply) => {
+		const actor = req.user as { sub: string };
+		if (!(await isManagement(actor.sub)))
+			return reply.status(403).send({ error: "Management only" });
+
+		const body = UpgradeBody.safeParse(req.body);
+		if (!body.success)
+			return reply.status(400).send({ error: body.error.flatten() });
+
+		const { memberId, targetTierPaise, paymentRef } = body.data;
+
+		const { rows: mRows } = await pool().query<{
+			id: string;
+			role: string;
+			is_active: boolean;
+			package_value_paise: string;
+		}>(
+			`SELECT id, role, is_active, package_value_paise FROM members WHERE id = $1`,
+			[memberId],
+		);
+		if (!mRows[0])
+			return reply.status(404).send({ error: "Member not found" });
+		if (mRows[0].role === "management")
+			return reply.status(409).send({ error: "Cannot upgrade management account" });
+		if (!mRows[0].is_active)
+			return reply.status(409).send({ error: "Member is not yet active" });
+
+		const currentValuePaise = Number(mRows[0].package_value_paise);
+		if (currentValuePaise >= targetTierPaise)
+			return reply.status(409).send({ error: "Member is already at or above this package tier" });
+
+		const { orderId, idempotencyKey } = await createUpgradeOrder(memberId, targetTierPaise);
+
+		await confirmOrder(idempotencyKey, BigInt(orderId), paymentRef);
+
+		await pool().query(
+			`INSERT INTO admin_audit_log
+			   (actor_id, action, target_type, target_id, before_state, after_state)
+			 VALUES ($1, 'campaign_upgrade', 'member', $2, $3, $4)`,
+			[
+				actor.sub,
+				memberId,
+				{ package_value_paise: currentValuePaise },
+				{ package_value_paise: targetTierPaise, orderId, paymentRef },
+			],
+		);
+
+		return { ok: true, orderId };
 	});
 
 	// ===== Earnings overview (management-only read pages) =====

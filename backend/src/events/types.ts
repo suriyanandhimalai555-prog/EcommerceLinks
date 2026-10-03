@@ -125,6 +125,36 @@ export interface PayoutItemFailed extends Envelope {
 	reason: string;
 }
 
+// --- Campaign pair-matching events (Phase B) ---
+// Live pair-matching events above are untouched; these are a parallel campaign layer.
+
+// Emitted by confirmOrder when a member's campaign extra-unit count increases.
+// Covers both new joins at ≥₹30k and upgrades. extra_units_delta is always > 0.
+// Only emitted during the campaign window.
+export interface CampaignUnitsAdded extends Envelope {
+	event_type: "CampaignUnitsAdded";
+	member_id: number;
+	extra_units_delta: number;   // always > 0; bigint-safe (max 4 per event)
+	new_value_paise: number;     // member's new package_value_paise after ratchet
+}
+
+// Emitted by campaignCounter.ts when a campaign pair is minted for an ancestor.
+// event_id is deterministic: campaignAccrualEventId(campaignPairId, beneficiaryId).
+export interface CampaignPairBonusAccrued extends Envelope {
+	event_type: "CampaignPairBonusAccrued";
+	beneficiary_id: number;
+	campaign_pair_id: number;
+	amount_paise: number;
+}
+
+// Emitted by confirmOrder when a member's package_value_paise crosses ≥₹30k.
+// Triggers release of any pending campaign pair accruals for this member.
+// Only emitted during the campaign window.
+export interface CampaignEligibilityReached extends Envelope {
+	event_type: "CampaignEligibilityReached";
+	member_id: number;
+}
+
 export type AvgEvent =
 	| MemberRegistered
 	| MemberActivated
@@ -140,4 +170,7 @@ export type AvgEvent =
 	| CutoffClosed
 	| PayoutBatchCreated
 	| PayoutItemSettled
-	| PayoutItemFailed;
+	| PayoutItemFailed
+	| CampaignUnitsAdded
+	| CampaignPairBonusAccrued
+	| CampaignEligibilityReached;

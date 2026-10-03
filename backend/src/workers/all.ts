@@ -6,6 +6,9 @@ import { run as outboxRelayRun } from "./outboxRelay.js";
 import { run as qualificationRun } from "./qualification.js";
 import { run as rankRun } from "./rank.js";
 import { run as reconcilerRun } from "./reconciler.js";
+// Phase B campaign workers — isolated consumer groups; live files above are untouched.
+import { run as campaignCounterRun } from "./campaignCounter.js";
+import { run as campaignLedgerRun } from "./campaignLedger.js";
 
 // IMPORTANT: run exactly one instance of this process per environment.
 // Redis Streams consumer groups distribute entries across consumers; multiple
@@ -17,7 +20,7 @@ import { run as reconcilerRun } from "./reconciler.js";
 // Note: pairComplete.ts was removed in income-model v2 (carry-forward). Pair
 // detection now happens inside counterPair.ts using the set-to-target algorithm.
 
-console.log("[avg-workers] starting eight worker loops");
+console.log("[avg-workers] starting ten worker loops");
 
 Promise.all([
 	outboxRelayRun(),
@@ -28,6 +31,9 @@ Promise.all([
 	rankRun(),
 	cutoffRun(),
 	reconcilerRun(),
+	// Campaign Phase B — parallel isolated pipelines; no shared state with above.
+	campaignCounterRun(),
+	campaignLedgerRun(),
 ]).catch((err) => {
 	console.error("[avg-workers] fatal", err);
 	process.exit(1);

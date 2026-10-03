@@ -40,6 +40,24 @@ export interface Me {
   /** Delivery address — null until the member sets it (write-once for members;
    *  management can always edit it). */
   deliveryAddress?: DeliveryAddress | null
+  /** Campaign: current package tier in paise (0 = no package yet, 1000000 = ₹10k, etc.) */
+  packageValuePaise?: number
+  /** Campaign: total AVG Coins accumulated across all confirmed campaign orders. */
+  avgCoins?: number
+}
+
+// ---- campaign: AVG Coin airdrop ----
+export interface CoinGrant {
+  id: string
+  coins: number
+  packageValuePaise: number
+  grantedAt: string
+  orderId: string
+}
+
+export interface AvgCoinsRes {
+  totalCoins: number
+  grants: CoinGrant[]
 }
 
 // ---- system settings (management) ----
@@ -316,7 +334,7 @@ export interface LedgerEntry {
   description: string
   direction: 'credit' | 'debit'
   amountPaise: number
-  refType: 'pair' | 'payout' | 'sweep' | 'wsweep' | 'withdrawal' | 'manual'
+  refType: 'pair' | 'campaign_pair' | 'payout' | 'sweep' | 'wsweep' | 'withdrawal' | 'manual'
 }
 
 export interface LedgerRes {

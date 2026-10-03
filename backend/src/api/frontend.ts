@@ -84,25 +84,36 @@ export async function buildMe(memberId: string) {
 		addr_city: string | null;
 		addr_state: string | null;
 		addr_pincode: string | null;
+		package_value_paise: string;
 	}>(
 		`SELECT m.member_code, m.name, m.phone, m.email, m.kyc_status, m.bank_status,
             m.is_active, m.created_at, m.role, m.blocked, s.member_code AS sponsor_code,
             m.pan, m.aadhaar_last4, m.bank_account_name, m.bank_account_number, m.bank_ifsc,
             m.notifications_seen_at,
             m.addr_recipient_name, m.addr_phone, m.addr_line1, m.addr_line2,
-            m.addr_city, m.addr_state, m.addr_pincode
+            m.addr_city, m.addr_state, m.addr_pincode,
+            m.package_value_paise
      FROM members m LEFT JOIN members s ON s.id = m.sponsor_id
      WHERE m.id = $1`,
 		[memberId],
 	);
 	if (!rows[0]) return null;
 	const m = rows[0];
-	const { rows: rk } = await pool().query<{ max: string | null }>(
-		"SELECT MAX(rank_level) AS max FROM rank_achievements WHERE member_id = $1",
-		[memberId],
-	);
-	const level = rk[0]?.max ? parseInt(rk[0].max) : 0;
-	const kycOptional = await getSetting<boolean>("kyc_optional");
+
+	const [rkRes, coinRes, kycOptional] = await Promise.all([
+		pool().query<{ max: string | null }>(
+			"SELECT MAX(rank_level) AS max FROM rank_achievements WHERE member_id = $1",
+			[memberId],
+		),
+		pool().query<{ total: string }>(
+			"SELECT COALESCE(SUM(coins), 0) AS total FROM avg_coin_grants WHERE member_id = $1",
+			[memberId],
+		),
+		getSetting<boolean>("kyc_optional"),
+	]);
+
+	const level = rkRes.rows[0]?.max ? parseInt(rkRes.rows[0].max) : 0;
+	const avgCoins = parseInt(coinRes.rows[0]?.total ?? "0");
 	return {
 		memberCode: m.member_code,
 		name: m.name,
@@ -140,13 +151,16 @@ export async function buildMe(memberId: string) {
 				pincode:       m.addr_pincode ?? "",
 			}
 			: null,
+		packageValuePaise: Number(BigInt(m.package_value_paise)),
+		avgCoins,
 	};
 }
 
 function mapRefType(
 	referenceType: string,
-): "pair" | "payout" | "sweep" | "wsweep" | "withdrawal" | "manual" {
+): "pair" | "campaign_pair" | "payout" | "sweep" | "wsweep" | "withdrawal" | "manual" {
 	if (referenceType === "pair") return "pair";
+	if (referenceType === "campaign_pair") return "campaign_pair";
 	if (referenceType === "payout_item") return "payout";
 	if (referenceType === "sweep") return "sweep";
 	if (referenceType === "wsweep") return "wsweep";
@@ -156,6 +170,7 @@ function mapRefType(
 
 function describe(refType: string, referenceId: string | null): string {
 	if (refType === "pair") return `Pair Match Bonus #${referenceId ?? ""}`;
+	if (refType === "campaign_pair") return `Campaign Pair Bonus #${referenceId ?? ""}`;
 	if (refType === "payout") return "Payout to bank";
 	if (refType === "sweep") return "Weekly cap sweep";
 	if (refType === "wsweep") return "Transferred to withdrawable";
@@ -1588,5 +1603,33 @@ export async function frontendRoutes(app: FastifyInstance) {
 			});
 		}
 		return { levels };
+	});
+
+	// ===== Campaign: AVG Coin grant history =====
+	app.get("/me/avg-coins", auth, async (req) => {
+		const memberId = (req.user as Auth).sub;
+		const { rows } = await pool().query<{
+			id: string;
+			coins: string;
+			package_value_paise: string;
+			granted_at: string;
+			order_id: string;
+		}>(
+			`SELECT id, coins, package_value_paise, granted_at, order_id
+			   FROM avg_coin_grants
+			  WHERE member_id = $1
+			  ORDER BY granted_at DESC`,
+			[memberId],
+		);
+		return {
+			totalCoins: rows.reduce((sum, r) => sum + parseInt(r.coins), 0),
+			grants: rows.map((r) => ({
+				id: r.id,
+				coins: parseInt(r.coins),
+				packageValuePaise: Number(BigInt(r.package_value_paise)),
+				grantedAt: r.granted_at,
+				orderId: r.order_id,
+			})),
+		};
 	});
 }

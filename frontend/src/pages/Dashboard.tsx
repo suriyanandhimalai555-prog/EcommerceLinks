@@ -3,12 +3,13 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import {
   Wallet, GitMerge, TrendingUp, Clock, ArrowUpRight, ShoppingBag,
-  ChevronRight, Info, Trophy, UserPlus, Users, AlertCircle, MapPin,
+  ChevronRight, Info, Trophy, UserPlus, Users, AlertCircle, MapPin, Coins, X,
 } from 'lucide-react'
 import {
   ResponsiveContainer, XAxis, YAxis, CartesianGrid,
   Tooltip, Area, AreaChart,
 } from 'recharts'
+import { useState } from 'react'
 import api from '../lib/api'
 import { formatINR, formatDateTime } from '../lib/format'
 import { StatCard } from '../components/ui/StatCard'
@@ -16,6 +17,7 @@ import { BinaryTree } from '../components/tree/BinaryTree'
 import { CopyField } from '../components/ui/CopyField'
 import { Badge } from '../components/ui/Badge'
 import { SkeletonCard } from '../components/ui/Skeleton'
+import { isWithinCampaign, CAMPAIGN_DATE_LABEL } from '../lib/campaign'
 import type { Dashboard as DashboardType, Me } from '../types/api'
 
 function txIcon(type: string, direction: string) {
@@ -34,6 +36,7 @@ function txColor(type: string, direction: string) {
 export default function Dashboard() {
   const { t } = useTranslation()
   const navigate = useNavigate()
+  const [campaignDismissed, setCampaignDismissed] = useState(false)
 
   const { data: meData } = useQuery<Me>({
     queryKey: ['me'],
@@ -85,6 +88,25 @@ export default function Dashboard() {
         <p className="text-sm text-ink-muted">Welcome back, {meData?.name ?? '—'} 👋</p>
       </div>
 
+      {/* Campaign banner — shown during the AVG Coin Airdrop campaign window */}
+      {isWithinCampaign() && !campaignDismissed && (
+        <div className="relative flex items-start gap-3 bg-gradient-to-r from-amber-500/10 to-yellow-400/10 border border-amber-400/30 rounded-2xl p-4">
+          <Coins size={18} className="text-amber-400 shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-bold text-ink">{t('airdrop.bannerTitle')}</p>
+            <p className="text-xs text-ink-muted mt-0.5">{CAMPAIGN_DATE_LABEL}</p>
+            <p className="text-xs text-ink-muted">{t('airdrop.commissionNote')}</p>
+          </div>
+          <button
+            onClick={() => setCampaignDismissed(true)}
+            className="shrink-0 text-ink-muted hover:text-ink transition-colors"
+            aria-label="Dismiss"
+          >
+            <X size={14} />
+          </button>
+        </div>
+      )}
+
       {/* Address banner — shown to active members who haven't set their address yet */}
       {meData?.isActive && !meData?.deliveryAddress && (
         <div className="flex items-start gap-3 bg-primary/8 border border-primary/20 rounded-2xl p-4">
@@ -125,6 +147,16 @@ export default function Dashboard() {
           icon={<ArrowUpRight />}
           tint="success"
         />
+        {/* AVG Coins card — shown during the campaign or when coins > 0 */}
+        {(isWithinCampaign() || (meData?.avgCoins ?? 0) > 0) && (
+          <StatCard
+            label={t('airdrop.coinsCardLabel')}
+            value={`${meData?.avgCoins ?? 0}`}
+            sub={t('airdrop.coinsCardSub')}
+            icon={<Coins />}
+            tint="warning"
+          />
+        )}
       </div>
 
       {/* Row 2: Network + Pair Match Summary */}

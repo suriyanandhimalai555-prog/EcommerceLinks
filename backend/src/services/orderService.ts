@@ -1,6 +1,8 @@
 import { randomUUID } from "crypto";
 import { writeOutbox } from "../events/outbox.js";
 import { pool, withTxn } from "../lib/db.js";
+import { campaignExtraUnits, coinsForPackageValuePaise, isWithinCampaign } from "../lib/campaign.js";
+import { CFG } from "../config.js";
 import { fromPaise, toPaise } from "../lib/money.js";
 
 /**
@@ -27,6 +29,7 @@ export async function confirmOrder(
 			product_id: string;
 			base_amount: string;
 			status: string;
+			upgrade_to_value_paise: string | null;
 		}>(
 			`UPDATE orders o
 			    SET status        = 'confirmed',
@@ -44,12 +47,12 @@ export async function confirmOrder(
 			    AND o.member_id = m.id
 			    AND o.idempotency_key = $3
 			    AND o.status IN ('created','paid')
-			  RETURNING o.member_id, o.product_id, o.base_amount, o.status`,
+			  RETURNING o.member_id, o.product_id, o.base_amount, o.status, o.upgrade_to_value_paise`,
 			[paymentRef, orderId, gatewayEventId],
 		);
 		if (!rowCount || rowCount === 0) return; // already confirmed or not found
 
-		const { member_id, base_amount } = rows[0];
+		const { member_id, base_amount, upgrade_to_value_paise } = rows[0];
 		const memberId = BigInt(member_id);
 		const bvPaise = toPaise(base_amount);
 
@@ -76,6 +79,80 @@ export async function confirmOrder(
 				order_id: Number(orderId),
 				bv_paise: Number(bvPaise),
 			});
+		}
+
+		// --- Campaign: package-value ratchet + AVG Coin grant ---
+		// For upgrade orders, upgrade_to_value_paise is the target tier (e.g. ₹50k);
+		// for regular orders it's null and we use the order's own base_amount.
+		// Capture old package_value and lock the member row before ratcheting.
+		// FOR UPDATE serialises concurrent upgrade confirms for the same member.
+		// (For the isFirst path the member row is already locked by the is_active UPDATE above.)
+		const { rows: oldPvRows } = await c.query<{ package_value_paise: string }>(
+			`SELECT package_value_paise FROM members WHERE id = $1 FOR UPDATE`,
+			[memberId],
+		);
+		const oldPackagePaise = BigInt(oldPvRows[0]?.package_value_paise ?? "0");
+
+		const effectiveValuePaise = upgrade_to_value_paise
+			? BigInt(upgrade_to_value_paise)
+			: bvPaise;
+
+		// Ratchet: package_value_paise only ever increases.
+		const { rows: pvRows } = await c.query<{ package_value_paise: string }>(
+			`UPDATE members
+			    SET package_value_paise = GREATEST(package_value_paise, $2)
+			  WHERE id = $1
+			  RETURNING package_value_paise`,
+			[memberId, effectiveValuePaise],
+		);
+		const newPackagePaise = BigInt(pvRows[0].package_value_paise);
+		const newPackageValue = Number(newPackagePaise); // for coinsForPackageValuePaise
+
+		if (isWithinCampaign()) {
+			// AVG Coin grant (Phase A).
+			const coins = coinsForPackageValuePaise(newPackageValue);
+			if (coins > 0) {
+				await c.query(
+					`INSERT INTO avg_coin_grants
+					   (member_id, order_id, coins, package_value_paise)
+					 VALUES ($1, $2, $3, $4)
+					 ON CONFLICT (order_id) DO NOTHING`,
+					[memberId, orderId, coins, newPackageValue],
+				);
+			}
+
+			// Phase B: extra-unit tracking.
+			// Emit CampaignUnitsAdded when this confirm moves the member into a higher
+			// campaign unit tier. campaignExtraUnits uses an explicit tier lookup (NOT
+			// arithmetic) so off-tier packages (e.g. the seed product) always produce 0.
+			const oldExtraUnits = campaignExtraUnits(oldPackagePaise);
+			const newExtraUnits = campaignExtraUnits(newPackagePaise);
+			const unitDelta = newExtraUnits - oldExtraUnits;
+			if (unitDelta > 0n) {
+				await writeOutbox(c, {
+					event_id: randomUUID(),
+					event_type: "CampaignUnitsAdded",
+					occurred_at: new Date().toISOString(),
+					schema_version: 1,
+					member_id: Number(memberId),
+					extra_units_delta: Number(unitDelta),
+					new_value_paise: Number(newPackagePaise),
+				});
+			}
+
+			// Emit CampaignEligibilityReached when this confirm first crosses the
+			// eligibility threshold. Triggers release of any pending campaign pair
+			// accruals the member already earned while ineligible.
+			const eligiblePaise = BigInt(CFG.CAMPAIGN_TIER_30K_PAISE);
+			if (oldPackagePaise < eligiblePaise && newPackagePaise >= eligiblePaise) {
+				await writeOutbox(c, {
+					event_id: randomUUID(),
+					event_type: "CampaignEligibilityReached",
+					occurred_at: new Date().toISOString(),
+					schema_version: 1,
+					member_id: Number(memberId),
+				});
+			}
 		}
 	});
 	return { activated };
@@ -215,4 +292,58 @@ export async function createOrder(
 		throw e;
 	}
 	return { orderId: rows[0].id, idempotencyKey, totalPaise, status: "created", wasNew: true };
+}
+
+/**
+ * createUpgradeOrder — create an upgrade order for an already-active member.
+ *
+ * Looks up the inactive upgrade product matching `upgradeTargetPaise` and
+ * inserts an order with the delta base_amount and upgrade_to_value_paise set
+ * so that confirmOrder will ratchet the member's package_value_paise to the
+ * correct target tier rather than the smaller delta amount.
+ *
+ * Returns the orderId + idempotencyKey ready to pass to confirmOrder.
+ */
+export async function createUpgradeOrder(
+	memberId: string,
+	upgradeTargetPaise: number,
+): Promise<{ orderId: string; idempotencyKey: string; totalPaise: bigint }> {
+	const { rows: pRows } = await pool().query<{
+		id: string;
+		base_price: string;
+		upgrade_target_paise: string;
+	}>(
+		`SELECT id, base_price, upgrade_target_paise
+		   FROM products
+		  WHERE upgrade_target_paise = $1
+		  LIMIT 1`,
+		[upgradeTargetPaise],
+	);
+	if (!pRows[0]) {
+		const e = new Error("Upgrade product not found") as Error & { statusCode: number };
+		e.statusCode = 404;
+		throw e;
+	}
+
+	const { id: productId, base_price, upgrade_target_paise } = pRows[0];
+	const basePaise = toPaise(base_price);
+	const idempotencyKey = randomUUID();
+
+	const { rows } = await pool().query<{ id: string }>(
+		`INSERT INTO orders
+		   (member_id, product_id, base_amount, gst_amount, total_amount, idempotency_key, upgrade_to_value_paise)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7)
+		 RETURNING id`,
+		[
+			memberId,
+			productId,
+			fromPaise(basePaise),
+			fromPaise(0n),
+			fromPaise(basePaise),
+			idempotencyKey,
+			upgrade_target_paise,
+		],
+	);
+
+	return { orderId: rows[0].id, idempotencyKey, totalPaise: basePaise };
 }

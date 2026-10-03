@@ -80,6 +80,28 @@ function route(e: AvgEvent): RouteInfo {
 				aggregateType: "payout_item",
 				aggregateId: BigInt(e.payout_item_id),
 			};
+		// --- Campaign events (Phase B) ---
+		case "CampaignUnitsAdded":
+			return {
+				topic: TOPICS.campaignUnits.name,
+				partitionKey: String(e.member_id),
+				aggregateType: "member",
+				aggregateId: BigInt(e.member_id),
+			};
+		case "CampaignPairBonusAccrued":
+			return {
+				topic: TOPICS.ledger.name,
+				partitionKey: String(e.beneficiary_id),
+				aggregateType: "member",
+				aggregateId: BigInt(e.beneficiary_id),
+			};
+		case "CampaignEligibilityReached":
+			return {
+				topic: TOPICS.ledger.name,
+				partitionKey: String(e.member_id),
+				aggregateType: "member",
+				aggregateId: BigInt(e.member_id),
+			};
 	}
 }
 

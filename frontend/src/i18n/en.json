@@ -765,5 +765,22 @@
     "colKyc": "KYC",
     "colBank": "Bank",
     "colJoined": "Joined"
+  },
+  "airdrop": {
+    "bannerTitle": "MEGA AVG Coin Airdrop Offer",
+    "bannerSubtitle": "2 October – 5 November 2026 • Celebrate Together • Grow Together • Get Rewarded",
+    "bannerCta": "Learn more →",
+    "coinsCardLabel": "AVG Coins",
+    "coinsCardSub": "Campaign airdrop balance",
+    "coinsUnit": "AVG Coins",
+    "packageLabel": "Package Tier",
+    "noCoinsYet": "No coins earned yet. Join or upgrade during the campaign to earn AVG Coins.",
+    "grantedOn": "Granted on",
+    "historyTitle": "AVG Coin Grant History",
+    "tierNew30k": "₹30,000 Package — 250 AVG Coins",
+    "tierNew50k": "₹50,000 Package — 500 AVG Coins",
+    "tierUpgrade30k": "Upgrade to ₹30,000 — 250 AVG Coins",
+    "tierUpgrade50k": "Upgrade to ₹50,000 — 500 AVG Coins",
+    "commissionNote": "Your own ID must be upgraded to ₹30,000 or ₹50,000 to qualify for campaign-related Pair Matching Commission."
   }
 }

@@ -63,3 +63,13 @@ export function txnUuid(idempotencyKey: string): string {
 export function pairAccrualEventId(pairId: bigint, beneficiaryId: bigint): string {
 	return uuidv5(`pairbonus:${pairId}:${beneficiaryId}`, FANOUT_NS);
 }
+
+/**
+ * Deterministic event_id for a CampaignPairBonusAccrued event.
+ * Key prefix is "campaignbonus:" (distinct from "pairbonus:") — live pair_id and
+ * campaign_pair_id are independent BIGSERIAL sequences and could share numeric
+ * values; the prefix keeps their idempotency keys non-overlapping.
+ */
+export function campaignAccrualEventId(campaignPairId: bigint, beneficiaryId: bigint): string {
+	return uuidv5(`campaignbonus:${campaignPairId}:${beneficiaryId}`, FANOUT_NS);
+}
