@@ -152,7 +152,11 @@ export default function Dashboard() {
           <StatCard
             label={t('airdrop.coinsCardLabel')}
             value={`${meData?.avgCoins ?? 0}`}
-            sub={t('airdrop.coinsCardSub')}
+            sub={
+              (meData?.packageValuePaise ?? 0) > 0
+                ? `${t('airdrop.packageTierLabel')}: ${formatINR(meData!.packageValuePaise!)}`
+                : t('airdrop.coinsCardSub')
+            }
             icon={<Coins />}
             tint="warning"
           />

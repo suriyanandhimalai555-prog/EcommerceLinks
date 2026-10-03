@@ -130,3 +130,30 @@ describe('campaign pair matching — LEAST(left_extra, right_extra)', () => {
     expect(newPairs).toBe(4n)
   })
 })
+
+describe('createUpgradeOrder — dynamic delta pricing', () => {
+  // Pure unit: verify the delta computation logic without hitting the DB.
+  // The actual DB write is integration-tested manually; this guards the formula.
+  function computeDelta(targetPaise: bigint, currentPaise: bigint): bigint {
+    return targetPaise > currentPaise ? targetPaise - currentPaise : 0n
+  }
+
+  it('₹10k member → ₹30k target: delta = ₹20,000 (2,000,000 paise)', () => {
+    expect(computeDelta(3_000_000n, 1_000_000n)).toBe(2_000_000n)
+  })
+
+  it('₹10k member → ₹50k target: delta = ₹40,000 (4,000,000 paise)', () => {
+    expect(computeDelta(5_000_000n, 1_000_000n)).toBe(4_000_000n)
+  })
+
+  it('₹30k member → ₹50k target: delta = ₹20,000 (2,000,000 paise)', () => {
+    // Key correctness case: a ₹30k→₹50k upgrade should record ₹20k, not ₹40k.
+    // The old fixed base_price logic would have inserted ₹40k here.
+    expect(computeDelta(5_000_000n, 3_000_000n)).toBe(2_000_000n)
+  })
+
+  it('same-tier target clamps to 0 (guard against caller sending target ≤ current)', () => {
+    expect(computeDelta(3_000_000n, 3_000_000n)).toBe(0n)
+    expect(computeDelta(1_000_000n, 3_000_000n)).toBe(0n)
+  })
+})

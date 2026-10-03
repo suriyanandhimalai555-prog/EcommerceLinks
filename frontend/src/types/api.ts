@@ -532,6 +532,8 @@ export interface AdminMemberRow {
   sponsorName: string | null
   /** Delivery address on file for this member. Null = not yet set. */
   deliveryAddress: DeliveryAddress | null
+  /** Current campaign package tier in paise (0 = base ₹10k / no upgrade). */
+  packageValuePaise: number
 }
 
 export interface AdminMemberExportRow {

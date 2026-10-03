@@ -308,12 +308,13 @@ export async function createUpgradeOrder(
 	memberId: string,
 	upgradeTargetPaise: number,
 ): Promise<{ orderId: string; idempotencyKey: string; totalPaise: bigint }> {
+	// Look up the upgrade product (used only as an FK vehicle — its base_price is
+	// the fixed delta from ₹10k, not from the member's current tier).
 	const { rows: pRows } = await pool().query<{
 		id: string;
-		base_price: string;
 		upgrade_target_paise: string;
 	}>(
-		`SELECT id, base_price, upgrade_target_paise
+		`SELECT id, upgrade_target_paise
 		   FROM products
 		  WHERE upgrade_target_paise = $1
 		  LIMIT 1`,
@@ -325,8 +326,22 @@ export async function createUpgradeOrder(
 		throw e;
 	}
 
-	const { id: productId, base_price, upgrade_target_paise } = pRows[0];
-	const basePaise = toPaise(base_price);
+	// Compute the true delta: target tier − member's current package value.
+	// This is what the member actually owes, and what gets recorded on the order.
+	// confirmOrder ratchets package_value_paise via upgrade_to_value_paise, not
+	// base_amount, so recording the true delta here is safe and does not affect
+	// the tier ratchet or campaign-unit logic.
+	const { rows: mRows } = await pool().query<{ package_value_paise: string }>(
+		`SELECT package_value_paise FROM members WHERE id = $1`,
+		[memberId],
+	);
+	const currentPaise = BigInt(mRows[0]?.package_value_paise ?? "0");
+	const targetPaise  = BigInt(upgradeTargetPaise);
+	// Clamp to 0 in case the caller somehow passes a target ≤ current (the
+	// admin endpoint already guards against this, but be safe).
+	const deltaPaise = targetPaise > currentPaise ? targetPaise - currentPaise : 0n;
+
+	const { id: productId, upgrade_target_paise } = pRows[0];
 	const idempotencyKey = randomUUID();
 
 	const { rows } = await pool().query<{ id: string }>(
@@ -337,13 +352,13 @@ export async function createUpgradeOrder(
 		[
 			memberId,
 			productId,
-			fromPaise(basePaise),
+			fromPaise(deltaPaise),
 			fromPaise(0n),
-			fromPaise(basePaise),
+			fromPaise(deltaPaise),
 			idempotencyKey,
 			upgrade_target_paise,
 		],
 	);
 
-	return { orderId: rows[0].id, idempotencyKey, totalPaise: basePaise };
+	return { orderId: rows[0].id, idempotencyKey, totalPaise: deltaPaise };
 }

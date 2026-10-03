@@ -1231,6 +1231,7 @@ export async function adminRoutes(app: FastifyInstance) {
 			created_at: string;
 			activated_at: string | null;
 			bank_details_submitted_at: string | null;
+			package_value_paise: string;
 			has_documents: boolean;
 			kyc_submitted_at: string | null;
 			kyc_verified_at: string | null;
@@ -1247,6 +1248,7 @@ export async function adminRoutes(app: FastifyInstance) {
 		}>(
 			`SELECT m.id, m.member_code, m.name, m.phone, m.email,
 			        m.is_active, m.is_qualified, m.role, m.kyc_status, m.bank_status, m.blocked, m.created_at, m.activated_at, m.bank_details_submitted_at,
+			        m.package_value_paise,
 			        (SELECT COUNT(*) > 0 FROM kyc_documents kd WHERE kd.member_id = m.id) AS has_documents,
 			        (SELECT MAX(kd.uploaded_at) FROM kyc_documents kd WHERE kd.member_id = m.id) AS kyc_submitted_at,
 			        (SELECT MAX(al.created_at) FROM admin_audit_log al
@@ -1285,6 +1287,7 @@ export async function adminRoutes(app: FastifyInstance) {
 				kycSubmittedAt: m.kyc_submitted_at,
 				kycVerifiedAt: m.kyc_status === 'verified' ? m.kyc_verified_at : null,
 				bankVerifiedAt: m.bank_status === 'verified' ? m.bank_verified_at : null,
+				packageValuePaise: Number(BigInt(m.package_value_paise ?? "0")),
 				sponsorCode: m.sponsor_code,
 				sponsorName: m.sponsor_name,
 				deliveryAddress: m.addr_recipient_name

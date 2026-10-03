@@ -30,6 +30,7 @@
     "adminOrders": "Orders",
     "adminRecordPayment": "Record Payment",
     "adminEarnings": "Earnings Report",
+    "adminUpgrade": "Campaign Upgrade",
     "logout": "Logout"
   },
   "adminSettings": {
@@ -507,6 +508,34 @@
       "addrState": "State",
       "addrPincode": "Pincode"
     },
+    "upgrade": {
+      "title": "Campaign Upgrade",
+      "subtitle": "Upgrade an active member to a higher campaign package tier. Payment is collected separately offline.",
+      "step1": "Select Member",
+      "searchPlaceholder": "Search by name, code, or phone…",
+      "noResults": "No members found",
+      "currentTier": "Current Package",
+      "tierBase": "₹10,000 (Base)",
+      "tier30k": "₹30,000",
+      "tier50k": "₹50,000",
+      "step2": "Select Target Tier",
+      "targetLabel": "Upgrade to",
+      "deltaLabel": "Amount to collect",
+      "coinsLabel": "AVG Coins granted",
+      "alreadyTopTier": "This member is already at the top tier (₹50,000). No further upgrade is possible.",
+      "step3": "Payment Reference",
+      "paymentRefLabel": "Bank UTR / Reference",
+      "paymentRefPlaceholder": "e.g. UTR number from offline bank transfer",
+      "submit": "Confirm Upgrade",
+      "successTitle": "Member Upgraded!",
+      "successBody": "{{name}} has been upgraded to {{tier}} and will receive {{coins}} AVG Coins.",
+      "upgradeAnother": "Upgrade Another Member",
+      "campaignEndedWarning": "The campaign window has ended. This will set the package tier but will NOT grant AVG Coins.",
+      "errorNotActive": "Member is not yet active. Activate them first via Record Payment.",
+      "errorAlreadyAtTier": "Member is already at or above this tier.",
+      "errorManagement": "Cannot upgrade a management account.",
+      "errorGeneric": "Upgrade failed. Please try again."
+    },
     "orders": {
       "title": "Orders",
       "subtitle": "Review uploaded payment screenshots and approve to activate member accounts.",
@@ -781,6 +810,8 @@
     "tierNew50k": "₹50,000 Package — 500 AVG Coins",
     "tierUpgrade30k": "Upgrade to ₹30,000 — 250 AVG Coins",
     "tierUpgrade50k": "Upgrade to ₹50,000 — 500 AVG Coins",
-    "commissionNote": "Your own ID must be upgraded to ₹30,000 or ₹50,000 to qualify for campaign-related Pair Matching Commission."
+    "commissionNote": "Your own ID must be upgraded to ₹30,000 or ₹50,000 to qualify for campaign-related Pair Matching Commission.",
+    "packageTierLabel": "Campaign Package",
+    "packageTierValue": "₹{{amount}}"
   }
 }
