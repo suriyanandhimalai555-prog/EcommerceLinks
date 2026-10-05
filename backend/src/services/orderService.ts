@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { writeOutbox } from "../events/outbox.js";
 import { pool, withTxn } from "../lib/db.js";
-import { campaignExtraUnits, coinsForPackageValuePaise, isWithinCampaign } from "../lib/campaign.js";
+import { coinsForPackageValuePaise, isWithinCampaign, unitsForPackageValuePaise } from "../lib/campaign.js";
 import { CFG } from "../config.js";
 import { fromPaise, toPaise } from "../lib/money.js";
 
@@ -121,21 +121,30 @@ export async function confirmOrder(
 				);
 			}
 
-			// Phase B: extra-unit tracking.
-			// Emit CampaignUnitsAdded when this confirm moves the member into a higher
-			// campaign unit tier. campaignExtraUnits uses an explicit tier lookup (NOT
-			// arithmetic) so off-tier packages (e.g. the seed product) always produce 0.
-			const oldExtraUnits = campaignExtraUnits(oldPackagePaise);
-			const newExtraUnits = campaignExtraUnits(newPackagePaise);
-			const unitDelta = newExtraUnits - oldExtraUnits;
-			if (unitDelta > 0n) {
+			// Phase B: total-unit tracking.
+			// Emit CampaignUnitsAdded for every in-window activation or upgrade that
+			// changes the member's unit or headcount contribution to the campaign layer.
+			//
+			// member_delta = 1 on first activation (a new head enters the tree);
+			//              = 0 on a pure upgrade (head was already counted).
+			// For a new activation the old package is effectively 0 — the head was not
+			// in the tree before, so oldUnits = 0n regardless of the product tier.
+			//
+			// campaignCounter.ts fans both deltas up the path and computes:
+			//   T − B  where T = LEAST(total_units) and B = LEAST(headcount),
+			// paying only the top-up above what the live engine already covers.
+			const memberDelta = activated ? 1 : 0;
+			const oldUnits = activated ? 0n : unitsForPackageValuePaise(oldPackagePaise);
+			const unitDelta = unitsForPackageValuePaise(newPackagePaise) - oldUnits;
+			if (memberDelta > 0 || unitDelta > 0n) {
 				await writeOutbox(c, {
 					event_id: randomUUID(),
 					event_type: "CampaignUnitsAdded",
 					occurred_at: new Date().toISOString(),
 					schema_version: 1,
 					member_id: Number(memberId),
-					extra_units_delta: Number(unitDelta),
+					member_delta: memberDelta,
+					unit_delta: Number(unitDelta),
 					new_value_paise: Number(newPackagePaise),
 				});
 			}

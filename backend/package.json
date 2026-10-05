@@ -33,7 +33,8 @@
     "reconstruct:payouts": "tsx scripts/reconstructWeeklyPayouts.ts",
     "forfeit:root-overage": "tsx scripts/forfeitRootOverage.ts",
     "dedupe:orders": "tsx scripts/dedupeRepeatOrders.ts",
-    "db:dump": "node scripts/dumpDatabase.js"
+    "db:dump": "node scripts/dumpDatabase.js",
+    "campaign:reconcile": "tsx scripts/campaignReconcile.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1085.0",

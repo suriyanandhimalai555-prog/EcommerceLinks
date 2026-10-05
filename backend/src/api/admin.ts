@@ -3287,7 +3287,10 @@ export async function adminRoutes(app: FastifyInstance) {
 
 	// ===== Campaign upgrade (management-only) =====
 	// Records an offline delta payment and upgrades a member's package tier.
-	// Only valid for active ₹10,000 members during the campaign window.
+	// The tier ratchet (package_value_paise) is permanent and not window-gated.
+	// AVG coins and campaign units are granted only when isWithinCampaign() —
+	// this is enforced inside confirmOrder, not here.  Upgrades recorded outside
+	// the campaign window simply earn no campaign rewards (silent, not an error).
 	const UpgradeBody = z.object({
 		memberId: z.string().min(1),
 		targetTierPaise: z.union([z.literal(3000000), z.literal(5000000)]),

@@ -128,14 +128,24 @@ export interface PayoutItemFailed extends Envelope {
 // --- Campaign pair-matching events (Phase B) ---
 // Live pair-matching events above are untouched; these are a parallel campaign layer.
 
-// Emitted by confirmOrder when a member's campaign extra-unit count increases.
-// Covers both new joins at ≥₹30k and upgrades. extra_units_delta is always > 0.
+// Emitted by confirmOrder for every in-window activation or upgrade that changes a
+// member's unit count or headcount contribution to the campaign layer.
+//
+// member_delta = 1 for a first activation (new head counted); 0 for a pure upgrade.
+// unit_delta   = change in TOTAL campaign units (₹10k→1, ₹30k→3, ₹50k→5); always ≥ 0.
+// At least one of member_delta or unit_delta is > 0 (never emitted otherwise).
+//
+// campaignCounter.ts fans both deltas up the placement path and computes:
+//   T = LEAST(left_units, right_units)    — §4 total-unit match
+//   B = LEAST(left_members, right_members) — live-engine headcount base
+//   target = GREATEST(priorMatched, T − B) — top-up only; no double-count
 // Only emitted during the campaign window.
 export interface CampaignUnitsAdded extends Envelope {
 	event_type: "CampaignUnitsAdded";
 	member_id: number;
-	extra_units_delta: number;   // always > 0; bigint-safe (max 4 per event)
-	new_value_paise: number;     // member's new package_value_paise after ratchet
+	member_delta: number;     // 1 = first activation; 0 = upgrade of existing head
+	unit_delta: number;       // change in total campaign units (0–5); bigint-safe
+	new_value_paise: number;  // member's new package_value_paise after ratchet
 }
 
 // Emitted by campaignCounter.ts when a campaign pair is minted for an ancestor.

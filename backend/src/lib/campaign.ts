@@ -19,6 +19,30 @@ export function coinsForPackageValuePaise(valuePaise: number): number {
 }
 
 /**
+ * Returns the TOTAL campaign matching units for the given final package value.
+ * Includes the base 1-unit that the live engine pays per activated head.
+ *
+ * Uses an explicit tier lookup (NOT arithmetic) so off-tier packages (e.g. the
+ * ₹25k seed product) never produce fractional or unexpected unit counts.
+ *
+ *   ₹0 / inactive   → 0  (not a campaign-tier member)
+ *   ₹10,000         → 1  (base tier — same 1 unit the live engine counts)
+ *   ₹30,000         → 3
+ *   ₹50,000         → 5
+ *   off-tier/other  → 0
+ *
+ * Used by confirmOrder to emit CampaignUnitsAdded with total-unit semantics.
+ * campaignCounter.ts subtracts the live headcount base (B) so the campaign
+ * pays only the top-up T − B; no head is counted twice.
+ */
+export function unitsForPackageValuePaise(valuePaise: bigint): bigint {
+	if (valuePaise >= BigInt(CFG.CAMPAIGN_TIER_50K_PAISE)) return 5n;
+	if (valuePaise >= BigInt(CFG.CAMPAIGN_TIER_30K_PAISE)) return 3n;
+	if (valuePaise === 1_000_000n) return 1n; // ₹10,000 canonical base product
+	return 0n;
+}
+
+/**
  * Returns the number of EXTRA campaign matching units for the given package value.
  * "Extra" means beyond the base 1 unit the live flat engine already pays.
  *
