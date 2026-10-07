@@ -34,7 +34,8 @@
     "forfeit:root-overage": "tsx scripts/forfeitRootOverage.ts",
     "dedupe:orders": "tsx scripts/dedupeRepeatOrders.ts",
     "db:dump": "node scripts/dumpDatabase.js",
-    "campaign:reconcile": "tsx scripts/campaignReconcile.ts"
+    "campaign:reconcile": "tsx scripts/campaignReconcile.ts",
+    "campaign:coins-audit": "tsx scripts/campaignCoinsAudit.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1085.0",

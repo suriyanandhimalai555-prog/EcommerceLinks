@@ -109,15 +109,23 @@ export async function confirmOrder(
 		const newPackageValue = Number(newPackagePaise); // for coinsForPackageValuePaise
 
 		if (isWithinCampaign()) {
-			// AVG Coin grant (Phase A).
-			const coins = coinsForPackageValuePaise(newPackageValue);
-			if (coins > 0) {
+			// AVG Coin grant (Phase A) — per-order DELTA, not final-tier total.
+			// Granting the delta (new-tier coins − old-tier coins) ensures any upgrade
+			// path to a given tier totals exactly that tier's coin allocation:
+			//   ₹10k→₹30k (250) then ₹30k→₹50k (250) = 500 total ✓
+			//   ₹10k→₹50k direct (500) = 500 total ✓
+			// oldPackagePaise was captured before the ratchet above (under FOR UPDATE)
+			// so it reflects the member's tier before this confirming order.
+			const coinDelta =
+				coinsForPackageValuePaise(newPackageValue) -
+				coinsForPackageValuePaise(Number(oldPackagePaise));
+			if (coinDelta > 0) {
 				await c.query(
 					`INSERT INTO avg_coin_grants
 					   (member_id, order_id, coins, package_value_paise)
 					 VALUES ($1, $2, $3, $4)
 					 ON CONFLICT (order_id) DO NOTHING`,
-					[memberId, orderId, coins, newPackageValue],
+					[memberId, orderId, coinDelta, newPackageValue],
 				);
 			}
 

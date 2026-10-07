@@ -204,6 +204,66 @@ describe('campaign pair matching — total-unit formula T−B (mandatory test ca
   })
 })
 
+// ─── AVG Coin grant — per-order delta, not final-tier total ──────────────────
+//
+// confirmOrder now grants:
+//   coinDelta = coinsForPackageValuePaise(newPkg) - coinsForPackageValuePaise(oldPkg)
+//
+// This ensures any upgrade PATH to a tier totals that tier's allocation.
+
+describe('campaign coin grant — delta, not final-tier total', () => {
+  // Mirrors coinsForPackageValuePaise in src/lib/campaign.ts
+  function coins(paise: number): number {
+    if (paise >= 5_000_000) return 500
+    if (paise >= 3_000_000) return 250
+    return 0
+  }
+  function coinDelta(newPaise: number, oldPaise: number): number {
+    return coins(newPaise) - coins(oldPaise)
+  }
+
+  const P0   = 0          // inactive / new member before any confirm
+  const P10K = 1_000_000
+  const P30K = 3_000_000
+  const P50K = 5_000_000
+  const P25K = 2_500_000  // off-tier seed product
+
+  // ── Two-step upgrade: headline case (was the bug) ─────────────────────────
+  it('₹10k→₹30k then ₹30k→₹50k: grants 250+250, totalling 500 (not 750)', () => {
+    const step1 = coinDelta(P30K, P10K)   // 250 − 0 = 250
+    const step2 = coinDelta(P50K, P30K)   // 500 − 250 = 250
+    expect(step1).toBe(250)
+    expect(step2).toBe(250)
+    expect(step1 + step2).toBe(500)
+  })
+
+  // ── Direct paths ──────────────────────────────────────────────────────────
+  it('₹10k→₹50k direct grants 500', () => {
+    expect(coinDelta(P50K, P10K)).toBe(500)
+  })
+  it('new join at ₹30k (old=0) grants 250', () => {
+    expect(coinDelta(P30K, P0)).toBe(250)
+  })
+  it('new join at ₹50k (old=0) grants 500', () => {
+    expect(coinDelta(P50K, P0)).toBe(500)
+  })
+
+  // ── Zero-delta cases (no grant row emitted) ───────────────────────────────
+  it('₹10k join (old=0) grants 0', () => {
+    expect(coinDelta(P10K, P0)).toBe(0)
+  })
+  it('re-confirm same tier (₹50k→₹50k ratchet) grants 0', () => {
+    expect(coinDelta(P50K, P50K)).toBe(0)
+  })
+  it('off-tier ₹25k seed product grants 0', () => {
+    // coinsForPackageValuePaise uses threshold comparison so ₹25k < ₹30k → 0
+    expect(coinDelta(P25K, P0)).toBe(0)
+  })
+  it('₹10k→₹30k→₹30k re-confirm grants 0 on second confirm', () => {
+    expect(coinDelta(P30K, P30K)).toBe(0)
+  })
+})
+
 // ─── createUpgradeOrder — dynamic delta pricing (unchanged) ──────────────────
 
 describe('createUpgradeOrder — dynamic delta pricing', () => {
