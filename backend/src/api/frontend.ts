@@ -30,6 +30,7 @@ import {
 	imagesByProduct,
 } from "../services/productService.js";
 import { getSetting } from "../services/settings.js";
+import { getMemberCoinTotal } from "../services/coinService.js";
 import { AddressBody, isCompleteAddress } from "../lib/address.js";
 
 // Display names the frontend expects (index 1..12)
@@ -65,7 +66,7 @@ export async function buildMe(memberId: string) {
 		phone: string;
 		email: string | null;
 		kyc_status: string;
-		bank_status: string;
+		bank_status: string;	
 		is_active: boolean;
 		created_at: string;
 		role: string;
@@ -100,20 +101,17 @@ export async function buildMe(memberId: string) {
 	if (!rows[0]) return null;
 	const m = rows[0];
 
-	const [rkRes, coinRes, kycOptional] = await Promise.all([
+	const [rkRes, avgCoins, kycOptional] = await Promise.all([
 		pool().query<{ max: string | null }>(
 			"SELECT MAX(rank_level) AS max FROM rank_achievements WHERE member_id = $1",
 			[memberId],
 		),
-		pool().query<{ total: string }>(
-			"SELECT COALESCE(SUM(coins), 0) AS total FROM avg_coin_grants WHERE member_id = $1",
-			[memberId],
-		),
+		// Total = campaign grants + manual adjustments (coin_adjustments table, migration 049)
+		getMemberCoinTotal(memberId),
 		getSetting<boolean>("kyc_optional"),
 	]);
 
 	const level = rkRes.rows[0]?.max ? parseInt(rkRes.rows[0].max) : 0;
-	const avgCoins = parseInt(coinRes.rows[0]?.total ?? "0");
 	return {
 		memberCode: m.member_code,
 		name: m.name,
@@ -1606,30 +1604,53 @@ export async function frontendRoutes(app: FastifyInstance) {
 	});
 
 	// ===== Campaign: AVG Coin grant history =====
+	// totalCoins = SUM(avg_coin_grants.coins) + SUM(coin_adjustments.delta)
+	// so manual management corrections are reflected here.
 	app.get("/me/avg-coins", auth, async (req) => {
 		const memberId = (req.user as Auth).sub;
-		const { rows } = await pool().query<{
-			id: string;
-			coins: string;
-			package_value_paise: string;
-			granted_at: string;
-			order_id: string;
-		}>(
-			`SELECT id, coins, package_value_paise, granted_at, order_id
-			   FROM avg_coin_grants
-			  WHERE member_id = $1
-			  ORDER BY granted_at DESC`,
-			[memberId],
-		);
-		return {
-			totalCoins: rows.reduce((sum, r) => sum + parseInt(r.coins), 0),
-			grants: rows.map((r) => ({
-				id: r.id,
-				coins: parseInt(r.coins),
-				packageValuePaise: Number(BigInt(r.package_value_paise)),
-				grantedAt: r.granted_at,
-				orderId: r.order_id,
-			})),
-		};
+		const [grantsRes, adjustRes] = await Promise.all([
+			pool().query<{
+				id: string;
+				coins: string;
+				package_value_paise: string;
+				granted_at: string;
+				order_id: string;
+			}>(
+				`SELECT id, coins, package_value_paise, granted_at, order_id
+				   FROM avg_coin_grants
+				  WHERE member_id = $1
+				  ORDER BY granted_at DESC`,
+				[memberId],
+			),
+			pool().query<{
+				id: string;
+				delta: string;
+				reason: string;
+				created_at: string;
+			}>(
+				`SELECT id, delta, reason, created_at
+				   FROM coin_adjustments
+				  WHERE member_id = $1
+				  ORDER BY created_at DESC`,
+				[memberId],
+			),
+		]);
+		const grants = grantsRes.rows.map((r) => ({
+			id: r.id,
+			coins: parseInt(r.coins),
+			packageValuePaise: Number(BigInt(r.package_value_paise)),
+			grantedAt: r.granted_at,
+			orderId: r.order_id,
+		}));
+		const adjustments = adjustRes.rows.map((r) => ({
+			id: r.id,
+			delta: parseInt(r.delta),
+			reason: r.reason,
+			createdAt: r.created_at,
+		}));
+		const totalCoins =
+			grants.reduce((sum, r) => sum + r.coins, 0) +
+			adjustments.reduce((sum, r) => sum + r.delta, 0);
+		return { totalCoins, grants, adjustments };
 	});
 }

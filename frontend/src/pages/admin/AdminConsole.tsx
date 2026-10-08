@@ -18,7 +18,7 @@ import { RecordPaymentTab } from './RecordPaymentTab'
 import { AdminNetworkTab } from './AdminNetworkTab'
 import { WithdrawalsTab } from './WithdrawalsTab'
 import { EarningsTab } from './EarningsTab'
-import { UpgradeTab } from './UpgradeTab'
+import { UpgradePage } from './UpgradePage'
 
 const sections = [
   { path: '/admin', label: 'Overview', end: true },
@@ -96,7 +96,7 @@ export default function AdminConsole() {
         {isManagement(me) && <Route path="record-payment" element={<RecordPaymentTab />} />}
         {isManagement(me) && <Route path="network" element={<AdminNetworkTab />} />}
         {isManagement(me) && <Route path="earnings" element={<EarningsTab />} />}
-        {isManagement(me) && <Route path="upgrade" element={<UpgradeTab />} />}
+        {isManagement(me) && <Route path="upgrade" element={<UpgradePage />} />}
         <Route path="ranks" element={<RanksTab />} />
         <Route path="withdrawals" element={<WithdrawalsTab />} />
         <Route path="system" element={<SystemTab />} />

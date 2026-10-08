@@ -55,9 +55,30 @@ export interface CoinGrant {
   orderId: string
 }
 
+/** Manual management adjustment row (coin_adjustments table, migration 049). */
+export interface CoinAdjustment {
+  id: string
+  delta: number   // positive = add, negative = deduct
+  reason: string
+  createdAt: string
+}
+
 export interface AvgCoinsRes {
   totalCoins: number
   grants: CoinGrant[]
+  /** Management adjustments, included after migration 049. */
+  adjustments?: CoinAdjustment[]
+}
+
+/** Full coin detail returned by GET /admin/members/:id/coins */
+export interface AdminMemberCoins {
+  memberId: string
+  name: string
+  memberCode: string
+  packageValuePaise: number
+  totalCoins: number
+  grants: CoinGrant[]
+  adjustments: CoinAdjustment[]
 }
 
 // ---- system settings (management) ----

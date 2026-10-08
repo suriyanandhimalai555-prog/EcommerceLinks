@@ -30,7 +30,7 @@
     "adminOrders": "Orders",
     "adminRecordPayment": "Record Payment",
     "adminEarnings": "Earnings Report",
-    "adminUpgrade": "Campaign Upgrade",
+    "adminUpgrade": "Upgrade & Coins",
     "logout": "Logout"
   },
   "adminSettings": {
@@ -509,6 +509,7 @@
       "addrPincode": "Pincode"
     },
     "upgrade": {
+      "tabUpgrade": "Package Upgrade",
       "title": "Campaign Upgrade",
       "subtitle": "Upgrade an active member to a higher campaign package tier. Payment is collected separately offline.",
       "step1": "Select Member",
@@ -535,6 +536,37 @@
       "errorAlreadyAtTier": "Member is already at or above this tier.",
       "errorManagement": "Cannot upgrade a management account.",
       "errorGeneric": "Upgrade failed. Please try again."
+    },
+    "coins": {
+      "tab": "AVG Coins",
+      "title": "AVG Coin Adjustment",
+      "subtitle": "Manually add or deduct AVG Coins from a member's balance. All changes are audit-logged.",
+      "step1": "Select Member",
+      "step2": "Adjustment",
+      "searchPlaceholder": "Search by name, code, or phone…",
+      "loadingBalance": "Loading balance…",
+      "currentBalance": "Current balance",
+      "modeAdd": "Add Coins",
+      "modeDeduct": "Deduct Coins",
+      "amountLabel": "Number of coins",
+      "amountPlaceholder": "e.g. 50",
+      "afterAdd": "New balance after adding: {{result}} coins",
+      "afterDeduct": "New balance after deducting: {{result}} coins",
+      "reasonLabel": "Reason",
+      "reasonPlaceholder": "e.g. Goodwill grant, correction for over-grant…",
+      "submitAdd": "Add {{coins}} Coins",
+      "submitDeduct": "Deduct {{coins}} Coins",
+      "successTitle": "Balance Updated!",
+      "successBodyAdd": "{{coins}} coins added to {{name}}'s account.",
+      "successBodyDeduct": "{{coins}} coins deducted from {{name}}'s account.",
+      "newTotal": "New total: {{total}} AVG Coins",
+      "adjustAnother": "Adjust Again",
+      "changeMember": "Change Member",
+      "historyTitle": "Coin History",
+      "historyGrant": "Campaign grant",
+      "historyAdjustment": "Manual adjustment",
+      "errorNegative": "This deduction would make the balance negative. Reduce the amount.",
+      "errorGeneric": "Adjustment failed. Please try again."
     },
     "orders": {
       "title": "Orders",

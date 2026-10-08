@@ -30,6 +30,7 @@ import {
 } from "../services/productService.js";
 import { postLedgerTxn } from "../workers/ledger.js";
 import { confirmOrder, createOrder, createUpgradeOrder, markDelivered, unmarkDelivered } from "../services/orderService.js";
+import { adjustMemberCoins, getMemberCoins } from "../services/coinService.js";
 import { deleteInactiveMember } from "../services/placement.js";
 import { AddressBody, isCompleteAddress } from "../lib/address.js";
 
@@ -3345,6 +3346,52 @@ export async function adminRoutes(app: FastifyInstance) {
 		);
 
 		return { ok: true, orderId };
+	});
+
+	// ===== AVG Coin adjustments (management-only) =====
+	// GET  /admin/members/:id/coins        — member coin detail + history
+	// POST /admin/members/:id/coins/adjust — apply signed delta (add or deduct)
+
+	app.get("/members/:id/coins", auth, async (req, reply) => {
+		const actor = req.user as { sub: string };
+		if (!(await isManagement(actor.sub)))
+			return reply.status(403).send({ error: "Management only" });
+
+		const { id } = req.params as { id: string };
+		const detail = await getMemberCoins(id);
+		if (!detail) return reply.status(404).send({ error: "Member not found" });
+		return detail;
+	});
+
+	const CoinAdjustBody = z.object({
+		delta: z
+			.number()
+			.int("Must be a whole number")
+			.refine((n) => n !== 0, "Delta must not be zero"),
+		reason: z.string().trim().min(1, "Reason is required").max(280, "Reason too long"),
+	});
+
+	app.post("/members/:id/coins/adjust", auth, async (req, reply) => {
+		const actor = req.user as { sub: string };
+		if (!(await isManagement(actor.sub)))
+			return reply.status(403).send({ error: "Management only" });
+
+		const { id } = req.params as { id: string };
+		const body = CoinAdjustBody.safeParse(req.body);
+		if (!body.success)
+			return reply.status(400).send({ error: body.error.flatten() });
+
+		const { delta, reason } = body.data;
+
+		try {
+			const totalCoins = await adjustMemberCoins(id, actor.sub, delta, reason);
+			return { ok: true, totalCoins };
+		} catch (e: unknown) {
+			const err = e as { statusCode?: number; message?: string };
+			return reply
+				.status(err.statusCode ?? 500)
+				.send({ error: err.message ?? "Adjustment failed" });
+		}
 	});
 
 	// ===== Earnings overview (management-only read pages) =====
