@@ -337,6 +337,36 @@ export interface PairsRes {
   nextCursor: string | null
 }
 
+// ---- campaign pair matching (additive layer — removable after campaign) ----
+// One accrual from the campaign's parallel pair-matching engine.
+// Gated on own package tier (≥ ₹30k) not the live-engine 3-gen qualification.
+export interface CampaignPair {
+  sequenceNo: number
+  bonusPaise: number
+  status: 'pending' | 'released'
+  at: string
+}
+
+export interface CampaignPairSummary {
+  packageValuePaise: number
+  /** Server-supplied gate value so the frontend never hard-codes ₹30k. */
+  thresholdPaise: number
+  /** True when own package_value_paise >= thresholdPaise. */
+  eligible: boolean
+  /** True when the campaign window is currently open. */
+  withinWindow: boolean
+  pendingCount: number
+  pendingBonusPaise: number
+  releasedCount: number
+  releasedBonusPaise: number
+}
+
+export interface CampaignPairsRes {
+  items: CampaignPair[]
+  nextCursor: string | null
+  summary: CampaignPairSummary
+}
+
 export interface Wallet {
   balancePaise: number
   deferredPaise: number

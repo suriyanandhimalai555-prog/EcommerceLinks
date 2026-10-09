@@ -8,6 +8,7 @@ import { SkeletonCard } from '../components/ui/Skeleton'
 import { Badge } from '../components/ui/Badge'
 import { DataTable, type Column } from '../components/ui/DataTable'
 import type { Pair, PairsRes, Dashboard as DashboardType } from '../types/api'
+import { CampaignPairMatch } from '../components/pairs/CampaignPairMatch'
 
 export default function PairMatch() {
   const { t } = useTranslation()
@@ -108,6 +109,9 @@ export default function PairMatch() {
           emptyDescription="Start recruiting to earn pair bonuses"
         />
       </div>
+
+      {/* Campaign pair matching — additive layer, auto-hides post-campaign */}
+      <CampaignPairMatch />
     </div>
   )
 }

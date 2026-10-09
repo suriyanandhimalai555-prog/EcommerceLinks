@@ -766,7 +766,19 @@
     "pendingBonus": "Pending Bonus",
     "deferredBonus": "Deferred Balance",
     "legBalance": "Carry Forward",
-    "legBalanceNote": "{{count}} unmatched activation(s) on the {{side}} leg — each pair on the other side earns ₹1,000"
+    "legBalanceNote": "{{count}} unmatched activation(s) on the {{side}} leg — each pair on the other side earns ₹1,000",
+    "campaign": {
+      "title": "Campaign Pair Matching",
+      "badge": "2 Oct – 5 Nov 2026",
+      "statPairs": "Campaign Pairs",
+      "statReleased": "Campaign Released",
+      "statPending": "Campaign Pending",
+      "colSeq": "Pair #",
+      "empty": "No campaign pairs earned yet",
+      "eligibleNote": "You are eligible to receive campaign pair commissions.",
+      "pendingCta": "{{count}} campaign pair(s) totalling {{amount}} are held — upgrade your ID to ₹30,000 or ₹50,000 to release them.",
+      "endedUncollected": "The campaign window has closed. {{count}} pair(s) totalling {{amount}} were not collected because your ID was below the ₹30,000 tier."
+    }
   },
   "myOrders": {
     "title": "My Orders",

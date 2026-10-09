@@ -32,6 +32,7 @@ import {
 import { getSetting } from "../services/settings.js";
 import { getMemberCoinTotal } from "../services/coinService.js";
 import { AddressBody, isCompleteAddress } from "../lib/address.js";
+import { isWithinCampaign } from "../lib/campaign.js";
 
 // Display names the frontend expects (index 1..12)
 const RANK_NAMES: Record<number, string> = {
@@ -1357,6 +1358,85 @@ export async function frontendRoutes(app: FastifyInstance) {
 			})),
 			nextCursor:
 				rows.length === limit ? String(rows[rows.length - 1].id) : null,
+		};
+	});
+
+	// ===== campaign pairs =====
+	// Read-only view of the campaign's parallel pair-matching engine.
+	// Additive layer — zero overlap with GET /pairs (different tables).
+	// Safe to remove after the campaign: delete this handler + the frontend
+	// component + the types/i18n keys added for it.
+	app.get("/campaign/pairs", auth, async (req) => {
+		const memberId = (req.user as Auth).sub;
+		const query = req.query as { cursor?: string; limit?: string };
+		const limit = Math.min(100, parseInt(query.limit ?? "20", 10) || 20);
+		const cursorClause = query.cursor ? "AND cpa.campaign_pair_id < $3" : "";
+		const params: (string | number)[] = [memberId, limit];
+		if (query.cursor) params.push(parseInt(query.cursor));
+
+		const [itemsRes, summaryRes, tierRes] = await Promise.all([
+			pool().query<{
+				id: string;
+				amount: string;
+				status: string;
+				created_at: string;
+				sequence_no: string;
+			}>(
+				`SELECT cpa.campaign_pair_id AS id, cpa.amount, cpa.status,
+				        cpa.created_at, cp.sequence_no
+				 FROM campaign_pair_accruals cpa
+				 JOIN campaign_pairs cp ON cp.id = cpa.campaign_pair_id
+				 WHERE cpa.beneficiary_id = $1 ${cursorClause}
+				 ORDER BY cpa.campaign_pair_id DESC LIMIT $2`,
+				params,
+			),
+			pool().query<{
+				released: string;
+				pending: string;
+				released_count: string;
+				pending_count: string;
+			}>(
+				`SELECT COALESCE(SUM(amount) FILTER (WHERE status='released'),0) AS released,
+				        COALESCE(SUM(amount) FILTER (WHERE status='pending'),0)  AS pending,
+				        COUNT(*) FILTER (WHERE status='released') AS released_count,
+				        COUNT(*) FILTER (WHERE status='pending')  AS pending_count
+				 FROM campaign_pair_accruals WHERE beneficiary_id = $1`,
+				[memberId],
+			),
+			pool().query<{ package_value_paise: string }>(
+				`SELECT package_value_paise FROM members WHERE id = $1`,
+				[memberId],
+			),
+		]);
+
+		const s = summaryRes.rows[0];
+		const packageValuePaise = Number(
+			tierRes.rows[0]?.package_value_paise ?? "0",
+		);
+		const thresholdPaise = CFG.CAMPAIGN_TIER_30K_PAISE;
+		const eligible = packageValuePaise >= thresholdPaise;
+
+		return {
+			items: itemsRes.rows.map((r) => ({
+				sequenceNo: Number(r.sequence_no),
+				bonusPaise: Number(toPaise(r.amount)),
+				status: r.status as "pending" | "released",
+				at: r.created_at,
+			})),
+			nextCursor:
+				itemsRes.rows.length === limit
+					? String(itemsRes.rows[itemsRes.rows.length - 1].id)
+					: null,
+			summary: {
+				packageValuePaise,
+				thresholdPaise,
+				eligible,
+				withinWindow: isWithinCampaign(),
+				pendingCount: Number(s?.pending_count ?? "0"),
+				pendingBonusPaise: Number(toPaise(s?.pending ?? "0")),
+				releasedCount: Number(s?.released_count ?? "0"),
+				releasedBonusPaise: Number(toPaise(s?.released ?? "0")),
+			},
 		};
 	});
 
