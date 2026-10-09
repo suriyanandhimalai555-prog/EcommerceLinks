@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import {
@@ -7,7 +7,8 @@ import {
 import api from '../../lib/api'
 import { formatINR } from '../../lib/format'
 import { isWithinCampaign } from '../../lib/campaign'
-import type { AdminMemberRow, AdminMembersPage } from '../../types/api'
+import { ImageUploader, type ImageUploaderHandle, type UploadedImage } from '../../components/ui/ImageUploader'
+import type { AdminMemberRow, AdminMembersPage, PresignRes } from '../../types/api'
 
 // The two upgradeable campaign tiers.
 const UPGRADE_TIERS = [
@@ -48,6 +49,8 @@ export function UpgradeTab() {
   const [selectedMember, setSelectedMember] = useState<AdminMemberRow | null>(null)
   const [selectedTier, setSelectedTier] = useState<UpgradeTier | null>(null)
   const [paymentRef, setPaymentRef] = useState('')
+  const [proofImages, setProofImages] = useState<UploadedImage[]>([])
+  const uploaderRef = useRef<ImageUploaderHandle>(null)
   const [submitError, setSubmitError] = useState('')
   const [successState, setSuccessState] = useState<SuccessState | null>(null)
 
@@ -69,15 +72,28 @@ export function UpgradeTab() {
   // Computed delta (what the member pays) for the selected tier.
   const deltaPaise = selectedTier ? Math.max(0, selectedTier.targetPaise - currentPaise) : 0
 
+  function getPresign(file: File): Promise<PresignRes> {
+    return api
+      .post('/admin/orders/on-behalf/presign', {
+        memberId: selectedMember!.id,
+        contentType: file.type,
+        sizeBytes: file.size,
+      })
+      .then((r) => r.data)
+  }
+
   const submit = useMutation({
-    mutationFn: () =>
-      api
+    mutationFn: async () => {
+      const keys = uploaderRef.current ? await uploaderRef.current.upload() : []
+      return api
         .post('/admin/members/upgrade', {
           memberId: selectedMember!.id,
           targetTierPaise: selectedTier!.targetPaise,
           paymentRef: paymentRef.trim(),
+          proofKeys: keys,
         })
-        .then((r) => r.data),
+        .then((r) => r.data)
+    },
     onSuccess: () => {
       setSuccessState({
         name: selectedMember!.name,
@@ -113,6 +129,7 @@ export function UpgradeTab() {
     setSelectedMember(null)
     setSelectedTier(null)
     setPaymentRef('')
+    setProofImages([])
     setSubmitError('')
     setSuccessState(null)
   }
@@ -330,6 +347,16 @@ export function UpgradeTab() {
               className="w-full bg-white/5 border border-surface-line rounded-xl px-4 py-2.5 text-sm text-ink placeholder-ink-muted outline-none focus:border-primary/60 transition-colors"
             />
           </div>
+
+          <ImageUploader
+            deferUpload
+            ref={uploaderRef}
+            maxFiles={5}
+            value={proofImages}
+            onChange={setProofImages}
+            getPresign={getPresign}
+            label={t('admin.upgrade.proofLabel')}
+          />
         </div>
       )}
 

@@ -3296,6 +3296,7 @@ export async function adminRoutes(app: FastifyInstance) {
 		memberId: z.string().min(1),
 		targetTierPaise: z.union([z.literal(3000000), z.literal(5000000)]),
 		paymentRef: z.string().min(1),
+		proofKeys: z.array(z.string()).optional(),
 	});
 
 	app.post("/members/upgrade", auth, async (req, reply) => {
@@ -3307,7 +3308,7 @@ export async function adminRoutes(app: FastifyInstance) {
 		if (!body.success)
 			return reply.status(400).send({ error: body.error.flatten() });
 
-		const { memberId, targetTierPaise, paymentRef } = body.data;
+		const { memberId, targetTierPaise, paymentRef, proofKeys } = body.data;
 
 		const { rows: mRows } = await pool().query<{
 			id: string;
@@ -3331,6 +3332,21 @@ export async function adminRoutes(app: FastifyInstance) {
 
 		const { orderId, idempotencyKey } = await createUpgradeOrder(memberId, targetTierPaise);
 
+		// Validate and record optional proof keys before confirming (mirrors on-behalf flow).
+		if (proofKeys?.length) {
+			for (const key of proofKeys) {
+				if (!paymentProofKeyRe(memberId).test(key))
+					return reply.status(400).send({ error: `Invalid proof key: ${key}` });
+				if (!(await objectExists(key)))
+					return reply.status(400).send({ error: `Proof not found in storage: ${key}` });
+				await pool().query(
+					`INSERT INTO order_payment_proofs (order_id, s3_key)
+					 VALUES ($1, $2) ON CONFLICT (s3_key) DO NOTHING`,
+					[orderId, key],
+				);
+			}
+		}
+
 		await confirmOrder(idempotencyKey, BigInt(orderId), paymentRef);
 
 		await pool().query(
@@ -3341,7 +3357,7 @@ export async function adminRoutes(app: FastifyInstance) {
 				actor.sub,
 				memberId,
 				{ package_value_paise: currentValuePaise },
-				{ package_value_paise: targetTierPaise, orderId, paymentRef },
+				{ package_value_paise: targetTierPaise, orderId, paymentRef, proofCount: proofKeys?.length ?? 0 },
 			],
 		);
 

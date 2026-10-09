@@ -535,7 +535,8 @@
       "errorNotActive": "Member is not yet active. Activate them first via Record Payment.",
       "errorAlreadyAtTier": "Member is already at or above this tier.",
       "errorManagement": "Cannot upgrade a management account.",
-      "errorGeneric": "Upgrade failed. Please try again."
+      "errorGeneric": "Upgrade failed. Please try again.",
+      "proofLabel": "Payment proof (optional)"
     },
     "coins": {
       "tab": "AVG Coins",
