@@ -1,0 +1,761 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AVG Campaign Binary Tree</title>
+<style>
+:root {
+  --bg: #0d1117; --surf: #161b22; --surf2: #21262d; --bdr: #30363d;
+  --txt: #e6edf3; --muted: #8b949e;
+  --blue: #388bfd; --green: #3fb950; --amber: #d29922; --violet: #bc8cff;
+  --orange: #f0883e; --danger: #f85149;
+  --n10-fill: #132a1c; --n10-stroke: #2ea043; --n10-txt: #7ee787;
+  --n30-fill: #2a2005; --n30-stroke: #b5890a; --n30-txt: #e3b341;
+  --n50-fill: #1a0f2e; --n50-stroke: #7948d8; --n50-txt: #bc8cff;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg);color:var(--txt);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px}
+/* ── layout ── */
+#app{display:flex;flex-direction:column;height:100vh;overflow:hidden}
+#topbar{flex-shrink:0;background:var(--surf);border-bottom:1px solid var(--bdr);padding:10px 18px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+#topbar h1{font-size:17px;font-weight:700;white-space:nowrap}
+#topbar .sep{color:var(--bdr);user-select:none}
+#main{flex:1;display:flex;overflow:hidden;min-height:0}
+#treeWrap{flex:1;overflow:auto;background:var(--bg);position:relative;min-width:0}
+#sidebar{width:320px;flex-shrink:0;background:var(--surf);border-left:1px solid var(--bdr);overflow-y:auto;display:flex;flex-direction:column}
+/* ── buttons ── */
+button{cursor:pointer;border:1px solid var(--bdr);border-radius:6px;padding:5px 13px;font-size:12px;font-weight:500;background:var(--surf2);color:var(--txt);transition:background .15s}
+button:hover{background:#2d333b}
+button:disabled{opacity:.35;cursor:not-allowed}
+.btn-sm{padding:3px 9px;font-size:11px}
+.btn-reset{background:#200808;border-color:#5a1a1a;color:#ff7b72}
+.btn-reset:hover{background:#2e0f0f}
+.btn-10k{background:var(--n10-fill);border-color:var(--n10-stroke);color:var(--n10-txt)}
+.btn-10k:hover{background:#1a3d25}
+.btn-30k{background:var(--n30-fill);border-color:var(--n30-stroke);color:var(--n30-txt)}
+.btn-30k:hover{background:#3a2d08}
+.btn-50k{background:var(--n50-fill);border-color:var(--n50-stroke);color:var(--n50-txt)}
+.btn-50k:hover{background:#271548}
+.btn-danger{background:#1f0808;border-color:#5a1a1a;color:#ff7b72}
+.btn-danger:hover{background:#2e0f0f}
+.btn-blue{background:#0d2040;border-color:#264a80;color:#79c0ff}
+.btn-blue:hover{background:#122a5a}
+/* ── sidebar panels ── */
+.panel{border-bottom:1px solid var(--bdr);padding:14px 16px}
+.panel-title{font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px}
+/* ── node action panel ── */
+#nodePanel{min-height:120px}
+#noSel{color:var(--muted);font-size:13px;padding:8px 0}
+.node-info-header{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.ninfo-circle{width:42px;height:42px;border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0}
+.ninfo-label{flex:1}
+.ninfo-label strong{font-size:15px;display:block}
+.ninfo-label small{color:var(--muted);font-size:11px}
+.action-section{margin-bottom:10px}
+.action-section label{font-size:11px;color:var(--muted);display:block;margin-bottom:5px;font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.btn-row{display:flex;gap:6px;flex-wrap:wrap}
+/* ── calc panel ── */
+.stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px}
+.stat-box{background:var(--surf2);border:1px solid var(--bdr);border-radius:6px;padding:8px 10px;text-align:center}
+.stat-box .sv{font-size:22px;font-weight:700;line-height:1.1}
+.stat-box .sl{font-size:10px;color:var(--muted);margin-top:2px;text-transform:uppercase;letter-spacing:.04em}
+.formula-row{background:var(--surf2);border:1px solid var(--bdr);border-radius:6px;padding:8px 12px;margin-bottom:6px;font-size:12px;display:flex;justify-content:space-between;align-items:center}
+.formula-row .fval{font-weight:700;font-size:16px}
+.money-grid{display:grid;grid-template-columns:1fr;gap:6px;margin-top:10px}
+.money-box{border-radius:8px;padding:10px 14px}
+.money-box .ma{font-size:20px;font-weight:700}
+.money-box .ml{font-size:11px;margin-top:2px;opacity:.8}
+.mb-live{background:#0a1f12;border:1px solid #1a4a28}
+.mb-live .ma{color:#3fb950}
+.mb-camp{background:#071828;border:1px solid #0e3060}
+.mb-camp .ma{color:#79c0ff}
+.mb-pend{background:#1a1606;border:1px solid #3d3108}
+.mb-pend .ma{color:#e3b341}
+.expl{background:var(--surf2);border-left:3px solid var(--blue);padding:9px 12px;border-radius:0 5px 5px 0;font-size:12px;line-height:1.6;margin-top:8px}
+/* ── tree SVG ── */
+#treeSvg{display:block;overflow:visible}
+.tree-hint{position:absolute;bottom:14px;right:14px;font-size:11px;color:var(--muted);background:var(--surf);border:1px solid var(--bdr);padding:5px 10px;border-radius:6px;pointer-events:none}
+/* ── legend ── */
+.legend{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+.leg-item{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--muted)}
+.leg-dot{width:10px;height:10px;border-radius:50%;display:inline-block}
+/* ── animations ── */
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+.fade-in{animation:fadeIn .2s ease}
+/* ── pulse on value change ── */
+@keyframes numPulse{0%{transform:scale(1)}40%{transform:scale(1.15)}100%{transform:scale(1)}}
+.pulse{animation:numPulse .3s ease}
+</style>
+</head>
+<body>
+<div id="app">
+
+<!-- Top bar -->
+<div id="topbar">
+  <h1>🌳 AVG Campaign — Binary Tree Simulator</h1>
+  <span class="sep">|</span>
+  <div class="legend">
+    <span class="leg-item"><span class="leg-dot" style="background:#2ea043"></span> ₹10k (1u)</span>
+    <span class="leg-item"><span class="leg-dot" style="background:#b5890a"></span> ₹30k (3u)</span>
+    <span class="leg-item"><span class="leg-dot" style="background:#7948d8"></span> ₹50k (5u)</span>
+  </div>
+  <span class="sep">|</span>
+  <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+    <span style="font-size:11px;color:var(--muted)">Preset:</span>
+    <button class="btn-sm btn-blue" onclick="loadPreset('start')">Clean start</button>
+    <button class="btn-sm btn-blue" onclick="loadPreset('tier')">Tier mix</button>
+    <button class="btn-sm btn-blue" onclick="loadPreset('test30k')">Test: 30k cap</button>
+    <button class="btn-sm btn-blue" onclick="loadPreset('test50k')">Test: 50k cap</button>
+    <button class="btn-sm btn-blue" onclick="loadPreset('deep')">Deep tree</button>
+    <button class="btn-sm btn-reset" onclick="loadPreset('empty')">↺ Reset</button>
+  </div>
+</div>
+
+<!-- Main -->
+<div id="main">
+
+  <!-- Tree area -->
+  <div id="treeWrap">
+    <svg id="treeSvg" xmlns="http://www.w3.org/2000/svg"></svg>
+    <div class="tree-hint">Click any node to select · Select root (YOU) to upgrade your package</div>
+  </div>
+
+  <!-- Sidebar -->
+  <div id="sidebar">
+
+    <!-- Node action panel -->
+    <div class="panel" id="nodePanel">
+      <div class="panel-title">Selected Node</div>
+      <div id="nodeContent"><div id="noSel">← Click a node in the tree</div></div>
+    </div>
+
+    <!-- Calculation panel -->
+    <div class="panel" id="calcPanel">
+      <div class="panel-title">Live Calculation — Root (YOU)</div>
+      <div id="calcContent"></div>
+    </div>
+
+  </div>
+</div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════
+//  EXACT LOGIC from backend/src/lib/campaign.ts
+// ═══════════════════════════════════════════════════════
+
+function unitsFor(pkg) {
+  if (pkg >= 50000) return 5;
+  if (pkg >= 30000) return 3;
+  if (pkg >= 10000) return 1;
+  return 0;
+}
+function extraUnitsFor(pkg) {       // campaignExtraUnits
+  if (pkg >= 50000) return 4;
+  if (pkg >= 30000) return 2;
+  return 0;
+}
+function pkgLabel(pkg) {
+  if (pkg >= 50000) return '₹50k';
+  if (pkg >= 30000) return '₹30k';
+  return '₹10k';
+}
+function pkgColor(pkg) {
+  if (pkg >= 50000) return { fill:'#1a0f2e', stroke:'#7948d8', text:'#bc8cff', mid:'#8957e5' };
+  if (pkg >= 30000) return { fill:'#2a2005', stroke:'#b5890a', text:'#e3b341', mid:'#c99a1a' };
+  return                  { fill:'#132a1c', stroke:'#2ea043', text:'#7ee787', mid:'#3fb950' };
+}
+
+// ═══════════════════════════════════════════════════════
+//  TREE STATE
+// ═══════════════════════════════════════════════════════
+
+let nodes = {};   // id → { id, pkg, parent, side, lc, rc, x, y, rootSide }
+let nextId = 0;
+let selected = null;
+let priorMatched = 0;   // GREATEST clamp memory
+
+function mkNode(pkg, parent = null, side = null) {
+  const id = nextId++;
+  nodes[id] = { id, pkg, parent, side, lc: null, rc: null, x: 0, y: 0, rootSide: null };
+  return id;
+}
+
+function treeDepth(id) {
+  if (id === null || id === undefined) return -1;
+  const n = nodes[id];
+  return 1 + Math.max(treeDepth(n.lc), treeDepth(n.rc));
+}
+
+function leafCount(id) {
+  if (id === null || id === undefined) return 0;
+  const n = nodes[id];
+  if (n.lc === null && n.rc === null) return 1;
+  return leafCount(n.lc) + leafCount(n.rc);
+}
+
+// ═══════════════════════════════════════════════════════
+//  SUBTREE STATS (from root's perspective)
+//  Does NOT include the root itself
+// ═══════════════════════════════════════════════════════
+function subtreeStats(id) {
+  if (id === null || id === undefined || !(id in nodes)) return { m: 0, u: 0 };
+  const n = nodes[id];
+  const left  = subtreeStats(n.lc);
+  const right = subtreeStats(n.rc);
+  return { m: 1 + left.m + right.m, u: unitsFor(n.pkg) + left.u + right.u };
+}
+
+// ═══════════════════════════════════════════════════════
+//  MATCHING FORMULA — campaignCounter.ts lines 145-148
+// ═══════════════════════════════════════════════════════
+function doCalc() {
+  const root = nodes[0];
+  if (!root) return null;
+  const L = subtreeStats(root.lc);
+  const R = subtreeStats(root.rc);
+  const T       = Math.min(L.u, R.u);
+  const B       = Math.min(L.m, R.m);
+  const surplus = Math.max(0, T - B);
+  priorMatched  = Math.max(priorMatched, surplus);   // GREATEST clamp
+  const matched = priorMatched;
+  const cap     = extraUnitsFor(root.pkg);
+  const released = Math.min(matched, cap);
+  const pending  = matched - released;
+  return { LM: L.m, LU: L.u, RM: R.m, RU: R.u, T, B, surplus, matched, cap, released, pending };
+}
+
+// ═══════════════════════════════════════════════════════
+//  LAYOUT — divide the width recursively
+// ═══════════════════════════════════════════════════════
+const NODE_R   = 38;
+const LEVEL_H  = 130;
+const UNIT_W   = 90;
+const PAD_TOP  = 70;
+const PAD_SIDE = 60;
+
+function computeLayout() {
+  const depth = treeDepth(0);
+  const slots = Math.pow(2, Math.max(depth, 1));
+  const W = Math.max(700, slots * UNIT_W);
+  placeNode(0, PAD_SIDE, W - PAD_SIDE, 0);
+  // Mark rootSide for each node
+  Object.values(nodes).forEach(n => { n.rootSide = getRootSide(n.id); });
+  return W + PAD_SIDE;
+}
+
+function placeNode(id, x1, x2, depth) {
+  if (id === null || !(id in nodes)) return;
+  const n = nodes[id];
+  n.x = (x1 + x2) / 2;
+  n.y = PAD_TOP + depth * LEVEL_H;
+  placeNode(n.lc, x1, (x1 + x2) / 2, depth + 1);
+  placeNode(n.rc, (x1 + x2) / 2, x2,  depth + 1);
+}
+
+function getRootSide(id) {
+  if (id === 0) return null;
+  const n = nodes[id];
+  if (n.parent === 0) return n.side;
+  return getRootSide(n.parent);
+}
+
+// ═══════════════════════════════════════════════════════
+//  RENDER — SVG
+// ═══════════════════════════════════════════════════════
+function render() {
+  const totalW = computeLayout();
+  const depth  = treeDepth(0);
+  const totalH = PAD_TOP + (depth + 1) * LEVEL_H + NODE_R + 20;
+
+  const svg = document.getElementById('treeSvg');
+  svg.setAttribute('width',  Math.max(totalW, 700));
+  svg.setAttribute('height', Math.max(totalH, 400));
+  svg.innerHTML = '';
+
+  // ── Defs ──
+  const defs = el('defs');
+  // Gradient for root node
+  const grad = el('radialGradient', { id:'rootGrad', cx:'40%', cy:'35%' });
+  grad.appendChild(elStop('0%',   '#3a2060'));
+  grad.appendChild(elStop('100%', '#1a0f2e'));
+  defs.appendChild(grad);
+  svg.appendChild(defs);
+
+  // ── Subtree highlight bands ──
+  drawBand(svg, 0, 'L', totalH);
+  drawBand(svg, 0, 'R', totalH);
+
+  // ── Edges ──
+  const gEdges = el('g', { id:'edges' });
+  Object.values(nodes).forEach(n => {
+    if (n.parent !== null && n.parent in nodes) {
+      const p = nodes[n.parent];
+      const isLeft = n.side === 'L';
+      const path = el('path', {
+        d: `M ${p.x} ${p.y + NODE_R} C ${p.x} ${(p.y + n.y)/2}, ${n.x} ${(p.y + n.y)/2}, ${n.x} ${n.y - NODE_R}`,
+        stroke: isLeft ? '#264a73' : '#5c3014',
+        'stroke-width': '2',
+        fill: 'none',
+        'stroke-linecap': 'round',
+      });
+      gEdges.appendChild(path);
+      // L/R label on edge midpoint
+      const mx = (p.x + n.x) / 2;
+      const my = (p.y + n.y) / 2;
+      const badge = el('g');
+      badge.appendChild(el('circle', { cx: mx, cy: my, r: 9, fill: isLeft ? '#0d2040' : '#301508', stroke: isLeft ? '#388bfd' : '#f0883e', 'stroke-width': '1' }));
+      badge.appendChild(svgText(mx, my + 1, n.side, 9, isLeft ? '#79c0ff' : '#ffa657', '600'));
+      gEdges.appendChild(badge);
+    }
+  });
+  svg.appendChild(gEdges);
+
+  // ── Nodes ──
+  const gNodes = el('g', { id:'nodeGroup' });
+  Object.values(nodes).forEach(n => drawNode(gNodes, n));
+  svg.appendChild(gNodes);
+
+  // ── Empty slot targets for selected node ──
+  if (selected !== null && selected in nodes) {
+    const sn = nodes[selected];
+    const gSlots = el('g');
+    const slotY = sn.y + LEVEL_H;
+    const halfW = (sn.x - (sn.parent !== null ? nodes[sn.parent]?.x ?? sn.x : 0)) || (totalW / (Math.pow(2, getDepthOf(selected)) + 1));
+    const slotGap = Math.max(60, Math.abs(totalW / Math.pow(2, getDepthOf(selected) + 2)));
+
+    if (sn.lc === null) {
+      const sx = sn.x - slotGap;
+      gSlots.appendChild(makeSlot(sx, slotY, selected, 'L'));
+    }
+    if (sn.rc === null) {
+      const sx = sn.x + slotGap;
+      gSlots.appendChild(makeSlot(sx, slotY, selected, 'R'));
+    }
+    svg.appendChild(gSlots);
+  }
+
+  renderSidebar();
+}
+
+function drawBand(svg, rootId, side, totalH) {
+  const root = nodes[rootId];
+  if (!root) return;
+  const childId = side === 'L' ? root.lc : root.rc;
+  if (childId === null) return;
+  const child = nodes[childId];
+  // Find bounding box of subtree
+  const xs = [], ys = [];
+  collectCoords(childId, xs, ys);
+  if (!xs.length) return;
+  const minX = Math.min(...xs) - NODE_R - 10;
+  const maxX = Math.max(...xs) + NODE_R + 10;
+  const minY = Math.min(...ys) - NODE_R - 8;
+  const maxY = Math.max(...ys) + NODE_R + 8;
+  const rect = el('rect', {
+    x: minX, y: minY, width: maxX - minX, height: maxY - minY,
+    rx: 12, ry: 12,
+    fill: side === 'L' ? 'rgba(56,139,253,0.04)' : 'rgba(240,136,62,0.04)',
+    stroke: side === 'L' ? 'rgba(56,139,253,0.12)' : 'rgba(240,136,62,0.12)',
+    'stroke-width': '1',
+    'stroke-dasharray': '5 4',
+  });
+  svg.appendChild(rect);
+  // Label
+  const lx = side === 'L' ? minX + 10 : maxX - 40;
+  svg.appendChild(svgText(lx, minY - 6, side === 'L' ? '◀ LEFT' : 'RIGHT ▶', 10,
+    side === 'L' ? '#388bfd' : '#f0883e', '600'));
+}
+
+function collectCoords(id, xs, ys) {
+  if (id === null || !(id in nodes)) return;
+  const n = nodes[id];
+  xs.push(n.x); ys.push(n.y);
+  collectCoords(n.lc, xs, ys);
+  collectCoords(n.rc, xs, ys);
+}
+
+function getDepthOf(id) {
+  if (id === null || !(id in nodes)) return 0;
+  const n = nodes[id];
+  if (n.parent === null) return 0;
+  return 1 + getDepthOf(n.parent);
+}
+
+function makeSlot(sx, sy, parentId, side) {
+  const g = el('g', { cursor: 'pointer' });
+  g.appendChild(el('circle', { cx: sx, cy: sy, r: NODE_R - 6,
+    fill: 'transparent',
+    stroke: side === 'L' ? '#264a73' : '#5c3014',
+    'stroke-width': '1.5', 'stroke-dasharray': '5 3' }));
+  g.appendChild(svgText(sx, sy - 4, '+', 18, side === 'L' ? '#388bfd' : '#f0883e', '400'));
+  g.appendChild(svgText(sx, sy + 12, side, 10, side === 'L' ? '#79c0ff' : '#ffa657', '600'));
+  g.addEventListener('click', (e) => { e.stopPropagation(); openAddChildUI(parentId, side); });
+  return g;
+}
+
+function drawNode(g, n) {
+  const isRoot = n.id === 0;
+  const isSel  = n.id === selected;
+  const c = pkgColor(n.pkg);
+  const grp = el('g', { cursor: 'pointer' });
+
+  // Glow / selection ring
+  if (isSel) {
+    grp.appendChild(el('circle', { cx: n.x, cy: n.y, r: NODE_R + 6,
+      fill: 'none', stroke: '#fff', 'stroke-width': '1.5', opacity: '0.3' }));
+  }
+
+  // Root gets a crown ring
+  if (isRoot) {
+    grp.appendChild(el('circle', { cx: n.x, cy: n.y, r: NODE_R + 4,
+      fill: 'none', stroke: c.stroke, 'stroke-width': '2', opacity: '0.5' }));
+  }
+
+  // Main circle
+  grp.appendChild(el('circle', { cx: n.x, cy: n.y, r: NODE_R,
+    fill: isRoot ? 'url(#rootGrad)' : c.fill,
+    stroke: isSel ? '#e6edf3' : c.stroke,
+    'stroke-width': isSel ? '2.5' : '1.5' }));
+
+  // Root side indicator dot
+  if (n.rootSide) {
+    const dotColor = n.rootSide === 'L' ? '#388bfd' : '#f0883e';
+    grp.appendChild(el('circle', { cx: n.x - NODE_R + 10, cy: n.y - NODE_R + 10, r: 5,
+      fill: dotColor, opacity: '0.9' }));
+  }
+
+  // Text lines
+  if (isRoot) {
+    grp.appendChild(svgText(n.x, n.y - 12, 'YOU', 11, '#ddd', '700'));
+    grp.appendChild(svgText(n.x, n.y + 3,  pkgLabel(n.pkg), 13, c.text, '700'));
+    grp.appendChild(svgText(n.x, n.y + 17, `${unitsFor(n.pkg)}u · cap:${extraUnitsFor(n.pkg)}`, 10, c.text, '400'));
+  } else {
+    grp.appendChild(svgText(n.x, n.y - 11, `M${n.id}`, 10, '#aaa', '500'));
+    grp.appendChild(svgText(n.x, n.y + 3,  pkgLabel(n.pkg), 13, c.text, '700'));
+    grp.appendChild(svgText(n.x, n.y + 17, `${unitsFor(n.pkg)}u`, 10, c.text, '400'));
+  }
+
+  grp.addEventListener('click', (e) => { e.stopPropagation(); selectNode(n.id); });
+  g.appendChild(grp);
+}
+
+// ═══════════════════════════════════════════════════════
+//  SIDEBAR
+// ═══════════════════════════════════════════════════════
+function renderSidebar() {
+  renderNodePanel();
+  renderCalcPanel();
+}
+
+function renderNodePanel() {
+  const box = document.getElementById('nodeContent');
+  if (selected === null || !(selected in nodes)) {
+    box.innerHTML = '<div id="noSel">← Click a node in the tree</div>';
+    return;
+  }
+  const n = nodes[selected];
+  const isRoot = n.id === 0;
+  const c = pkgColor(n.pkg);
+  const depth = getDepthOf(n.id);
+
+  let html = `
+    <div class="node-info-header fade-in">
+      <div class="ninfo-circle" style="background:${c.fill};border:2px solid ${c.stroke}">
+        <span style="color:${c.text};font-size:12px">${pkgLabel(n.pkg)}</span>
+        <span style="color:${c.text};font-size:10px">${unitsFor(n.pkg)}u</span>
+      </div>
+      <div class="ninfo-label">
+        <strong>${isRoot ? 'YOU (root)' : 'M' + n.id}</strong>
+        <small>${isRoot ? 'Your own node — sets the payout cap' : `Depth ${depth} · ${n.rootSide === 'L' ? '◀ Left subtree' : n.rootSide === 'R' ? '▶ Right subtree' : ''} · Side ${n.side ?? '—'}`}</small>
+      </div>
+    </div>`;
+
+  // Add children
+  if (n.lc === null || n.rc === null) {
+    html += `<div class="action-section"><label>+ Add Child</label><div class="btn-row">`;
+    if (n.lc === null) {
+      html += `<span style="font-size:11px;color:var(--muted);margin-right:2px">◀ L:</span>`;
+      html += `<button class="btn-sm btn-10k" onclick="addChild(${n.id},'L',10000)">₹10k</button>`;
+      html += `<button class="btn-sm btn-30k" onclick="addChild(${n.id},'L',30000)">₹30k</button>`;
+      html += `<button class="btn-sm btn-50k" onclick="addChild(${n.id},'L',50000)">₹50k</button>`;
+    }
+    html += `</div>`;
+    if (n.lc === null && n.rc === null) html += `<br>`;
+    if (n.rc === null) {
+      html += `<div class="btn-row" style="margin-top:${n.lc === null ? 6 : 0}px">`;
+      html += `<span style="font-size:11px;color:var(--muted);margin-right:2px">▶ R:</span>`;
+      html += `<button class="btn-sm btn-10k" onclick="addChild(${n.id},'R',10000)">₹10k</button>`;
+      html += `<button class="btn-sm btn-30k" onclick="addChild(${n.id},'R',30000)">₹30k</button>`;
+      html += `<button class="btn-sm btn-50k" onclick="addChild(${n.id},'R',50000)">₹50k</button>`;
+      html += `</div>`;
+    }
+    html += `</div>`;
+  }
+
+  // Upgrade package
+  const upgrades = [];
+  if (n.pkg < 30000) upgrades.push([30000, '₹30k']);
+  if (n.pkg < 50000) upgrades.push([50000, '₹50k']);
+  if (upgrades.length) {
+    html += `<div class="action-section"><label>Upgrade Package</label><div class="btn-row">`;
+    upgrades.forEach(([p, lbl]) => {
+      const cls = p >= 50000 ? 'btn-50k' : 'btn-30k';
+      html += `<button class="btn-sm ${cls}" onclick="upgradeNode(${n.id},${p})">${lbl}</button>`;
+    });
+    html += `</div></div>`;
+  }
+
+  // Remove (not root)
+  if (!isRoot) {
+    html += `<div class="action-section" style="margin-top:4px">`;
+    html += `<button class="btn-sm btn-danger" onclick="removeNode(${n.id})">✕ Remove this node + subtree</button>`;
+    html += `</div>`;
+  }
+
+  box.innerHTML = html;
+}
+
+function renderCalcPanel() {
+  const calc = doCalc();
+  const box  = document.getElementById('calcContent');
+  if (!calc) { box.innerHTML = '<span style="color:var(--muted)">No tree.</span>'; return; }
+
+  const { LM, LU, RM, RU, T, B, surplus, matched, cap, released, pending } = calc;
+  const clamped = (priorMatched > surplus && surplus < priorMatched);
+
+  box.innerHTML = `
+    <div class="stat-grid">
+      <div class="stat-box" style="border-color:#264a73">
+        <div class="sv" style="color:#79c0ff">${LU}</div>
+        <div class="sl">Left units</div>
+        <div style="font-size:10px;color:var(--muted)">${LM} members</div>
+      </div>
+      <div class="stat-box" style="border-color:#5c3014">
+        <div class="sv" style="color:#ffa657">${RU}</div>
+        <div class="sl">Right units</div>
+        <div style="font-size:10px;color:var(--muted)">${RM} members</div>
+      </div>
+    </div>
+
+    <div class="formula-row" style="border-color:#264a73">
+      <span style="color:var(--muted);font-size:11px">T = min(Lu,Ru) — §4 total-unit match</span>
+      <span class="fval" style="color:#79c0ff">${T}</span>
+    </div>
+    <div class="formula-row" style="border-color:#5c3014">
+      <span style="color:var(--muted);font-size:11px">B = min(Lm,Rm) — live engine already pays</span>
+      <span class="fval" style="color:#ffa657">${B}</span>
+    </div>
+    <div class="formula-row">
+      <span style="color:var(--muted);font-size:11px">Surplus = T − B = ${T}−${B}</span>
+      <span class="fval" style="color:var(--blue)">${surplus}</span>
+    </div>
+    <div class="formula-row" style="border-color:#1a4a28">
+      <span style="color:var(--muted);font-size:11px">Matched ${clamped ? `<span style="color:var(--amber)">⟵ GREATEST clamp</span>` : '= surplus'}</span>
+      <span class="fval" style="color:var(--green)">${matched}</span>
+    </div>
+    <div class="formula-row" style="border-color:#4a2080">
+      <span style="color:var(--muted);font-size:11px">Your cap = campaignExtraUnits(${pkgLabel(nodes[0].pkg)})</span>
+      <span class="fval" style="color:var(--violet)">${cap}</span>
+    </div>
+
+    <div class="money-grid">
+      <div class="money-box mb-live">
+        <div class="ma">₹${(B * 1000).toLocaleString('en-IN')}</div>
+        <div class="ml">Live engine pairs: B × ₹1,000 (always paid)</div>
+      </div>
+      <div class="money-box mb-camp">
+        <div class="ma">₹${(released * 1000).toLocaleString('en-IN')}</div>
+        <div class="ml">Campaign released: min(${matched},${cap}) = ${released} pairs × ₹1,000</div>
+      </div>
+      ${pending > 0 ? `
+      <div class="money-box mb-pend">
+        <div class="ma">₹${(pending * 1000).toLocaleString('en-IN')}</div>
+        <div class="ml">Pending ${pending} pair${pending>1?'s':''} — unlocks on package upgrade</div>
+      </div>` : ''}
+    </div>
+
+    <div class="expl">${makeExplanation(calc, nodes[0].pkg)}</div>
+  `;
+}
+
+function makeExplanation({ LM, LU, RM, RU, T, B, surplus, matched, cap, released, pending }, ownPkg) {
+  if (!LM && !RM) return 'Click a node, then add children using the panel above. Pairs appear when both legs have members.';
+  if (!LM || !RM)  return `One leg is empty — both sides need members before any pairs match.`;
+  if (matched === 0 && surplus === 0) return `T=${T} = B=${B} — the live engine already covers all unit-matched pairs. Campaign top-up is zero. Try adding a higher-tier member (₹30k or ₹50k) to one leg.`;
+  if (cap === 0)   return `Your package is ₹10k — campaignExtraUnits(₹10k) = 0, so all ${matched} matched pair${matched>1?'s':''} stay pending. Upgrade YOUR node to ₹30k (releases 2) or ₹50k (releases 4).`;
+  if (pending === 0) return `✅ All ${matched} campaign pair${matched>1?'s':''} fully released. Your ${pkgLabel(ownPkg)} cap (${cap}) covers everything. Total earned: ₹${((B + released) * 1000).toLocaleString('en-IN')} (live + campaign).`;
+  if (ownPkg >= 50000) {
+    // Already at max tier — pending pairs are permanently stuck
+    return `${matched} campaign pairs matched, but the ₹50k cap is 4 — that is the maximum for any tier. ${released} released (₹${(released*1000).toLocaleString('en-IN')}), ${pending} permanently pending. There is no higher package to unlock them. This is correct and expected.`;
+  }
+  const nextTier = ownPkg < 30000 ? '₹30k (unlocks up to 2)' : '₹50k (unlocks up to 4)';
+  return `${matched} campaign pairs matched, but your ${pkgLabel(ownPkg)} cap = ${cap} → only ${released} released (₹${(released*1000).toLocaleString('en-IN')}). ${pending} pair${pending>1?'s':''} pending — upgrade YOUR node to ${nextTier} to release more.`;
+}
+
+// ═══════════════════════════════════════════════════════
+//  INTERACTIONS
+// ═══════════════════════════════════════════════════════
+function selectNode(id) {
+  selected = (selected === id) ? null : id;
+  render();
+}
+
+function openAddChildUI(parentId, side) {
+  selectNode(parentId);  // select the parent first so the sidebar shows
+  // The sidebar will show the add options
+}
+
+function addChild(parentId, side, pkg) {
+  const parent = nodes[parentId];
+  if (!parent) return;
+  if (side === 'L' && parent.lc !== null) return;
+  if (side === 'R' && parent.rc !== null) return;
+  const newId = mkNode(pkg, parentId, side);
+  if (side === 'L') parent.lc = newId;
+  else              parent.rc = newId;
+  // Keep selected on parent so user can add the other child
+  render();
+}
+
+function upgradeNode(id, newPkg) {
+  if (!(id in nodes)) return;
+  nodes[id].pkg = newPkg;
+  render();
+}
+
+function removeNode(id) {
+  if (id === 0) return;  // never remove root
+  const n = nodes[id];
+  const parent = nodes[n.parent];
+  if (parent) {
+    if (parent.lc === id) parent.lc = null;
+    if (parent.rc === id) parent.rc = null;
+  }
+  // Remove entire subtree
+  removeSubtree(id);
+  selected = null;
+  priorMatched = recalcPrior();
+  render();
+}
+
+function removeSubtree(id) {
+  if (id === null || !(id in nodes)) return;
+  const n = nodes[id];
+  removeSubtree(n.lc);
+  removeSubtree(n.rc);
+  delete nodes[id];
+}
+
+function recalcPrior() {
+  const root = nodes[0];
+  if (!root) return 0;
+  const L = subtreeStats(root.lc);
+  const R = subtreeStats(root.rc);
+  const surplus = Math.max(0, Math.min(L.u, R.u) - Math.min(L.m, R.m));
+  return surplus;
+}
+
+// Deselect on SVG background click
+document.getElementById('treeSvg').addEventListener('click', () => {
+  selected = null;
+  renderSidebar();
+  document.getElementById('treeSvg').querySelectorAll('circle[stroke="#e6edf3"]').forEach(c => {
+    c.setAttribute('stroke', pkgColor(parseInt(c.dataset.pkg||'10000')).stroke);
+  });
+  render();
+});
+
+// ═══════════════════════════════════════════════════════
+//  PRESETS
+// ═══════════════════════════════════════════════════════
+function buildTree(spec, parentId = null, side = null) {
+  const id = mkNode(spec.pkg, parentId, side);
+  if (spec.L) {
+    const lid = buildTree(spec.L, id, 'L');
+    nodes[id].lc = lid;
+  }
+  if (spec.R) {
+    const rid = buildTree(spec.R, id, 'R');
+    nodes[id].rc = rid;
+  }
+  return id;
+}
+
+const PRESETS = {
+  empty: { pkg: 50000 },
+  start: {
+    pkg: 50000,
+    L: { pkg: 10000 },
+    R: { pkg: 10000 },
+  },
+  tier: {
+    pkg: 30000,
+    L: { pkg: 50000, L: { pkg: 10000 }, R: { pkg: 10000 } },
+    R: { pkg: 30000, L: { pkg: 10000 } },
+  },
+  // campaignLedger.test.ts: ₹30k owner, 1×₹50k left, 5×₹10k right → 2 released, 2 pending
+  test30k: {
+    pkg: 30000,
+    L: { pkg: 50000 },
+    R: { pkg: 10000, L: { pkg: 10000, L: { pkg: 10000 } }, R: { pkg: 10000, L: { pkg: 10000 } } },
+  },
+  // campaignLedger.test.ts: ₹50k owner, same tree → 4 released, 0 pending
+  test50k: {
+    pkg: 50000,
+    L: { pkg: 50000 },
+    R: { pkg: 10000, L: { pkg: 10000, L: { pkg: 10000 } }, R: { pkg: 10000, L: { pkg: 10000 } } },
+  },
+  deep: {
+    pkg: 50000,
+    L: { pkg: 30000, L: { pkg: 50000, L: { pkg: 10000 } }, R: { pkg: 10000, R: { pkg: 30000 } } },
+    R: { pkg: 10000, L: { pkg: 50000 }, R: { pkg: 10000, L: { pkg: 10000 }, R: { pkg: 30000 } } },
+  },
+};
+
+function loadPreset(name) {
+  nodes = {};
+  nextId = 0;
+  selected = null;
+  priorMatched = 0;
+  const spec = PRESETS[name] || PRESETS.empty;
+  buildTree(spec);
+  render();
+}
+
+// ═══════════════════════════════════════════════════════
+//  SVG HELPERS
+// ═══════════════════════════════════════════════════════
+function el(tag, attrs = {}) {
+  const e = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  Object.entries(attrs).forEach(([k, v]) => e.setAttribute(k, v));
+  return e;
+}
+function elStop(offset, color) {
+  const s = el('stop');
+  s.setAttribute('offset', offset);
+  s.setAttribute('stop-color', color);
+  return s;
+}
+function svgText(x, y, text, size, color, weight = '500') {
+  const t = el('text', {
+    x, y,
+    'text-anchor': 'middle',
+    'dominant-baseline': 'central',
+    'font-size': size,
+    'font-weight': weight,
+    fill: color,
+    style: 'pointer-events:none;user-select:none',
+  });
+  t.textContent = text;
+  return t;
+}
+
+// ═══════════════════════════════════════════════════════
+//  INIT
+// ═══════════════════════════════════════════════════════
+loadPreset('tier');
+</script>
+</body>
+</html>

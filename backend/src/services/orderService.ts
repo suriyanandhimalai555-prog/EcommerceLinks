@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { writeOutbox } from "../events/outbox.js";
 import { pool, withTxn } from "../lib/db.js";
-import { coinsForPackageValuePaise, isWithinCampaign, unitsForPackageValuePaise } from "../lib/campaign.js";
+import { campaignExtraUnits, coinsForPackageValuePaise, isWithinCampaign, unitsForPackageValuePaise } from "../lib/campaign.js";
 import { CFG } from "../config.js";
 import { fromPaise, toPaise } from "../lib/money.js";
 
@@ -157,11 +157,10 @@ export async function confirmOrder(
 				});
 			}
 
-			// Emit CampaignEligibilityReached when this confirm first crosses the
-			// eligibility threshold. Triggers release of any pending campaign pair
-			// accruals the member already earned while ineligible.
-			const eligiblePaise = BigInt(CFG.CAMPAIGN_TIER_30K_PAISE);
-			if (oldPackagePaise < eligiblePaise && newPackagePaise >= eligiblePaise) {
+			// Emit CampaignEligibilityReached whenever a package upgrade raises the
+			// member's tier cap (campaignExtraUnits increases: ₹10k→₹30k or ₹30k→₹50k).
+			// Triggers release of pending campaign accruals up to the new headroom.
+			if (campaignExtraUnits(newPackagePaise) > campaignExtraUnits(oldPackagePaise)) {
 				await writeOutbox(c, {
 					event_id: randomUUID(),
 					event_type: "CampaignEligibilityReached",
