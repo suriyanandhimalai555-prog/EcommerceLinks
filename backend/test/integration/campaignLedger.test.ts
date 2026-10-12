@@ -1,11 +1,17 @@
 /**
- * Integration tests for campaignLedger.ts — tier-cap release rule.
+ * Integration tests for campaignLedger.ts — binary eligibility gate.
  *
- * Confirms the "cap campaign top-up by own package tier" behaviour (Oct 2026):
- *   ₹10k beneficiary → 0 released (no campaign extra units), all pending
- *   ₹30k beneficiary → at most 2 released (lifetime), remainder pending
- *   ₹50k beneficiary → at most 4 released (lifetime), remainder pending
- *   Upgrade ₹30k→₹50k via CampaignEligibilityReached → 2 more released
+ * Confirms the "release all pairs once eligible" behaviour:
+ *   ₹10k beneficiary → 0 released, all pending (not yet eligible)
+ *   ₹30k beneficiary → ALL released immediately (eligible; no numeric cap)
+ *   ₹50k beneficiary → ALL released immediately (eligible; no numeric cap)
+ *   Upgrade ₹10k→₹30k via CampaignEligibilityReached → ALL pending released
+ *   No-op: already-eligible member gets CampaignEligibilityReached → 0 new releases
+ *   Idempotency: replaying CampaignEligibilityReached does not double-release
+ *
+ * The release rule mirrors the live pair-matching engine (all pairs to qualified
+ * nodes) — the only campaign difference is unit-weighted MINTING (₹30k=3u, ₹50k=5u).
+ * The release layer has NO per-tier cap.
  *
  * Requires: Postgres 16, migrations applied, root seeded (npm run seed).
  * Does NOT require Redis — worker functions are called directly.
@@ -98,16 +104,15 @@ async function walletPaise(memberId: bigint): Promise<bigint> {
 
 // ── tests ─────────────────────────────────────────────────────────────────────
 
-describe('campaignLedger: tier cap by own package (₹10k → 0 extra)', () => {
+describe('campaignLedger: ₹10k member earns nothing (not eligible)', () => {
   it('₹10k beneficiary: 3 campaign pairs → 0 released, 3 pending, wallet unchanged', async () => {
     await ensureCutoffExists()
     const ts = Date.now().toString().slice(-6)
     const { memberId } = await registerAnchor(`CLT10k${ts}`)
 
-    // Set package to ₹10k (campaignExtraUnits = 0)
+    // Package = ₹10k (below ₹30k eligibility threshold)
     await setPackage(memberId, 1_000_000n)
 
-    // Insert 3 campaign pairs and deliver accrual events
     for (let seq = 1; seq <= 3; seq++) {
       const pairId = await insertCampaignPair(memberId, seq)
       await accrueCampaignPairBonus(makeAccrualEvent(pairId, memberId))
@@ -120,13 +125,13 @@ describe('campaignLedger: tier cap by own package (₹10k → 0 extra)', () => {
   })
 })
 
-describe('campaignLedger: tier cap by own package (₹30k → 2 extra)', () => {
-  it('₹30k beneficiary: 4 campaign pairs → exactly 2 released, 2 pending', async () => {
+describe('campaignLedger: ₹30k member releases ALL pairs (no cap)', () => {
+  it('₹30k beneficiary: 4 campaign pairs → all 4 released, 0 pending, wallet ₹4,000', async () => {
     await ensureCutoffExists()
     const ts = (Date.now() + 1).toString().slice(-6)
     const { memberId } = await registerAnchor(`CLT30k${ts}`)
 
-    // Package = ₹30k (campaignExtraUnits = 2, lifetime cap = 2 releases)
+    // Package = ₹30k (eligible — binary gate passes)
     await setPackage(memberId, 3_000_000n)
 
     for (let seq = 1; seq <= 4; seq++) {
@@ -135,106 +140,107 @@ describe('campaignLedger: tier cap by own package (₹30k → 2 extra)', () => {
     }
 
     const counts = await accrualCounts(memberId)
-    expect(counts.released).toBe(2)
-    expect(counts.pending).toBe(2)
-    expect(await walletPaise(memberId)).toBe(CAMPAIGN_BONUS_PAISE * 2n) // ₹2,000
-  })
-
-  it('₹30k beneficiary at cap: additional pair → 0 more released (lifetime cap enforced)', async () => {
-    await ensureCutoffExists()
-    const ts = (Date.now() + 2).toString().slice(-6)
-    const { memberId } = await registerAnchor(`CLT30kCap${ts}`)
-
-    await setPackage(memberId, 3_000_000n)
-
-    // First 2 pairs fill the cap
-    for (let seq = 1; seq <= 2; seq++) {
-      const pairId = await insertCampaignPair(memberId, seq)
-      await accrueCampaignPairBonus(makeAccrualEvent(pairId, memberId))
-    }
-    const mid = await accrualCounts(memberId)
-    expect(mid.released).toBe(2) // cap exactly consumed
-
-    // 5th pair (cap already full) → stays pending
-    const extraPairId = await insertCampaignPair(memberId, 3)
-    await accrueCampaignPairBonus(makeAccrualEvent(extraPairId, memberId))
-
-    const counts = await accrualCounts(memberId)
-    expect(counts.released).toBe(2)   // no new releases
-    expect(counts.pending).toBe(1)    // new pair is pending
-  })
-})
-
-describe('campaignLedger: release on upgrade ₹30k→₹50k', () => {
-  it('CampaignEligibilityReached after upgrade releases the extra headroom (oldest-first)', async () => {
-    await ensureCutoffExists()
-    const ts = (Date.now() + 3).toString().slice(-6)
-    const { memberId } = await registerAnchor(`CLTUpg${ts}`)
-
-    // Start at ₹30k — earn 4 pairs (2 release, 2 pending)
-    await setPackage(memberId, 3_000_000n)
-    const pairIds: bigint[] = []
-    for (let seq = 1; seq <= 4; seq++) {
-      const pairId = await insertCampaignPair(memberId, seq)
-      pairIds.push(pairId)
-      await accrueCampaignPairBonus(makeAccrualEvent(pairId, memberId))
-    }
-
-    const before = await accrualCounts(memberId)
-    expect(before.released).toBe(2)
-    expect(before.pending).toBe(2)
-
-    // Upgrade to ₹50k → headroom = 4 − 2 = 2 more releases
-    await setPackage(memberId, 5_000_000n)
-    await releasePendingCampaignBonuses(makeEligibilityEvent(memberId))
-
-    const after = await accrualCounts(memberId)
-    expect(after.released).toBe(4)   // all 4 now released
-    expect(after.pending).toBe(0)
+    expect(counts.released).toBe(4)  // ALL released — no cap
+    expect(counts.pending).toBe(0)
     expect(await walletPaise(memberId)).toBe(CAMPAIGN_BONUS_PAISE * 4n) // ₹4,000
   })
 
-  it('at ₹50k cap: additional pairs after upgrade stay pending permanently', async () => {
+  it('₹50k beneficiary: 5 campaign pairs → all 5 released, 0 pending, wallet ₹5,000', async () => {
     await ensureCutoffExists()
-    const ts = (Date.now() + 4).toString().slice(-6)
-    const { memberId } = await registerAnchor(`CLTFull${ts}`)
+    const ts = (Date.now() + 2).toString().slice(-6)
+    const { memberId } = await registerAnchor(`CLT50k${ts}`)
 
-    // ₹50k from the start — 5 pairs → 4 released, 1 pending (max tier cap)
+    // Package = ₹50k (eligible — binary gate passes)
     await setPackage(memberId, 5_000_000n)
+
     for (let seq = 1; seq <= 5; seq++) {
       const pairId = await insertCampaignPair(memberId, seq)
       await accrueCampaignPairBonus(makeAccrualEvent(pairId, memberId))
     }
 
     const counts = await accrualCounts(memberId)
-    expect(counts.released).toBe(4)  // max tier = 4
-    expect(counts.pending).toBe(1)   // over-cap stays pending forever
+    expect(counts.released).toBe(5)  // ALL released — no cap
+    expect(counts.pending).toBe(0)
+    expect(await walletPaise(memberId)).toBe(CAMPAIGN_BONUS_PAISE * 5n) // ₹5,000
+  })
+})
 
-    // CampaignEligibilityReached at ₹50k → headroom = 0, nothing changes
+describe('campaignLedger: upgrade ₹10k→₹30k releases all pending', () => {
+  it('CampaignEligibilityReached after ₹10k→₹30k upgrade releases all pending pairs', async () => {
+    await ensureCutoffExists()
+    const ts = (Date.now() + 3).toString().slice(-6)
+    const { memberId } = await registerAnchor(`CLTUpg${ts}`)
+
+    // Start at ₹10k — accrue 3 pairs (all stay pending)
+    await setPackage(memberId, 1_000_000n)
+    for (let seq = 1; seq <= 3; seq++) {
+      const pairId = await insertCampaignPair(memberId, seq)
+      await accrueCampaignPairBonus(makeAccrualEvent(pairId, memberId))
+    }
+
+    const before = await accrualCounts(memberId)
+    expect(before.released).toBe(0)
+    expect(before.pending).toBe(3)
+    expect(await walletPaise(memberId)).toBe(0n)
+
+    // Upgrade to ₹30k → CampaignEligibilityReached → ALL 3 released
+    await setPackage(memberId, 3_000_000n)
     await releasePendingCampaignBonuses(makeEligibilityEvent(memberId))
-    const countsAfter = await accrualCounts(memberId)
-    expect(countsAfter.released).toBe(4)
-    expect(countsAfter.pending).toBe(1)
+
+    const after = await accrualCounts(memberId)
+    expect(after.released).toBe(3)  // all released
+    expect(after.pending).toBe(0)
+    expect(await walletPaise(memberId)).toBe(CAMPAIGN_BONUS_PAISE * 3n) // ₹3,000
   })
 
-  it('idempotency: replaying CampaignEligibilityReached does not double-release', async () => {
+  it('Already-eligible member: CampaignEligibilityReached is a no-op (nothing pending)', async () => {
     await ensureCutoffExists()
-    const ts = (Date.now() + 5).toString().slice(-6)
-    const { memberId } = await registerAnchor(`CLTIdem${ts}`)
+    const ts = (Date.now() + 4).toString().slice(-6)
+    const { memberId } = await registerAnchor(`CLTNoop${ts}`)
 
-    await setPackage(memberId, 5_000_000n)
+    // ₹30k from the start — 2 pairs, both released immediately
+    await setPackage(memberId, 3_000_000n)
     for (let seq = 1; seq <= 2; seq++) {
       const pairId = await insertCampaignPair(memberId, seq)
       await accrueCampaignPairBonus(makeAccrualEvent(pairId, memberId))
     }
-    expect((await accrualCounts(memberId)).released).toBe(2)
+    const mid = await accrualCounts(memberId)
+    expect(mid.released).toBe(2)
+    expect(mid.pending).toBe(0)
 
-    // Replay the same event — processed_events guard should deduplicate
+    // CampaignEligibilityReached fires (e.g. from confirmOrder) — no-op
+    await releasePendingCampaignBonuses(makeEligibilityEvent(memberId))
+
+    const after = await accrualCounts(memberId)
+    expect(after.released).toBe(2)  // unchanged
+    expect(after.pending).toBe(0)
+  })
+})
+
+describe('campaignLedger: idempotency', () => {
+  it('replaying CampaignEligibilityReached does not double-release', async () => {
+    await ensureCutoffExists()
+    const ts = (Date.now() + 5).toString().slice(-6)
+    const { memberId } = await registerAnchor(`CLTIdem${ts}`)
+
+    // ₹10k → accrue 2 pairs (pending)
+    await setPackage(memberId, 1_000_000n)
+    for (let seq = 1; seq <= 2; seq++) {
+      const pairId = await insertCampaignPair(memberId, seq)
+      await accrueCampaignPairBonus(makeAccrualEvent(pairId, memberId))
+    }
+    expect((await accrualCounts(memberId)).released).toBe(0)
+
+    // Upgrade and release
+    await setPackage(memberId, 3_000_000n)
     const ev = makeEligibilityEvent(memberId)
     await releasePendingCampaignBonuses(ev)
-    await releasePendingCampaignBonuses(ev) // exact same event_id
+    expect((await accrualCounts(memberId)).released).toBe(2)
 
+    // Replay the same event_id — processed_events guard deduplicates
+    await releasePendingCampaignBonuses(ev)
     expect((await accrualCounts(memberId)).released).toBe(2) // no double-release
+
     const { rows: txns } = await pool().query<{ cnt: string }>(
       `SELECT COUNT(*)::int AS cnt FROM ledger_txns
         WHERE idempotency_key LIKE 'campaignbonus:%:${memberId}'`,

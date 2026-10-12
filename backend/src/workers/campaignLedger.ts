@@ -1,15 +1,22 @@
 /**
- * campaignLedger — campaign pair accrual and tier-gated release (Phase B).
+ * campaignLedger — campaign pair accrual and binary-gate release (Phase B).
  *
  * Consumer group: avg-campaign-ledger  (stream: avg.ledger.commands)
  *
  * Handles two campaign events from the shared ledger stream:
  *   - CampaignPairBonusAccrued  — insert a campaign_pair_accruals row and release
- *                                 immediately if the beneficiary is already eligible
- *                                 (package_value_paise >= campaign 30k tier).
- *   - CampaignEligibilityReached — release all pending campaign accruals for the
- *                                  member (fired by confirmOrder when they first cross
- *                                  the eligibility threshold).
+ *                                 immediately if the beneficiary is eligible:
+ *                                 package_value_paise >= ₹30k (CAMPAIGN_TIER_30K_PAISE).
+ *                                 ₹10k members stay 'pending' until they upgrade.
+ *   - CampaignEligibilityReached — release ALL pending campaign accruals for the
+ *                                  member (fired by confirmOrder the first time a
+ *                                  member's package crosses the ₹30k eligibility gate).
+ *
+ * Release rule: binary gate — once a member holds ≥ ₹30k, every campaign pair
+ * they have or ever earn is released in full (no per-tier numeric cap).  ₹10k
+ * members earn nothing until they upgrade.  This mirrors the live pair-matching
+ * engine: the campaign engine is identical except it uses unit-weighted matching
+ * (₹10k=1, ₹30k=3, ₹50k=5 units) rather than flat 1-per-head.
  *
  * This is an independent consumer group on the same avg.ledger.commands stream.
  * The live avg-ledger group ignores campaign events (no case in its switch).
@@ -31,29 +38,11 @@ import type {
 	CampaignPairBonusAccrued,
 } from "../events/types.js";
 import { withTxn } from "../lib/db.js";
-import { campaignExtraUnits } from "../lib/campaign.js";
 import { fromPaise, toPaise } from "../lib/money.js";
 import { creditBonusWithCap } from "./ledger.js";
 import { startConsumer } from "../lib/streams.js";
 
 const GROUP = "avg-campaign-ledger";
-
-/**
- * Count already-released campaign accruals for a beneficiary.
- * Released pairs are the unit of consumption against the tier cap
- * (₹30k→2 releases, ₹50k→4 releases lifetime, ₹10k→0).
- */
-async function releasedCampaignCount(
-	c: pg.PoolClient,
-	beneficiaryId: bigint,
-): Promise<number> {
-	const { rows } = await c.query<{ n: number }>(
-		`SELECT count(*)::int AS n FROM campaign_pair_accruals
-		  WHERE beneficiary_id = $1 AND status = 'released'`,
-		[beneficiaryId],
-	);
-	return rows[0].n;
-}
 
 /**
  * Release one campaign_pair_accruals row via creditBonusWithCap and mark it
@@ -89,10 +78,9 @@ async function releaseCampaignAccrual(
 
 /**
  * Handle CampaignPairBonusAccrued: record the accrual and release immediately if
- * the beneficiary's released count is below their tier cap
- * (₹30k→2 lifetime, ₹50k→4 lifetime, ₹10k→0).
- * Over-cap accruals stay 'pending' until a CampaignEligibilityReached event
- * fires on a package upgrade that raises the tier cap.
+ * the beneficiary's package is at or above the ₹30k eligibility threshold.
+ * ₹10k members' accruals stay 'pending' until CampaignEligibilityReached fires
+ * when they upgrade to ₹30k or above.
  */
 export async function accrueCampaignPairBonus(
 	e: CampaignPairBonusAccrued,
@@ -134,21 +122,20 @@ export async function accrueCampaignPairBonus(
 		}
 
 		if (isPending) {
-			// Check beneficiary's package tier and lifetime release count.
+			// Binary eligibility gate: release immediately if package >= ₹30k;
+			// otherwise leave 'pending' — CampaignEligibilityReached releases it on upgrade.
 			const { rows: mRows } = await c.query<{ package_value_paise: string }>(
 				"SELECT package_value_paise FROM members WHERE id=$1",
 				[beneficiaryId],
 			);
 			const pkgPaise = BigInt(mRows[0]?.package_value_paise ?? "0");
-			// Tier cap: ₹10k→0, ₹30k→2, ₹50k→4 (lifetime, not per-week).
-			const cap = Number(campaignExtraUnits(pkgPaise));
-			const released = await releasedCampaignCount(c, beneficiaryId);
-			if (released < cap) {
-				// Within tier cap: release immediately with mode="forfeit" (BR-12
-				// equivalent — ongoing accrual, cap overage is forfeited to system).
+			const eligiblePaise = BigInt(CFG.CAMPAIGN_TIER_30K_PAISE);
+			if (pkgPaise >= eligiblePaise) {
+				// Eligible: release immediately with mode="forfeit" (BR-12 equivalent —
+				// ongoing accrual, cap overage is forfeited to system).
 				await releaseCampaignAccrual(c, campaignPairId, beneficiaryId, amountPaise, "forfeit");
 			}
-			// else: accrual stays 'pending'; CampaignEligibilityReached releases it on upgrade.
+			// else: ₹10k member — stays 'pending' until they upgrade to ₹30k+.
 		}
 
 		await c.query(
@@ -159,21 +146,18 @@ export async function accrueCampaignPairBonus(
 }
 
 /**
- * Handle CampaignEligibilityReached: release pending campaign accruals for this
- * member up to the headroom of their current tier cap (BR-13 equivalent —
- * qualification-backlog release, mode="defer" so cap overage goes to
- * deferred_bonus rather than being forfeited).
+ * Handle CampaignEligibilityReached: release ALL pending campaign accruals for
+ * this member.  Fired by confirmOrder the first time a member's package crosses
+ * the ₹30k eligibility threshold (₹10k → ₹30k).
  *
- * Fired when a member's package crosses a tier boundary that raises
- * campaignExtraUnits (₹10k→₹30k: +2 cap, ₹30k→₹50k: +2 more cap).
- * Headroom = GREATEST(0, cap − already_released) — never negative, so
- * members who were previously released under an old uncapped rule are
- * safely grandfathered (0 additional releases, no clawback).
+ * Releases use mode="defer" (BR-13 equivalent — qualification-backlog release, so
+ * cap overage goes to deferred_bonus rather than being forfeited).
  *
- * Note on terminal state: if a member accrues campaign pairs while ineligible
- * and only upgrades AFTER the campaign window closes, their backlog stays
- * 'pending' forever — no eligibility event fires post-window. This is correct
- * per the campaign terms ("valid during the campaign period").
+ * Safety guard: if the member's package is somehow still below ₹30k (e.g. an
+ * out-of-order delivery), no release happens — the event is still marked processed
+ * to avoid infinite re-delivery.
+ *
+ * Idempotency: processed_events deduplication prevents double-release on replay.
  */
 export async function releasePendingCampaignBonuses(
 	e: CampaignEligibilityReached,
@@ -187,19 +171,17 @@ export async function releasePendingCampaignBonuses(
 
 		const memberId = BigInt(e.member_id);
 
-		// Read the member's current package tier (ratcheted, so this is ≥ the tier
-		// that triggered the event — safe to compute the new cap from).
+		// Read the member's current package tier.
 		const { rows: mRows } = await c.query<{ package_value_paise: string }>(
 			"SELECT package_value_paise FROM members WHERE id=$1",
 			[memberId],
 		);
 		const pkgPaise = BigInt(mRows[0]?.package_value_paise ?? "0");
-		const cap = Number(campaignExtraUnits(pkgPaise)); // 0 | 2 | 4
-		const alreadyReleased = await releasedCampaignCount(c, memberId);
-		const headroom = Math.max(0, cap - alreadyReleased);
+		const eligiblePaise = BigInt(CFG.CAMPAIGN_TIER_30K_PAISE);
 
-		if (headroom === 0) {
-			// Already at or above cap — nothing to release (grandfathered or max tier).
+		if (pkgPaise < eligiblePaise) {
+			// Defensive guard — member not yet eligible (out-of-order delivery).
+			// Mark processed so this event is not re-delivered.
 			await c.query(
 				"INSERT INTO processed_events (consumer_group, event_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
 				[GROUP, e.event_id],
@@ -207,7 +189,7 @@ export async function releasePendingCampaignBonuses(
 			return;
 		}
 
-		// Lock pending accruals oldest-first (campaign_pair_id ASC) up to headroom.
+		// Lock ALL pending accruals oldest-first (campaign_pair_id ASC).
 		// Stable order avoids deadlocks if this event is ever re-delivered concurrently.
 		const { rows: pending } = await c.query<{
 			campaign_pair_id: string;
@@ -218,12 +200,11 @@ export async function releasePendingCampaignBonuses(
 			   FROM campaign_pair_accruals
 			  WHERE beneficiary_id=$1 AND status='pending'
 			  ORDER BY campaign_pair_id
-			  LIMIT $2
 			  FOR UPDATE`,
-			[memberId, headroom],
+			[memberId],
 		);
 
-		// Release up to headroom pairs: backlog releases use mode="defer" (BR-13 equivalent)
+		// Release all pending pairs: backlog releases use mode="defer" (BR-13 equivalent)
 		// so cap overage is credited to deferred_bonus rather than forfeited.
 		// Per-accrual idempotency keys (creditBonusWithCap uses the "campaignbonus:"
 		// prefix) keep a mid-txn crash + re-delivery safe.

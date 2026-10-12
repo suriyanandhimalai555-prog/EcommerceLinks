@@ -16,11 +16,11 @@
  * Exits 1 if any node has drift < 0 — doubles as a post-campaign completeness check.
  * Writes nothing — safe to run against production.
  *
- * NOTE (since campaign tier-cap rule, Oct 2026): this script audits MINTING only.
- * Under the tier cap, matched ≫ released is normal and expected.
- * The payout release invariant is separate:
- *   paid = min(campaign_pairs_matched, campaignExtraUnits(package_value_paise))
- *   where campaignExtraUnits: ₹10k→0, ₹30k→2, ₹50k→4 (lifetime, not per-week).
+ * NOTE: this script audits MINTING only (not payout/release).
+ * For qualified members (package >= ₹30k) matched == released should be true;
+ * only ₹10k members carry a pending backlog (released once they upgrade to ₹30k+).
+ * The payout release invariant: eligible (pkg >= ₹30k) → all pairs released,
+ * ineligible (₹10k) → 0 released (all pending until CampaignEligibilityReached).
  *
  * Usage:
  *   # dev copy (reads DATABASE_URL from .env):

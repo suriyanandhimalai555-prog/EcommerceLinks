@@ -2,14 +2,17 @@
  * Integration test: confirmOrder → CampaignEligibilityReached emission.
  *
  * Verifies that confirmOrder (services/orderService.ts) writes a
- * CampaignEligibilityReached row to events_outbox exactly when a package
- * upgrade crosses a tier boundary that raises campaignExtraUnits:
+ * CampaignEligibilityReached row to events_outbox exactly on the FIRST crossing
+ * of the ₹30k eligibility threshold — and only then:
  *
- *   ₹10k → ₹30k : extraUnits 0→2 → emit
- *   ₹30k → ₹50k : extraUnits 2→4 → emit again (the case the old first-crossing
- *                  predicate would have MISSED; the new code must catch it)
+ *   ₹10k → ₹30k : old < ₹30k, new >= ₹30k → emit (first crossing)
+ *   ₹30k → ₹50k : already eligible (old >= ₹30k) → NO emit (already qualified)
  *   same-tier re-confirm : unchanged      → no emit
- *   plain ₹10k activation: extraUnits 0→0 → no emit
+ *   plain ₹10k activation: below ₹30k     → no emit
+ *
+ * The binary gate means a ₹30k member upgrading to ₹50k does NOT re-emit —
+ * their pending accruals already released on the ₹10k→₹30k crossing, and new
+ * accruals release immediately via accrueCampaignPairBonus (binary gate there too).
  *
  * No workers required — functions are called directly.
  * The campaign window is widened in beforeAll so the test is calendar-independent.
@@ -96,7 +99,7 @@ async function doUpgrade(memberId: bigint, targetPaise: number): Promise<void> {
 // ── tests ─────────────────────────────────────────────────────────────────────
 
 describe('campaignEligibilityEmit: confirmOrder writes CampaignEligibilityReached on tier upgrade', () => {
-  it('₹10k → ₹30k upgrade emits one CampaignEligibilityReached (extraUnits 0 → 2)', async () => {
+  it('₹10k → ₹30k upgrade emits one CampaignEligibilityReached (first crossing of ₹30k gate)', async () => {
     const { memberId } = await registerAndActivate(
       `CEE30k${Date.now().toString().slice(-6)}`,
     )
@@ -104,28 +107,28 @@ describe('campaignEligibilityEmit: confirmOrder writes CampaignEligibilityReache
     // No event before the upgrade
     expect(await eligibilityEvents(memberId)).toBe(0)
 
-    // Upgrade to ₹30k: campaignExtraUnits crosses from 0 → 2 — must emit
+    // Upgrade to ₹30k: crosses the ₹30k eligibility threshold → must emit
     await doUpgrade(memberId, 3_000_000)
 
     expect(await eligibilityEvents(memberId)).toBe(1)
   })
 
-  it('₹30k → ₹50k upgrade emits a second CampaignEligibilityReached (extraUnits 2 → 4)', async () => {
-    // This is the critical test: the old first-crossing predicate would have
-    // emitted only on 0→2 but not on 2→4. The new predicate
-    //   campaignExtraUnits(new) > campaignExtraUnits(old)
-    // must catch both crossings independently.
+  it('₹30k → ₹50k upgrade does NOT emit a second CampaignEligibilityReached (already qualified)', async () => {
+    // Binary gate: the event fires only on the FIRST crossing of ₹30k.
+    // A ₹30k member upgrading to ₹50k is already eligible — no new event.
+    // New accruals for a ₹50k member release immediately in accrueCampaignPairBonus
+    // (binary gate there too), so no eligibility event is needed.
     const { memberId } = await registerAndActivate(
       `CEE50k${Date.now().toString().slice(-6)}`,
     )
 
-    // ₹10k → ₹30k (first crossing)
+    // ₹10k → ₹30k (first — and only — crossing; event count becomes 1)
     await doUpgrade(memberId, 3_000_000)
     expect(await eligibilityEvents(memberId)).toBe(1)
 
-    // ₹30k → ₹50k (second crossing — must emit again)
+    // ₹30k → ₹50k: already eligible → event count must stay at 1
     await doUpgrade(memberId, 5_000_000)
-    expect(await eligibilityEvents(memberId)).toBe(2)
+    expect(await eligibilityEvents(memberId)).toBe(1)
   })
 
   it('Negative: same-tier order confirm does not emit CampaignEligibilityReached', async () => {
@@ -141,7 +144,7 @@ describe('campaignEligibilityEmit: confirmOrder writes CampaignEligibilityReache
     expect(countAfterUpgrade).toBe(1)
 
     // Confirm a fresh ₹10k order — package ratchet: GREATEST(₹50k, ₹10k) = ₹50k
-    // campaignExtraUnits(₹50k) = 4 = campaignExtraUnits(₹50k) → predicate false
+    // old >= ₹30k already, so first-crossing predicate is false → no emit
     const { orderId, idempotencyKey } = await createOrder(String(memberId), 1)
     await confirmOrder(idempotencyKey, BigInt(orderId), `payref-reconfirm-${orderId}`)
 

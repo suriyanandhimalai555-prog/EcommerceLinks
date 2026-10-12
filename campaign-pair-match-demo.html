@@ -42,7 +42,7 @@ button:disabled{opacity:.35;cursor:not-allowed}
 .btn-blue{background:#0d2040;border-color:#264a80;color:#79c0ff}
 .btn-blue:hover{background:#122a5a}
 /* ── sidebar panels ── */
-.panel{border-bottom:1px solid var(--bdr);padding:14px 16px}
+.panel{border-bottom:1px solid var(--bdr);padding:14px 16px;flex-shrink:0}
 .panel-title{font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px}
 /* ── node action panel ── */
 #nodePanel{min-height:120px}
@@ -105,10 +105,14 @@ button:disabled{opacity:.35;cursor:not-allowed}
     <span style="font-size:11px;color:var(--muted)">Preset:</span>
     <button class="btn-sm btn-blue" onclick="loadPreset('start')">Clean start</button>
     <button class="btn-sm btn-blue" onclick="loadPreset('tier')">Tier mix</button>
-    <button class="btn-sm btn-blue" onclick="loadPreset('test30k')">Test: 30k cap</button>
-    <button class="btn-sm btn-blue" onclick="loadPreset('test50k')">Test: 50k cap</button>
+    <button class="btn-sm btn-blue" onclick="loadPreset('test10k')">Test: 10k pending</button>
+    <button class="btn-sm btn-blue" onclick="loadPreset('test30k')">Test: 30k qualified</button>
     <button class="btn-sm btn-blue" onclick="loadPreset('deep')">Deep tree</button>
     <button class="btn-sm btn-reset" onclick="loadPreset('empty')">↺ Reset</button>
+    <span class="sep" style="margin:0 2px">|</span>
+    <span style="font-size:11px;color:var(--muted)">Verify:</span>
+    <button class="btn-sm btn-30k" onclick="loadPreset('verify30k')">₹30k = 1+2</button>
+    <button class="btn-sm btn-50k" onclick="loadPreset('verify50k')">₹50k = 1+4</button>
   </div>
 </div>
 
@@ -207,6 +211,33 @@ function subtreeStats(id) {
   return { m: 1 + left.m + right.m, u: unitsFor(n.pkg) + left.u + right.u };
 }
 
+// ─── per-tier count of each leg ──────────────────────────────────────────────
+// Returns { c10, c30, c50, m, u } for everything BELOW (not including) root.
+function subtreeTally(id) {
+  if (id === null || id === undefined || !(id in nodes))
+    return { c10: 0, c30: 0, c50: 0, m: 0, u: 0 };
+  const n = nodes[id];
+  const L = subtreeTally(n.lc);
+  const R = subtreeTally(n.rc);
+  return {
+    c10: (n.pkg >= 10000 && n.pkg < 30000 ? 1 : 0) + L.c10 + R.c10,
+    c30: (n.pkg >= 30000 && n.pkg < 50000 ? 1 : 0) + L.c30 + R.c30,
+    c50: (n.pkg >= 50000               ? 1 : 0) + L.c50 + R.c50,
+    m:   1 + L.m + R.m,
+    u:   unitsFor(n.pkg) + L.u + R.u,
+  };
+}
+
+// Build a readable string like "1×₹50k + 2×₹10k → 7u · 3 heads"
+function tallyLabel(t) {
+  const parts = [];
+  if (t.c50) parts.push(`${t.c50}×₹50k`);
+  if (t.c30) parts.push(`${t.c30}×₹30k`);
+  if (t.c10) parts.push(`${t.c10}×₹10k`);
+  if (!parts.length) return '(empty)';
+  return `${parts.join(' + ')} → <b>${t.u}u</b> · ${t.m} head${t.m !== 1 ? 's' : ''}`;
+}
+
 // ═══════════════════════════════════════════════════════
 //  MATCHING FORMULA — campaignCounter.ts lines 145-148
 // ═══════════════════════════════════════════════════════
@@ -215,15 +246,16 @@ function doCalc() {
   if (!root) return null;
   const L = subtreeStats(root.lc);
   const R = subtreeStats(root.rc);
-  const T       = Math.min(L.u, R.u);
-  const B       = Math.min(L.m, R.m);
-  const surplus = Math.max(0, T - B);
-  priorMatched  = Math.max(priorMatched, surplus);   // GREATEST clamp
-  const matched = priorMatched;
-  const cap     = extraUnitsFor(root.pkg);
-  const released = Math.min(matched, cap);
+  const T        = Math.min(L.u, R.u);
+  const B        = Math.min(L.m, R.m);
+  const surplus  = Math.max(0, T - B);
+  priorMatched   = Math.max(priorMatched, surplus);   // GREATEST clamp
+  const matched  = priorMatched;
+  // Binary eligibility gate: own package >= ₹30k → release ALL; else 0.
+  const eligible = root.pkg >= 30000;
+  const released = eligible ? matched : 0;
   const pending  = matched - released;
-  return { LM: L.m, LU: L.u, RM: R.m, RU: R.u, T, B, surplus, matched, cap, released, pending };
+  return { LM: L.m, LU: L.u, RM: R.m, RU: R.u, T, B, surplus, matched, eligible, released, pending };
 }
 
 // ═══════════════════════════════════════════════════════
@@ -430,7 +462,7 @@ function drawNode(g, n) {
   if (isRoot) {
     grp.appendChild(svgText(n.x, n.y - 12, 'YOU', 11, '#ddd', '700'));
     grp.appendChild(svgText(n.x, n.y + 3,  pkgLabel(n.pkg), 13, c.text, '700'));
-    grp.appendChild(svgText(n.x, n.y + 17, `${unitsFor(n.pkg)}u · cap:${extraUnitsFor(n.pkg)}`, 10, c.text, '400'));
+    grp.appendChild(svgText(n.x, n.y + 17, `${unitsFor(n.pkg)}u · ${n.pkg >= 30000 ? '✓ eligible' : '✗ ineligible'}`, 10, c.text, '400'));
   } else {
     grp.appendChild(svgText(n.x, n.y - 11, `M${n.id}`, 10, '#aaa', '500'));
     grp.appendChild(svgText(n.x, n.y + 3,  pkgLabel(n.pkg), 13, c.text, '700'));
@@ -468,7 +500,7 @@ function renderNodePanel() {
       </div>
       <div class="ninfo-label">
         <strong>${isRoot ? 'YOU (root)' : 'M' + n.id}</strong>
-        <small>${isRoot ? 'Your own node — sets the payout cap' : `Depth ${depth} · ${n.rootSide === 'L' ? '◀ Left subtree' : n.rootSide === 'R' ? '▶ Right subtree' : ''} · Side ${n.side ?? '—'}`}</small>
+        <small>${isRoot ? `Your own node — ${n.pkg >= 30000 ? '✓ eligible (≥ ₹30k), all pairs release' : '✗ ineligible (₹10k), pairs stay pending'}` : `Depth ${depth} · ${n.rootSide === 'L' ? '◀ Left subtree' : n.rootSide === 'R' ? '▶ Right subtree' : ''} · Side ${n.side ?? '—'}`}</small>
       </div>
     </div>`;
 
@@ -522,76 +554,113 @@ function renderCalcPanel() {
   const box  = document.getElementById('calcContent');
   if (!calc) { box.innerHTML = '<span style="color:var(--muted)">No tree.</span>'; return; }
 
-  const { LM, LU, RM, RU, T, B, surplus, matched, cap, released, pending } = calc;
+  const { LM, LU, RM, RU, T, B, surplus, matched, eligible, released, pending } = calc;
   const clamped = (priorMatched > surplus && surplus < priorMatched);
+  const eligibleColor = eligible ? 'var(--green)' : 'var(--amber)';
+  const eligibleLabel = eligible ? '✓ YES — all pairs released' : '✗ NO — pairs stay pending';
+
+  // Per-leg tier composition (for hand-verification)
+  const rootNode = nodes[0];
+  const LT = subtreeTally(rootNode.lc);
+  const RT = subtreeTally(rootNode.rc);
 
   box.innerHTML = `
+
+    <!-- ── Static reference legend ── -->
+    <div style="background:#0e1e30;border:1px solid #264a73;border-radius:7px;padding:9px 12px;margin-bottom:10px;font-size:11px;line-height:1.8">
+      <div style="color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;font-size:10px">Per-tier pair split (reference)</div>
+      <div><span style="color:#7ee787">₹10k = 1u</span> → <span style="color:#3fb950;font-weight:700">1 live</span> + <span style="color:#79c0ff;font-weight:700">0 campaign</span> = ₹1,000 total</div>
+      <div><span style="color:#e3b341">₹30k = 3u</span> → <span style="color:#3fb950;font-weight:700">1 live</span> + <span style="color:#79c0ff;font-weight:700">2 campaign</span> = ₹3,000 total</div>
+      <div><span style="color:#bc8cff">₹50k = 5u</span> → <span style="color:#3fb950;font-weight:700">1 live</span> + <span style="color:#79c0ff;font-weight:700">4 campaign</span> = ₹5,000 total</div>
+      <div style="color:var(--muted);margin-top:3px;font-size:10px">Formula: 1 live = B (1 head); campaign = T−B (extra units)</div>
+    </div>
+
+    <!-- ── Leg composition ── -->
+    <div style="background:var(--surf2);border:1px solid var(--bdr);border-radius:6px;padding:8px 12px;margin-bottom:10px;font-size:11px;line-height:1.7">
+      <div style="color:var(--muted);font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Leg composition</div>
+      <div><span style="color:#388bfd;font-weight:600">◀ Left:</span> ${tallyLabel(LT)}</div>
+      <div><span style="color:#f0883e;font-weight:600">▶ Right:</span> ${tallyLabel(RT)}</div>
+    </div>
+
+    <!-- ── Formula rows ── -->
     <div class="stat-grid">
       <div class="stat-box" style="border-color:#264a73">
         <div class="sv" style="color:#79c0ff">${LU}</div>
         <div class="sl">Left units</div>
-        <div style="font-size:10px;color:var(--muted)">${LM} members</div>
+        <div style="font-size:10px;color:var(--muted)">${LM} head${LM!==1?'s':''}</div>
       </div>
       <div class="stat-box" style="border-color:#5c3014">
         <div class="sv" style="color:#ffa657">${RU}</div>
         <div class="sl">Right units</div>
-        <div style="font-size:10px;color:var(--muted)">${RM} members</div>
+        <div style="font-size:10px;color:var(--muted)">${RM} head${RM!==1?'s':''}</div>
       </div>
     </div>
 
     <div class="formula-row" style="border-color:#264a73">
-      <span style="color:var(--muted);font-size:11px">T = min(Lu,Ru) — §4 total-unit match</span>
+      <span style="color:var(--muted);font-size:11px">T = min(Lu,Ru) — total-unit match</span>
       <span class="fval" style="color:#79c0ff">${T}</span>
     </div>
     <div class="formula-row" style="border-color:#5c3014">
-      <span style="color:var(--muted);font-size:11px">B = min(Lm,Rm) — live engine already pays</span>
+      <span style="color:var(--muted);font-size:11px">B = min(Lm,Rm) — live engine pays this</span>
       <span class="fval" style="color:#ffa657">${B}</span>
     </div>
     <div class="formula-row">
-      <span style="color:var(--muted);font-size:11px">Surplus = T − B = ${T}−${B}</span>
+      <span style="color:var(--muted);font-size:11px">Campaign top-up = T−B = ${T}−${B}</span>
       <span class="fval" style="color:var(--blue)">${surplus}</span>
     </div>
     <div class="formula-row" style="border-color:#1a4a28">
-      <span style="color:var(--muted);font-size:11px">Matched ${clamped ? `<span style="color:var(--amber)">⟵ GREATEST clamp</span>` : '= surplus'}</span>
+      <span style="color:var(--muted);font-size:11px">Total matched ${clamped ? `<span style="color:var(--amber)">⟵ GREATEST clamp</span>` : ''}</span>
       <span class="fval" style="color:var(--green)">${matched}</span>
     </div>
-    <div class="formula-row" style="border-color:#4a2080">
-      <span style="color:var(--muted);font-size:11px">Your cap = campaignExtraUnits(${pkgLabel(nodes[0].pkg)})</span>
-      <span class="fval" style="color:var(--violet)">${cap}</span>
+    <div class="formula-row" style="border-color:#2a4a30">
+      <span style="color:var(--muted);font-size:11px">Eligible? (YOU ≥ ₹30k?)</span>
+      <span class="fval" style="color:${eligibleColor};font-size:12px">${eligibleLabel}</span>
     </div>
 
-    <div class="money-grid">
-      <div class="money-box mb-live">
-        <div class="ma">₹${(B * 1000).toLocaleString('en-IN')}</div>
-        <div class="ml">Live engine pairs: B × ₹1,000 (always paid)</div>
+    <!-- ── Live + Campaign breakdown ── -->
+    <div style="background:#080f18;border:1px solid #1a3a60;border-radius:7px;padding:10px 12px;margin-top:10px;margin-bottom:6px">
+      <div style="color:var(--muted);font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;margin-bottom:7px">Where the pairs come from</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
+        <span style="color:#3fb950;font-size:12px">🟢 Live / main engine (B = ${B})</span>
+        <span style="color:#3fb950;font-weight:700;font-size:16px">₹${(B*1000).toLocaleString('en-IN')}</span>
       </div>
-      <div class="money-box mb-camp">
-        <div class="ma">₹${(released * 1000).toLocaleString('en-IN')}</div>
-        <div class="ml">Campaign released: min(${matched},${cap}) = ${released} pairs × ₹1,000</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
+        <span style="color:#79c0ff;font-size:12px">🔵 Campaign top-up (T−B = ${surplus})</span>
+        <span style="color:#79c0ff;font-weight:700;font-size:16px">${eligible ? `₹${(surplus*1000).toLocaleString('en-IN')}` : `₹0 <span style="font-size:11px;color:var(--amber)">(ineligible)</span>`}</span>
       </div>
-      ${pending > 0 ? `
-      <div class="money-box mb-pend">
-        <div class="ma">₹${(pending * 1000).toLocaleString('en-IN')}</div>
-        <div class="ml">Pending ${pending} pair${pending>1?'s':''} — unlocks on package upgrade</div>
-      </div>` : ''}
+      <div style="border-top:1px solid #264a73;padding-top:6px;margin-top:4px;display:flex;justify-content:space-between;align-items:center">
+        <span style="color:var(--txt);font-size:12px;font-weight:600">Total YOU receive</span>
+        <span style="color:var(--txt);font-weight:700;font-size:18px">₹${((B + (eligible ? surplus : 0))*1000).toLocaleString('en-IN')}</span>
+      </div>
     </div>
 
-    <div class="expl">${makeExplanation(calc, nodes[0].pkg)}</div>
+    ${pending > 0 ? `
+    <div class="money-box mb-pend" style="margin-top:6px">
+      <div class="ma">₹${(pending * 1000).toLocaleString('en-IN')}</div>
+      <div class="ml">⏳ ${pending} campaign pair${pending>1?'s':''} pending — upgrade YOU to ₹30k to release all</div>
+    </div>` : ''}
+
+    <div class="expl" style="margin-top:8px">${makeExplanation(calc, nodes[0].pkg)}</div>
   `;
 }
 
-function makeExplanation({ LM, LU, RM, RU, T, B, surplus, matched, cap, released, pending }, ownPkg) {
-  if (!LM && !RM) return 'Click a node, then add children using the panel above. Pairs appear when both legs have members.';
-  if (!LM || !RM)  return `One leg is empty — both sides need members before any pairs match.`;
-  if (matched === 0 && surplus === 0) return `T=${T} = B=${B} — the live engine already covers all unit-matched pairs. Campaign top-up is zero. Try adding a higher-tier member (₹30k or ₹50k) to one leg.`;
-  if (cap === 0)   return `Your package is ₹10k — campaignExtraUnits(₹10k) = 0, so all ${matched} matched pair${matched>1?'s':''} stay pending. Upgrade YOUR node to ₹30k (releases 2) or ₹50k (releases 4).`;
-  if (pending === 0) return `✅ All ${matched} campaign pair${matched>1?'s':''} fully released. Your ${pkgLabel(ownPkg)} cap (${cap}) covers everything. Total earned: ₹${((B + released) * 1000).toLocaleString('en-IN')} (live + campaign).`;
-  if (ownPkg >= 50000) {
-    // Already at max tier — pending pairs are permanently stuck
-    return `${matched} campaign pairs matched, but the ₹50k cap is 4 — that is the maximum for any tier. ${released} released (₹${(released*1000).toLocaleString('en-IN')}), ${pending} permanently pending. There is no higher package to unlock them. This is correct and expected.`;
+function makeExplanation({ LM, LU, RM, RU, T, B, surplus, matched, eligible, released, pending }, ownPkg) {
+  if (!LM && !RM) return 'Click a node, then add children. Pairs appear when both legs have members.';
+  if (!LM || !RM)  return 'One leg is empty — both sides need at least one member before any pairs match.';
+  if (matched === 0 && surplus === 0) {
+    return `T = B = ${B} — the live engine already covers everything (units = headcount, no ₹30k/₹50k tiers to top up). Campaign top-up = 0. Add a ₹30k or ₹50k member to a leg to generate a campaign surplus.`;
   }
-  const nextTier = ownPkg < 30000 ? '₹30k (unlocks up to 2)' : '₹50k (unlocks up to 4)';
-  return `${matched} campaign pairs matched, but your ${pkgLabel(ownPkg)} cap = ${cap} → only ${released} released (₹${(released*1000).toLocaleString('en-IN')}). ${pending} pair${pending>1?'s':''} pending — upgrade YOUR node to ${nextTier} to release more.`;
+  if (!eligible) {
+    return `YOU are ₹10k → NOT eligible. The ${matched} matched campaign pair${matched>1?'s':''} (₹${(matched*1000).toLocaleString('en-IN')}) all stay pending. Upgrade YOUR node to ₹30k and every pending pair releases at once.`;
+  }
+  // Eligible — build a per-tier breakdown sentence
+  const liveStr  = `${B} live pair${B!==1?'s':''} (₹${(B*1000).toLocaleString('en-IN')})`;
+  const campStr  = surplus > 0 ? `${surplus} campaign pair${surplus!==1?'s':''} (₹${(surplus*1000).toLocaleString('en-IN')})` : '0 campaign pairs';
+  const totalStr = `₹${((B+surplus)*1000).toLocaleString('en-IN')} total`;
+  if (surplus === 0) {
+    return `✅ ${liveStr} from main engine, 0 campaign (all tiers same as headcount). ${totalStr}.`;
+  }
+  return `✅ ${liveStr} from main engine + ${campStr} from campaign = ${totalStr}. Your ${pkgLabel(ownPkg)} is eligible (≥ ₹30k) — all campaign pairs released in full, no cap.`;
 }
 
 // ═══════════════════════════════════════════════════════
@@ -695,17 +764,29 @@ const PRESETS = {
     L: { pkg: 50000, L: { pkg: 10000 }, R: { pkg: 10000 } },
     R: { pkg: 30000, L: { pkg: 10000 } },
   },
-  // campaignLedger.test.ts: ₹30k owner, 1×₹50k left, 5×₹10k right → 2 released, 2 pending
+  // Test: ₹10k owner, 1×₹50k left, 5×₹10k right → 0 released (ineligible), all pending
+  test10k: {
+    pkg: 10000,
+    L: { pkg: 50000 },
+    R: { pkg: 10000, L: { pkg: 10000, L: { pkg: 10000 } }, R: { pkg: 10000, L: { pkg: 10000 } } },
+  },
+  // Test: ₹30k owner, same tree → ALL released (eligible, binary gate — no cap)
   test30k: {
     pkg: 30000,
     L: { pkg: 50000 },
     R: { pkg: 10000, L: { pkg: 10000, L: { pkg: 10000 } }, R: { pkg: 10000, L: { pkg: 10000 } } },
   },
-  // campaignLedger.test.ts: ₹50k owner, same tree → 4 released, 0 pending
-  test50k: {
+  // Verify ₹30k split: L={₹30k}, R={₹30k} → Lu=Ru=3, Lm=Rm=1 → T=3, B=1 → 1 live + 2 campaign = ₹3,000
+  verify30k: {
+    pkg: 30000,
+    L: { pkg: 30000 },
+    R: { pkg: 30000 },
+  },
+  // Verify ₹50k split: L={₹50k}, R={₹50k} → Lu=Ru=5, Lm=Rm=1 → T=5, B=1 → 1 live + 4 campaign = ₹5,000
+  verify50k: {
     pkg: 50000,
     L: { pkg: 50000 },
-    R: { pkg: 10000, L: { pkg: 10000, L: { pkg: 10000 } }, R: { pkg: 10000, L: { pkg: 10000 } } },
+    R: { pkg: 50000 },
   },
   deep: {
     pkg: 50000,

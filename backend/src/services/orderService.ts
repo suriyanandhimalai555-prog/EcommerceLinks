@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { writeOutbox } from "../events/outbox.js";
 import { pool, withTxn } from "../lib/db.js";
-import { campaignExtraUnits, coinsForPackageValuePaise, isWithinCampaign, unitsForPackageValuePaise } from "../lib/campaign.js";
+import { coinsForPackageValuePaise, isWithinCampaign, unitsForPackageValuePaise } from "../lib/campaign.js";
 import { CFG } from "../config.js";
 import { fromPaise, toPaise } from "../lib/money.js";
 
@@ -157,10 +157,14 @@ export async function confirmOrder(
 				});
 			}
 
-			// Emit CampaignEligibilityReached whenever a package upgrade raises the
-			// member's tier cap (campaignExtraUnits increases: ₹10k→₹30k or ₹30k→₹50k).
-			// Triggers release of pending campaign accruals up to the new headroom.
-			if (campaignExtraUnits(newPackagePaise) > campaignExtraUnits(oldPackagePaise)) {
+			// Emit CampaignEligibilityReached exactly once: the first time a member's
+			// package crosses the ₹30k eligibility threshold (₹10k → ₹30k).
+			// This triggers release of ALL pending campaign accruals for the member.
+			// Already-qualified members (upgrading ₹30k → ₹50k) do not re-emit —
+			// their accruals already release immediately via the binary gate in
+			// campaignLedger.ts (accrueCampaignPairBonus).
+			const eligiblePaise = BigInt(CFG.CAMPAIGN_TIER_30K_PAISE);
+			if (oldPackagePaise < eligiblePaise && newPackagePaise >= eligiblePaise) {
 				await writeOutbox(c, {
 					event_id: randomUUID(),
 					event_type: "CampaignEligibilityReached",

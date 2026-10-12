@@ -46,6 +46,12 @@ export function unitsForPackageValuePaise(valuePaise: bigint): bigint {
  * Returns the number of EXTRA campaign matching units for the given package value.
  * "Extra" means beyond the base 1 unit the live flat engine already pays.
  *
+ * NOTE: this function is NO LONGER used in the payout/release money path.
+ * The campaign release rule uses a binary eligibility gate (own package >= ₹30k
+ * → release all pairs; ₹10k → nothing) — see campaignLedger.ts.
+ * This function is still used by campaignCounter.ts unit tests and retained for
+ * reference; do not use it to gate or cap release decisions.
+ *
  * Uses an explicit tier lookup, NOT arithmetic (e.g. value/10000 − 1), so that
  * off-tier packages (e.g. the ₹25k seed product) never produce fractional or
  * garbage bigint unit counts.
