@@ -36,7 +36,7 @@
 |---|---|---|
 | G-2 Webhook unauth | `WEBHOOK_SECRET` + `x-webhook-secret` header check | `config.ts`, `frontend.ts`, `011_orders_status.sql` |
 | G-3 Admin no role | `010_roles.sql` + `requireAdmin` decorator (DB lookup) + `role` in `/me` | `server.ts`, `admin.ts`, `frontend.ts`, `auth.ts`, `fastify.d.ts` |
-| G-4 Dual payout models | Removed withdrawal request feature; auto-payout is sole model; `POST /admin/payouts/trigger` added | `admin.ts`, `frontend.ts`, `Wallet.tsx`, `Settings.tsx` |
+| G-4 Dual payout models | Member-initiated withdrawal *requests* removed; auto-payout is sole model. Withdrawals are **live and ledger-connected**: cutoff sweep auto-inserts `pending` rows (`sweepToWithdrawable`); admin approve/reject/revert lifecycle with `wdpay`/`wdrevert` txns, 10% TDS, `payout_clearing` hold. `GET /me/withdrawals` remains for history. | `admin.ts`, `frontend.ts`, `workers/ledger.ts` |
 | G-5 Right-leg rank count=0 | `VALUES ($1,$2,1)` one-liner | `counterPair.ts` |
 | G-6 Window drift | `nextWindowStart` drops hour override; `windowEnd = start+7d−1s`; Saturday-anchor seed | `cutoff.ts` |
 | G-7 Failed → paid | `status='failed'` on failed webhook branch | `frontend.ts`, `011_orders_status.sql` |

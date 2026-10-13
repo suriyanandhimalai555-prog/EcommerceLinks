@@ -113,6 +113,9 @@ button:disabled{opacity:.35;cursor:not-allowed}
     <span style="font-size:11px;color:var(--muted)">Verify:</span>
     <button class="btn-sm btn-30k" onclick="loadPreset('verify30k')">₹30k = 1+2</button>
     <button class="btn-sm btn-50k" onclick="loadPreset('verify50k')">₹50k = 1+4</button>
+    <button class="btn-sm" style="background:#1a0a00;border-color:#7a3a0a;color:#ffa657" onclick="loadPreset('img2fix')">Image#2 → ₹5k</button>
+    <button class="btn-sm" style="background:#1a0a00;border-color:#7a3a0a;color:#ffa657" onclick="loadPreset('mixedcase')">Mixed → ₹4k</button>
+    <button class="btn-sm" style="background:#1a0a00;border-color:#c06000;color:#ffcc80;font-weight:700" onclick="loadPreset('img6')">Image#6 → ₹8k ✓</button>
   </div>
 </div>
 
@@ -211,6 +214,23 @@ function subtreeStats(id) {
   return { m: 1 + left.m + right.m, u: unitsFor(n.pkg) + left.u + right.u };
 }
 
+// BFS-ordered list of members in a subtree (top-to-bottom, left-before-right).
+// This mirrors the live engine's activation-order seq (first joined → lowest seq).
+function subtreeMembers(id) {
+  if (id === null || id === undefined || !(id in nodes)) return [];
+  const result = [];
+  const queue = [id];
+  while (queue.length) {
+    const curr = queue.shift();
+    if (curr === null || curr === undefined || !(curr in nodes)) continue;
+    const n = nodes[curr];
+    result.push(n);
+    if (n.lc !== null) queue.push(n.lc);
+    if (n.rc !== null) queue.push(n.rc);
+  }
+  return result;
+}
+
 // ─── per-tier count of each leg ──────────────────────────────────────────────
 // Returns { c10, c30, c50, m, u } for everything BELOW (not including) root.
 function subtreeTally(id) {
@@ -239,23 +259,44 @@ function tallyLabel(t) {
 }
 
 // ═══════════════════════════════════════════════════════
-//  MATCHING FORMULA — campaignCounter.ts lines 145-148
+//  MATCHING FORMULA — campaignCounter.ts (WHOLE-LEG unit matching + earner self-cap)
+//  Matches the official campaign poster (Image #7):
+//    "A ₹50,000 ID represents 5 × ₹10,000 units based on its TOTAL PACKAGE VALUE"
+//    "5 LEFT UNITS + 5 RIGHT UNITS = 5 MATCHING PAIRS"
+//
+//  T' = LEAST(ΣuL, ΣuR, u_self × LEAST(Lh, Rh))
+//    ΣuL/ΣuR = total units across the WHOLE left/right leg
+//    Lh/Rh   = total head counts of left/right leg
+//    u_self  = YOUR own tier: ₹10k→1, ₹30k→3, ₹50k→5 (earner self-cap)
+//  B  = LEAST(Lh, Rh) — what the live engine already paid
+//  Campaign pays T' − B (surplus).
+//
+//  A ₹10k earner: u_self=1 → T' = LEAST(*,*,1×LEAST(Lh,Rh)) ≤ B → surplus=0.
+//  Image #6: YOU ₹50k; L: M1₅₀,M2₁₀,M3₁₀,M6₁₀ (4h,8u); R: M4₅₀,M5₅₀ (2h,10u)
+//    T'=LEAST(8,10,5×LEAST(4,2))=LEAST(8,10,10)=8  B=LEAST(4,2)=2  surplus=6  ₹8,000
 // ═══════════════════════════════════════════════════════
+
 function doCalc() {
   const root = nodes[0];
   if (!root) return null;
-  const L = subtreeStats(root.lc);
-  const R = subtreeStats(root.rc);
-  const T        = Math.min(L.u, R.u);
-  const B        = Math.min(L.m, R.m);
-  const surplus  = Math.max(0, T - B);
-  priorMatched   = Math.max(priorMatched, surplus);   // GREATEST clamp
-  const matched  = priorMatched;
-  // Binary eligibility gate: own package >= ₹30k → release ALL; else 0.
-  const eligible = root.pkg >= 30000;
-  const released = eligible ? matched : 0;
-  const pending  = matched - released;
-  return { LM: L.m, LU: L.u, RM: R.m, RU: R.u, T, B, surplus, matched, eligible, released, pending };
+
+  const leftMembers  = subtreeMembers(root.lc);
+  const rightMembers = subtreeMembers(root.rc);
+  const LM = leftMembers.length;
+  const RM = rightMembers.length;
+  const LU = leftMembers.reduce((s, n) => s + unitsFor(n.pkg), 0);
+  const RU = rightMembers.reduce((s, n) => s + unitsFor(n.pkg), 0);
+
+  const selfU  = unitsFor(root.pkg);
+  const tPrime = Math.min(LU, RU, selfU * Math.min(LM, RM));
+  const B      = Math.min(LM, RM);               // LEAST(total_L_heads, total_R_heads)
+  const surplus = Math.max(0, tPrime - B);
+  priorMatched  = Math.max(priorMatched, surplus); // GREATEST clamp
+  const matched = priorMatched;
+
+  const released = matched;
+  const pending  = 0;
+  return { LM, LU, RM, RU, tPrime, B, surplus, matched, released, pending, selfU };
 }
 
 // ═══════════════════════════════════════════════════════
@@ -462,7 +503,7 @@ function drawNode(g, n) {
   if (isRoot) {
     grp.appendChild(svgText(n.x, n.y - 12, 'YOU', 11, '#ddd', '700'));
     grp.appendChild(svgText(n.x, n.y + 3,  pkgLabel(n.pkg), 13, c.text, '700'));
-    grp.appendChild(svgText(n.x, n.y + 17, `${unitsFor(n.pkg)}u · ${n.pkg >= 30000 ? '✓ eligible' : '✗ ineligible'}`, 10, c.text, '400'));
+    grp.appendChild(svgText(n.x, n.y + 17, `${unitsFor(n.pkg)}u · cap ${unitsFor(n.pkg)}`, 10, c.text, '400'));
   } else {
     grp.appendChild(svgText(n.x, n.y - 11, `M${n.id}`, 10, '#aaa', '500'));
     grp.appendChild(svgText(n.x, n.y + 3,  pkgLabel(n.pkg), 13, c.text, '700'));
@@ -500,7 +541,7 @@ function renderNodePanel() {
       </div>
       <div class="ninfo-label">
         <strong>${isRoot ? 'YOU (root)' : 'M' + n.id}</strong>
-        <small>${isRoot ? `Your own node — ${n.pkg >= 30000 ? '✓ eligible (≥ ₹30k), all pairs release' : '✗ ineligible (₹10k), pairs stay pending'}` : `Depth ${depth} · ${n.rootSide === 'L' ? '◀ Left subtree' : n.rootSide === 'R' ? '▶ Right subtree' : ''} · Side ${n.side ?? '—'}`}</small>
+        <small>${isRoot ? `YOUR package: ${pkgLabel(n.pkg)} → u_self=${unitsFor(n.pkg)}${n.pkg < 30000 ? ' (₹10k: T′≤B, earns 0 campaign top-up)' : n.pkg < 50000 ? ' (₹30k: self-cap = 3×min heads)' : ' (₹50k: full cap = 5×min heads)'}` : `Depth ${depth} · ${n.rootSide === 'L' ? '◀ Left subtree' : n.rootSide === 'R' ? '▶ Right subtree' : ''} · Side ${n.side ?? '—'}`}</small>
       </div>
     </div>`;
 
@@ -554,10 +595,8 @@ function renderCalcPanel() {
   const box  = document.getElementById('calcContent');
   if (!calc) { box.innerHTML = '<span style="color:var(--muted)">No tree.</span>'; return; }
 
-  const { LM, LU, RM, RU, T, B, surplus, matched, eligible, released, pending } = calc;
-  const clamped = (priorMatched > surplus && surplus < priorMatched);
-  const eligibleColor = eligible ? 'var(--green)' : 'var(--amber)';
-  const eligibleLabel = eligible ? '✓ YES — all pairs released' : '✗ NO — pairs stay pending';
+  const { LM, LU, RM, RU, tPrime, B, surplus, matched, released, pending, selfU } = calc;
+  const clamped = (priorMatched > surplus);
 
   // Per-leg tier composition (for hand-verification)
   const rootNode = nodes[0];
@@ -568,11 +607,12 @@ function renderCalcPanel() {
 
     <!-- ── Static reference legend ── -->
     <div style="background:#0e1e30;border:1px solid #264a73;border-radius:7px;padding:9px 12px;margin-bottom:10px;font-size:11px;line-height:1.8">
-      <div style="color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;font-size:10px">Per-tier pair split (reference)</div>
-      <div><span style="color:#7ee787">₹10k = 1u</span> → <span style="color:#3fb950;font-weight:700">1 live</span> + <span style="color:#79c0ff;font-weight:700">0 campaign</span> = ₹1,000 total</div>
-      <div><span style="color:#e3b341">₹30k = 3u</span> → <span style="color:#3fb950;font-weight:700">1 live</span> + <span style="color:#79c0ff;font-weight:700">2 campaign</span> = ₹3,000 total</div>
-      <div><span style="color:#bc8cff">₹50k = 5u</span> → <span style="color:#3fb950;font-weight:700">1 live</span> + <span style="color:#79c0ff;font-weight:700">4 campaign</span> = ₹5,000 total</div>
-      <div style="color:var(--muted);margin-top:3px;font-size:10px">Formula: 1 live = B (1 head); campaign = T−B (extra units)</div>
+      <div style="color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;font-size:10px">Whole-leg formula: T' = LEAST(ΣuL, ΣuR, u_self × LEAST(Lh, Rh))</div>
+      <div><span style="color:#7ee787">₹10k ↔ ₹10k</span> → LEAST(1,1,u_self×1) → <span style="color:#3fb950;font-weight:700">1 live</span> + <span style="color:#79c0ff;font-weight:700">0 campaign</span> = ₹1,000</div>
+      <div><span style="color:#e3b341">₹30k ↔ ₹30k</span> <small style="color:var(--muted)">(earner ≥₹30k)</small> → LEAST(3,3,3)=3 → <span style="color:#3fb950;font-weight:700">1 live</span> + <span style="color:#79c0ff;font-weight:700">2 campaign</span> = ₹3,000</div>
+      <div><span style="color:#bc8cff">₹50k ↔ ₹50k</span> <small style="color:var(--muted)">(earner ₹30k)</small> → LEAST(5,5,<b>3</b>)=3 → <span style="color:#3fb950;font-weight:700">1 live</span> + <span style="color:#79c0ff;font-weight:700">2 campaign</span> = ₹3,000</div>
+      <div><span style="color:#bc8cff">₹50k ↔ ₹50k</span> <small style="color:var(--muted)">(earner ₹50k)</small> → LEAST(5,5,<b>5</b>)=5 → <span style="color:#3fb950;font-weight:700">1 live</span> + <span style="color:#79c0ff;font-weight:700">4 campaign</span> = ₹5,000</div>
+      <div style="color:var(--muted);margin-top:3px;font-size:10px">YOUR package (u_self=${selfU}) caps via: u_self × LEAST(Lh, Rh) where Lh/Rh = total left/right heads</div>
     </div>
 
     <!-- ── Leg composition ── -->
@@ -597,24 +637,20 @@ function renderCalcPanel() {
     </div>
 
     <div class="formula-row" style="border-color:#264a73">
-      <span style="color:var(--muted);font-size:11px">T = min(Lu,Ru) — total-unit match</span>
-      <span class="fval" style="color:#79c0ff">${T}</span>
+      <span style="color:var(--muted);font-size:11px">T' = LEAST(${LU}, ${RU}, ${selfU}×LEAST(${LM},${RM})=${selfU}×${Math.min(LM,RM)}=${selfU*Math.min(LM,RM)})</span>
+      <span class="fval" style="color:#79c0ff">${tPrime}</span>
     </div>
     <div class="formula-row" style="border-color:#5c3014">
-      <span style="color:var(--muted);font-size:11px">B = min(Lm,Rm) — live engine pays this</span>
+      <span style="color:var(--muted);font-size:11px">B = LEAST(Lh,Rh) = LEAST(${LM},${RM}) — live engine pays this</span>
       <span class="fval" style="color:#ffa657">${B}</span>
     </div>
     <div class="formula-row">
-      <span style="color:var(--muted);font-size:11px">Campaign top-up = T−B = ${T}−${B}</span>
+      <span style="color:var(--muted);font-size:11px">Campaign top-up = T'−B = ${tPrime}−${B}</span>
       <span class="fval" style="color:var(--blue)">${surplus}</span>
     </div>
     <div class="formula-row" style="border-color:#1a4a28">
-      <span style="color:var(--muted);font-size:11px">Total matched ${clamped ? `<span style="color:var(--amber)">⟵ GREATEST clamp</span>` : ''}</span>
+      <span style="color:var(--muted);font-size:11px">Total campaign matched ${clamped ? `<span style="color:var(--amber)">⟵ GREATEST clamp</span>` : ''}</span>
       <span class="fval" style="color:var(--green)">${matched}</span>
-    </div>
-    <div class="formula-row" style="border-color:#2a4a30">
-      <span style="color:var(--muted);font-size:11px">Eligible? (YOU ≥ ₹30k?)</span>
-      <span class="fval" style="color:${eligibleColor};font-size:12px">${eligibleLabel}</span>
     </div>
 
     <!-- ── Live + Campaign breakdown ── -->
@@ -625,42 +661,39 @@ function renderCalcPanel() {
         <span style="color:#3fb950;font-weight:700;font-size:16px">₹${(B*1000).toLocaleString('en-IN')}</span>
       </div>
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
-        <span style="color:#79c0ff;font-size:12px">🔵 Campaign top-up (T−B = ${surplus})</span>
-        <span style="color:#79c0ff;font-weight:700;font-size:16px">${eligible ? `₹${(surplus*1000).toLocaleString('en-IN')}` : `₹0 <span style="font-size:11px;color:var(--amber)">(ineligible)</span>`}</span>
+        <span style="color:#79c0ff;font-size:12px">🔵 Campaign top-up (T'−B = ${surplus})</span>
+        <span style="color:#79c0ff;font-weight:700;font-size:16px">₹${(surplus*1000).toLocaleString('en-IN')}</span>
       </div>
       <div style="border-top:1px solid #264a73;padding-top:6px;margin-top:4px;display:flex;justify-content:space-between;align-items:center">
         <span style="color:var(--txt);font-size:12px;font-weight:600">Total YOU receive</span>
-        <span style="color:var(--txt);font-weight:700;font-size:18px">₹${((B + (eligible ? surplus : 0))*1000).toLocaleString('en-IN')}</span>
+        <span style="color:var(--txt);font-weight:700;font-size:18px">₹${((B + surplus)*1000).toLocaleString('en-IN')}</span>
       </div>
     </div>
-
-    ${pending > 0 ? `
-    <div class="money-box mb-pend" style="margin-top:6px">
-      <div class="ma">₹${(pending * 1000).toLocaleString('en-IN')}</div>
-      <div class="ml">⏳ ${pending} campaign pair${pending>1?'s':''} pending — upgrade YOU to ₹30k to release all</div>
-    </div>` : ''}
 
     <div class="expl" style="margin-top:8px">${makeExplanation(calc, nodes[0].pkg)}</div>
   `;
 }
 
-function makeExplanation({ LM, LU, RM, RU, T, B, surplus, matched, eligible, released, pending }, ownPkg) {
+function makeExplanation({ LM, LU, RM, RU, tPrime, B, surplus, matched, selfU }, ownPkg) {
   if (!LM && !RM) return 'Click a node, then add children. Pairs appear when both legs have members.';
   if (!LM || !RM)  return 'One leg is empty — both sides need at least one member before any pairs match.';
-  if (matched === 0 && surplus === 0) {
-    return `T = B = ${B} — the live engine already covers everything (units = headcount, no ₹30k/₹50k tiers to top up). Campaign top-up = 0. Add a ₹30k or ₹50k member to a leg to generate a campaign surplus.`;
-  }
-  if (!eligible) {
-    return `YOU are ₹10k → NOT eligible. The ${matched} matched campaign pair${matched>1?'s':''} (₹${(matched*1000).toLocaleString('en-IN')}) all stay pending. Upgrade YOUR node to ₹30k and every pending pair releases at once.`;
-  }
-  // Eligible — build a per-tier breakdown sentence
   const liveStr  = `${B} live pair${B!==1?'s':''} (₹${(B*1000).toLocaleString('en-IN')})`;
   const campStr  = surplus > 0 ? `${surplus} campaign pair${surplus!==1?'s':''} (₹${(surplus*1000).toLocaleString('en-IN')})` : '0 campaign pairs';
-  const totalStr = `₹${((B+surplus)*1000).toLocaleString('en-IN')} total`;
-  if (surplus === 0) {
-    return `✅ ${liveStr} from main engine, 0 campaign (all tiers same as headcount). ${totalStr}.`;
+  const totalStr = `₹${((B + surplus)*1000).toLocaleString('en-IN')} total`;
+  if (matched === 0 && surplus === 0) {
+    if (B === 0) return 'No matched heads — both sides need at least one member.';
+    if (selfU === 1) {
+      return `YOU are ₹10k (u_self=1) — T'=LEAST(*,*,1×${B})=${Math.min(LU,RU,B)} and B=${B}, surplus=0. Upgrade YOUR node to ₹30k to earn campaign top-up.`;
+    }
+    return `T'=LEAST(${LU},${RU},${selfU}×${B})=${tPrime} = B=${B} — all ${B} unit-matched by the live engine already. Upgrade downline members to ₹30k/₹50k to get unit-weighted campaign top-up.`;
   }
-  return `✅ ${liveStr} from main engine + ${campStr} from campaign = ${totalStr}. Your ${pkgLabel(ownPkg)} is eligible (≥ ₹30k) — all campaign pairs released in full, no cap.`;
+  const capNote = selfU < 5
+    ? ` YOUR ${pkgLabel(ownPkg)} self-cap: u_self=${selfU} × LEAST(${LM},${RM}) = ${selfU*Math.min(LM,RM)} caps T'.`
+    : ` YOUR ${pkgLabel(ownPkg)} — full cap (u_self=${selfU}).`;
+  if (surplus === 0) {
+    return `✅ ${liveStr} from main engine, 0 campaign top-up. ${totalStr}.${capNote}`;
+  }
+  return `✅ ${liveStr} from main engine + ${campStr} campaign (T'−B=${tPrime}−${B}) = ${totalStr}.${capNote}`;
 }
 
 // ═══════════════════════════════════════════════════════
@@ -720,10 +753,13 @@ function removeSubtree(id) {
 function recalcPrior() {
   const root = nodes[0];
   if (!root) return 0;
-  const L = subtreeStats(root.lc);
-  const R = subtreeStats(root.rc);
-  const surplus = Math.max(0, Math.min(L.u, R.u) - Math.min(L.m, R.m));
-  return surplus;
+  const leftMembers  = subtreeMembers(root.lc);
+  const rightMembers = subtreeMembers(root.rc);
+  const selfU = unitsFor(root.pkg);
+  const LU = leftMembers.reduce((s, n) => s + unitsFor(n.pkg), 0);
+  const RU = rightMembers.reduce((s, n) => s + unitsFor(n.pkg), 0);
+  const tPrime = Math.min(LU, RU, selfU * Math.min(leftMembers.length, rightMembers.length));
+  return Math.max(0, tPrime - Math.min(leftMembers.length, rightMembers.length));
 }
 
 // Deselect on SVG background click
@@ -764,19 +800,35 @@ const PRESETS = {
     L: { pkg: 50000, L: { pkg: 10000 }, R: { pkg: 10000 } },
     R: { pkg: 30000, L: { pkg: 10000 } },
   },
-  // Test: ₹10k owner, 1×₹50k left, 5×₹10k right → 0 released (ineligible), all pending
+  // Test: ₹10k owner, 1×₹50k left, 5×₹10k right → T'=LEAST(5,5,1×1)=1, B=1, surplus=0 (₹1k live)
   test10k: {
     pkg: 10000,
     L: { pkg: 50000 },
     R: { pkg: 10000, L: { pkg: 10000, L: { pkg: 10000 } }, R: { pkg: 10000, L: { pkg: 10000 } } },
   },
-  // Test: ₹30k owner, same tree → ALL released (eligible, binary gate — no cap)
+  // Test: ₹30k owner, same tree → T'=LEAST(5,5,3×1)=3, B=1, surplus=2 → ₹3k total
   test30k: {
     pkg: 30000,
     L: { pkg: 50000 },
     R: { pkg: 10000, L: { pkg: 10000, L: { pkg: 10000 } }, R: { pkg: 10000, L: { pkg: 10000 } } },
   },
-  // Verify ₹30k split: L={₹30k}, R={₹30k} → Lu=Ru=3, Lm=Rm=1 → T=3, B=1 → 1 live + 2 campaign = ₹3,000
+  // Image #2: 1×₹50k left vs 5×₹10k right, ₹50k earner →
+  //   Whole-leg: Lu=5, Ru=5 (5×1u), Lh=1, Rh=5, u_self=5.
+  //   T'=LEAST(5,5,5×1)=5  B=LEAST(1,5)=1  surplus=4 → 1 live + 4 campaign = ₹5,000.
+  img2fix: {
+    pkg: 50000,
+    L: { pkg: 50000 },
+    R: { pkg: 10000, L: { pkg: 10000, L: { pkg: 10000 } }, R: { pkg: 10000, L: { pkg: 10000 } } },
+  },
+  // Mixed case: ₹30k earner; L: ₹50k+₹10k (6u,2h); R: ₹50k (5u,1h).
+  //   T'=LEAST(6,5,3×min(2,1))=LEAST(6,5,3)=3  B=min(2,1)=1  surplus=2
+  //   → 1 live + 2 campaign = ₹3,000 total.
+  mixedcase: {
+    pkg: 30000,
+    L: { pkg: 50000, L: { pkg: 10000 } },
+    R: { pkg: 50000 },
+  },
+  // Verify ₹30k split: L={₹30k}, R={₹30k} → t'=min(3,3)=3, B=1, surplus=2 → 1 live + 2 campaign = ₹3,000
   verify30k: {
     pkg: 30000,
     L: { pkg: 30000 },
@@ -787,6 +839,15 @@ const PRESETS = {
     pkg: 50000,
     L: { pkg: 50000 },
     R: { pkg: 50000 },
+  },
+  // Image #6: YOU ₹50k; L: M1₅₀, M2₁₀(under M1), M3₁₀(under M1), M6₁₀(under M2)
+  //                      R: M4₅₀, M5₅₀(under M4)
+  // Whole-leg: Lu=8 (5+1+1+1), Ru=10 (5+5), Lh=4, Rh=2, u_self=5
+  // T'=LEAST(8,10,5×LEAST(4,2))=LEAST(8,10,10)=8  B=LEAST(4,2)=2  surplus=6  ₹8,000 total
+  img6: {
+    pkg: 50000,
+    L: { pkg: 50000, L: { pkg: 10000, L: { pkg: 10000 } }, R: { pkg: 10000 } },
+    R: { pkg: 50000, L: { pkg: 50000 } },
   },
   deep: {
     pkg: 50000,
