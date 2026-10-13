@@ -63,9 +63,18 @@ export function UpgradeTab() {
     enabled: debouncedQ.length >= 2,
   })
 
+  // Normalize raw packageValuePaise to the canonical tier floor.
+  // Handles 31 early members who paid ₹11,800 (old GST price, raw = 1_180_000)
+  // so they are treated as ₹10k members and the delta is ₹20,000, not ₹18,200.
+  function canonicalTierPaise(raw: number): number {
+    if (raw >= 5_000_000) return 5_000_000
+    if (raw >= 3_000_000) return 3_000_000
+    return 1_000_000  // ₹10k floor — matches tierLabel() default; upgrade is always FROM ₹10k
+  }
+
   // Compute which tiers are available for the selected member.
   // Only offer tiers strictly above their current package value.
-  const currentPaise = selectedMember?.packageValuePaise ?? 0
+  const currentPaise = canonicalTierPaise(selectedMember?.packageValuePaise ?? 0)
   const availableTiers = UPGRADE_TIERS.filter((tier) => tier.targetPaise > currentPaise)
   const atTopTier = selectedMember !== null && currentPaise >= 5_000_000
 
@@ -293,10 +302,13 @@ export function UpgradeTab() {
                     }`}
                   >
                     <div>
-                      <p className="text-sm font-semibold text-ink">{tier.label}</p>
+                      <p className="text-xs text-ink-muted">
+                        {t('admin.upgrade.targetLabel')}: <span className="font-medium text-ink">{tier.label}</span>
+                      </p>
+                      <p className="text-base font-bold text-warning mt-0.5">
+                        {t('admin.upgrade.deltaLabel')}: {formatINR(delta)}
+                      </p>
                       <p className="text-xs text-ink-muted mt-0.5">
-                        {t('admin.upgrade.deltaLabel')}: <span className="text-warning font-semibold">{formatINR(delta)}</span>
-                        {' · '}
                         {t('admin.upgrade.coinsLabel')}: <span className="text-amber-400 font-semibold">{tier.coins}</span>
                       </p>
                     </div>
@@ -317,15 +329,15 @@ export function UpgradeTab() {
         <div className="avg-card p-5 space-y-4">
           <h3 className="text-sm font-semibold text-ink">{t('admin.upgrade.step3')}</h3>
 
-          {/* Summary */}
+          {/* Summary — amount to collect is shown first and largest */}
           <div className="bg-white/5 rounded-xl p-3 space-y-1.5 text-sm">
-            <div className="flex justify-between">
-              <span className="text-ink-muted">{t('admin.upgrade.targetLabel')}</span>
-              <span className="font-bold text-primary">{selectedTier.label}</span>
+            <div className="flex justify-between items-center">
+              <span className="text-ink-muted">{t('admin.upgrade.deltaLabel')}</span>
+              <span className="font-bold text-warning text-base">{formatINR(deltaPaise)}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-ink-muted">{t('admin.upgrade.deltaLabel')}</span>
-              <span className="font-bold text-warning">{formatINR(deltaPaise)}</span>
+              <span className="text-ink-muted">{t('admin.upgrade.targetLabel')}</span>
+              <span className="font-semibold text-primary">{selectedTier.label}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-ink-muted">{t('admin.upgrade.coinsLabel')}</span>

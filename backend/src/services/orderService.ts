@@ -355,10 +355,15 @@ export async function createUpgradeOrder(
 		`SELECT package_value_paise FROM members WHERE id = $1`,
 		[memberId],
 	);
-	const currentPaise = BigInt(mRows[0]?.package_value_paise ?? "0");
+	const rawPaise = BigInt(mRows[0]?.package_value_paise ?? "0");
+	// Normalize to canonical tier floor so the 31 early members who paid ₹11,800
+	// (old GST price, package_value_paise = 1_180_000) are treated as ₹10k members
+	// and receive a delta of ₹20,000, not ₹18,200.
+	const currentPaise =
+		rawPaise >= 5_000_000n ? 5_000_000n :
+		rawPaise >= 3_000_000n ? 3_000_000n :
+		1_000_000n; // ₹10k floor — backend already guards non-active members with 409
 	const targetPaise  = BigInt(upgradeTargetPaise);
-	// Clamp to 0 in case the caller somehow passes a target ≤ current (the
-	// admin endpoint already guards against this, but be safe).
 	const deltaPaise = targetPaise > currentPaise ? targetPaise - currentPaise : 0n;
 
 	const { id: productId, upgrade_target_paise } = pRows[0];
