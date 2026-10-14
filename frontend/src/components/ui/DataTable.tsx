@@ -20,11 +20,13 @@ interface Props<T> {
   emptyTitle?: string
   emptyDescription?: string
   rowKey: (row: T) => string
+  /** Called when a row is clicked. Makes rows visually interactive. */
+  onRowClick?: (row: T) => void
 }
 
 export function DataTable<T>({
   columns, data, loading, onLoadMore, hasMore, loadingMore,
-  emptyTitle = 'No data', emptyDescription, rowKey,
+  emptyTitle = 'No data', emptyDescription, rowKey, onRowClick,
 }: Props<T>) {
   if (loading) {
     return (
@@ -60,9 +62,10 @@ export function DataTable<T>({
             {data.map((row, idx) => (
               <tr
                 key={rowKey(row)}
+                onClick={onRowClick ? () => onRowClick(row) : undefined}
                 className={`border-b border-surface-line last:border-0 hover:bg-white/5 transition-colors duration-100 ${
                   idx % 2 === 0 ? '' : 'bg-white/[0.03]'
-                }`}
+                } ${onRowClick ? 'cursor-pointer' : ''}`}
               >
                 {columns.map((col) => (
                   <td

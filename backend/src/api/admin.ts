@@ -29,7 +29,7 @@ import {
 	updateProduct,
 } from "../services/productService.js";
 import { postLedgerTxn } from "../workers/ledger.js";
-import { confirmOrder, createOrder, createUpgradeOrder, markDelivered, unmarkDelivered } from "../services/orderService.js";
+import { confirmOrder, createOrder, createUpgradeOrder, deleteDuplicateOrder, markDelivered, unmarkDelivered } from "../services/orderService.js";
 import { adjustMemberCoins, getMemberCoins } from "../services/coinService.js";
 import { deleteInactiveMember } from "../services/placement.js";
 import { AddressBody, isCompleteAddress } from "../lib/address.js";
@@ -2585,6 +2585,32 @@ export async function adminRoutes(app: FastifyInstance) {
 		return { ok: true };
 	});
 
+	// DELETE /admin/orders/:orderId — hard-delete a confirmed duplicate order.
+	// Management-only.  Guards are enforced in deleteDuplicateOrder (service layer):
+	// refuses the member's first/activating order, any promotional/upgrade order,
+	// any order that granted AVG coins, and any order referenced as an upgrade source.
+	// The full order row is captured in admin_audit_log.before_state for reconstructability.
+	app.delete("/orders/:orderId", auth, async (req, reply) => {
+		const { orderId } = req.params as { orderId: string };
+		const numId = parseInt(orderId, 10);
+		if (!Number.isFinite(numId) || numId < 1)
+			return reply.status(400).send({ error: "Invalid order id" });
+		const actor = req.user as { sub: string };
+		if (!(await isManagement(actor.sub)))
+			return reply.status(403).send({ error: "Management only" });
+		try {
+			await deleteDuplicateOrder(actor.sub, orderId);
+		} catch (e: unknown) {
+			const err = e as { statusCode?: number; message?: string };
+			if (err.statusCode === 404)
+				return reply.status(404).send({ error: err.message ?? "Order not found" });
+			if (err.statusCode === 409)
+				return reply.status(409).send({ error: err.message ?? "Cannot delete order" });
+			throw e;
+		}
+		return { ok: true };
+	});
+
 	// POST /admin/orders/:orderId/proof/presign — mint a presigned S3 POST URL for
 	// replacing / adding a payment-proof image on an existing order.
 	// The member id is derived server-side from the order so the client cannot
@@ -2985,6 +3011,16 @@ export async function adminRoutes(app: FastifyInstance) {
 
 	// GET /admin/orders/multi-buyers — members with ≥2 confirmed orders.
 	// Management-only. Registered before any parametric /orders/:id routes.
+	//
+	// filter param:
+	//   "all"          (default) — all repeat buyers (confirmed_count > 1).
+	//   "promotional"  — members whose extra orders are all campaign/upgrade orders
+	//                    (genuine physical count ≤ 1).
+	//   "duplicates"   — members with 2+ genuine physical confirmed orders.
+	//
+	// A confirmed order is "promotional" iff upgrade_to_value_paise IS NOT NULL
+	// OR source_upgrade_order_id IS NOT NULL (campaign upgrade payment or its
+	// auto-created delivery leg).  Everything else is a genuine physical order.
 	app.get("/orders/multi-buyers", auth, async (req, reply) => {
 		const actor = req.user as { sub: string };
 		if (!(await isManagement(actor.sub)))
@@ -2994,6 +3030,7 @@ export async function adminRoutes(app: FastifyInstance) {
 			q?: string;
 			page?: string;
 			limit?: string;
+			filter?: string;
 		};
 
 		const q = (query.q ?? "").trim();
@@ -3001,7 +3038,25 @@ export async function adminRoutes(app: FastifyInstance) {
 		const page = Math.max(1, Number(query.page ?? "1"));
 		const offset = (page - 1) * limit;
 
-		// Core query: confirmed orders only, members with ≥2.
+		// Validated filter: "all" | "promotional" | "duplicates".
+		const rawFilter = query.filter ?? "all";
+		const filter = ["all", "promotional", "duplicates"].includes(rawFilter)
+			? rawFilter
+			: "all";
+
+		// Genuine-order expression: physical confirmed orders only (not campaign/upgrade).
+		const GENUINE = `COUNT(*) FILTER (WHERE o.upgrade_to_value_paise IS NULL AND o.source_upgrade_order_id IS NULL)`;
+
+		// HAVING clause differs by filter — applied identically to both data + count queries
+		// so pagination stays in sync.
+		const havingClause =
+			filter === "promotional"
+				? `HAVING COUNT(*) > 1 AND ${GENUINE} <= 1`
+				: filter === "duplicates"
+				? `HAVING ${GENUINE} > 1`
+				: `HAVING COUNT(*) > 1`; // "all"
+
+		// Core query: confirmed orders only.
 		// $1 = search string (empty string = no filter).
 		const dataParams: unknown[] = [q, limit, offset];
 		const { rows } = await pool().query<{
@@ -3009,12 +3064,14 @@ export async function adminRoutes(app: FastifyInstance) {
 			member_name: string;
 			member_phone: string;
 			confirmed_count: string;
+			genuine_count: string;
 			total_confirmed: string;
 			first_order_at: string;
 			last_order_at: string;
 		}>(
 			`SELECT m.member_code, m.name AS member_name, m.phone AS member_phone,
 			        COUNT(*)::int AS confirmed_count,
+			        (${GENUINE})::int AS genuine_count,
 			        COALESCE(SUM(o.total_amount), 0) AS total_confirmed,
 			        MIN(o.created_at) AS first_order_at,
 			        MAX(o.created_at) AS last_order_at
@@ -3025,7 +3082,7 @@ export async function adminRoutes(app: FastifyInstance) {
 			                 OR m.member_code ILIKE '%'||$1||'%'
 			                 OR m.phone ILIKE '%'||$1||'%')
 			  GROUP BY m.id, m.member_code, m.name, m.phone
-			 HAVING COUNT(*) > 1
+			  ${havingClause}
 			  ORDER BY COUNT(*) DESC, MAX(o.created_at) DESC
 			  LIMIT $2 OFFSET $3`,
 			dataParams,
@@ -3041,7 +3098,7 @@ export async function adminRoutes(app: FastifyInstance) {
 			                   OR m.member_code ILIKE '%'||$1||'%'
 			                   OR m.phone ILIKE '%'||$1||'%')
 			    GROUP BY m.id
-			   HAVING COUNT(*) > 1
+			    ${havingClause}
 			 ) t`,
 			[q],
 		);
@@ -3053,6 +3110,9 @@ export async function adminRoutes(app: FastifyInstance) {
 				memberName: r.member_name,
 				memberPhone: r.member_phone,
 				confirmedCount: Number(r.confirmed_count),
+				genuineCount: Number(r.genuine_count),
+				// isPromotional: only shows as repeat buyer due to campaign/upgrade orders.
+				isPromotional: Number(r.genuine_count) <= 1,
 				totalConfirmedPaise: Number(toPaise(r.total_confirmed)),
 				firstOrderAt: r.first_order_at,
 				lastOrderAt: r.last_order_at,

@@ -4,6 +4,7 @@ import { pool, withTxn } from "../lib/db.js";
 import { coinsForPackageValuePaise, isWithinCampaign, unitsForPackageValuePaise } from "../lib/campaign.js";
 import { CFG } from "../config.js";
 import { fromPaise, toPaise } from "../lib/money.js";
+import { deleteObject } from "../lib/s3.js";
 
 /**
  * confirmOrder — confirm a payment gateway callback and, if this is the member's
@@ -387,4 +388,162 @@ export async function createUpgradeOrder(
 	);
 
 	return { orderId: rows[0].id, idempotencyKey, totalPaise: deltaPaise };
+}
+
+/**
+ * deleteDuplicateOrder — hard-delete a confirmed order that is NOT the member's
+ * first/activating order and has no money-pipeline side-effects.
+ *
+ * Guards (all enforced inside the same transaction, all throw with statusCode):
+ *   404 — order not found.
+ *   409 — order is not confirmed.
+ *   409 — order is promotional/upgrade (upgrade_to_value_paise or source_upgrade_order_id set).
+ *   409 — order is the member's earliest confirmed order (the activating one).
+ *   409 — order granted AVG campaign coins (avg_coin_grants row exists).
+ *   409 — order is referenced as the source of an upgrade delivery order.
+ *
+ * The full order row + proof s3 keys are written to admin_audit_log.before_state
+ * so the deletion is reconstructable.  Child order_payment_proofs rows are removed
+ * inside the txn; S3 objects are deleted best-effort after commit (same pattern as
+ * deleteProduct in productService.ts).
+ *
+ * No migration needed — all guards/deletes use existing schema.
+ */
+export async function deleteDuplicateOrder(
+	actorId: string,
+	orderId: string,
+): Promise<void> {
+	const proofKeys: string[] = [];
+
+	await withTxn(async (c) => {
+		// Lock the row and capture a full snapshot for the audit log.
+		const { rows: orderRows } = await c.query<{
+			id: string;
+			member_id: string;
+			product_id: string;
+			base_amount: string;
+			gst_amount: string;
+			total_amount: string;
+			status: string;
+			payment_ref: string | null;
+			idempotency_key: string;
+			created_at: string;
+			confirmed_at: string | null;
+			delivered_at: string | null;
+			delivered_by: string | null;
+			upgrade_to_value_paise: string | null;
+			source_upgrade_order_id: string | null;
+		}>(
+			`SELECT id, member_id, product_id, base_amount, gst_amount, total_amount,
+			        status, payment_ref, idempotency_key, created_at, confirmed_at,
+			        delivered_at, delivered_by, upgrade_to_value_paise, source_upgrade_order_id
+			   FROM orders WHERE id = $1 FOR UPDATE`,
+			[orderId],
+		);
+		if (!orderRows[0]) {
+			throw Object.assign(new Error("Order not found"), { statusCode: 404 });
+		}
+		const order = orderRows[0];
+
+		// Guard 1: only confirmed orders are in scope.
+		if (order.status !== "confirmed") {
+			throw Object.assign(
+				new Error("Only confirmed orders can be removed as duplicates"),
+				{ statusCode: 409 },
+			);
+		}
+
+		// Guard 2: must be a genuine physical order (not a campaign upgrade or delivery leg).
+		if (order.upgrade_to_value_paise !== null || order.source_upgrade_order_id !== null) {
+			throw Object.assign(
+				new Error("Cannot delete a promotional or upgrade order"),
+				{ statusCode: 409 },
+			);
+		}
+
+		// Guard 3: must not be the member's first (activating) confirmed order.
+		const { rows: firstRows } = await c.query<{ id: string }>(
+			`SELECT id FROM orders
+			  WHERE member_id = $1 AND status = 'confirmed'
+			  ORDER BY created_at ASC, id ASC LIMIT 1`,
+			[order.member_id],
+		);
+		if (firstRows[0]?.id === orderId) {
+			throw Object.assign(
+				new Error(
+					"Cannot delete the member's first confirmed order — it activated the account",
+				),
+				{ statusCode: 409 },
+			);
+		}
+
+		// Guard 4: must not have granted AVG campaign coins.
+		const { rows: coinRows } = await c.query<{ cnt: string }>(
+			"SELECT COUNT(*) AS cnt FROM avg_coin_grants WHERE order_id = $1",
+			[orderId],
+		);
+		if (Number(coinRows[0].cnt) > 0) {
+			throw Object.assign(
+				new Error("Cannot delete an order that granted AVG campaign coins"),
+				{ statusCode: 409 },
+			);
+		}
+
+		// Guard 5: must not be referenced as the source of an upgrade delivery order.
+		const { rows: srcRows } = await c.query<{ cnt: string }>(
+			"SELECT COUNT(*) AS cnt FROM orders WHERE source_upgrade_order_id = $1",
+			[orderId],
+		);
+		if (Number(srcRows[0].cnt) > 0) {
+			throw Object.assign(
+				new Error(
+					"Cannot delete an order referenced by an upgrade delivery order",
+				),
+				{ statusCode: 409 },
+			);
+		}
+
+		// Collect proof keys for post-commit S3 cleanup (best-effort).
+		const { rows: proofRows } = await c.query<{ s3_key: string }>(
+			"SELECT s3_key FROM order_payment_proofs WHERE order_id = $1",
+			[orderId],
+		);
+		for (const r of proofRows) proofKeys.push(r.s3_key);
+
+		// Remove child proof rows first (FK: order_payment_proofs.order_id → orders.id RESTRICT).
+		await c.query("DELETE FROM order_payment_proofs WHERE order_id = $1", [orderId]);
+
+		// Hard-delete the order.
+		await c.query("DELETE FROM orders WHERE id = $1", [orderId]);
+
+		// Audit log — full before_state including proof keys makes the deletion reconstructable.
+		await c.query(
+			`INSERT INTO admin_audit_log
+			   (actor_id, action, target_type, target_id, before_state, after_state)
+			 VALUES ($1, 'order_delete', 'order', $2, $3, NULL)`,
+			[
+				actorId,
+				orderId,
+				{
+					id: order.id,
+					memberId: order.member_id,
+					productId: order.product_id,
+					baseAmount: order.base_amount,
+					gstAmount: order.gst_amount,
+					totalAmount: order.total_amount,
+					status: order.status,
+					paymentRef: order.payment_ref,
+					idempotencyKey: order.idempotency_key,
+					createdAt: order.created_at,
+					confirmedAt: order.confirmed_at,
+					deliveredAt: order.delivered_at,
+					proofKeys,
+				},
+			],
+		);
+	});
+
+	// S3 cleanup after commit — best-effort (orphaned proofs are recoverable;
+	// failing here must not roll back the already-committed deletion).
+	for (const key of proofKeys) await deleteObject(key);
 }

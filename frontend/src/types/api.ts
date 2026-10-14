@@ -837,6 +837,13 @@ export interface AdminMultiBuyerRow {
   memberName: string
   memberPhone: string
   confirmedCount: number
+  /** Physical confirmed orders only (excludes campaign upgrades and delivery legs). */
+  genuineCount: number
+  /**
+   * True when the member only appears as a repeat buyer due to promotional/upgrade
+   * orders — their genuine physical order count is ≤ 1.
+   */
+  isPromotional: boolean
   totalConfirmedPaise: number
   firstOrderAt: string
   lastOrderAt: string
