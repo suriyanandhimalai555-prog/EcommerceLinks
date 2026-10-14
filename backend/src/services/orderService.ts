@@ -198,7 +198,8 @@ export async function markDelivered(
 		        delivered_by = $2
 		  WHERE id = $1
 		    AND status = 'confirmed'
-		    AND delivered_at IS NULL`,
+		    AND delivered_at IS NULL
+		    AND upgrade_to_value_paise IS NULL`,
 		[orderId, actorId],
 	);
 	return { rowCount: rowCount ?? 0 };

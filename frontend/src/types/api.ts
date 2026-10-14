@@ -207,6 +207,8 @@ export interface AdminOrder {
   confirmedAt?: string
   /** Set when management has marked physical delivery complete (status stays 'confirmed'). */
   deliveredAt?: string
+  /** Set on auto-created upgrade delivery orders — points to the parent upgrade payment order. */
+  sourceUpgradeOrderId?: number
   /** True when the customer has a complete delivery address on file. Returned for confirmed-queue rows. */
   hasDeliveryAddress?: boolean
   /** Raw S3 keys for uploaded payment-proof screenshots — used by the edit modal to diff additions/removals. */
@@ -814,6 +816,10 @@ export interface AdminAllOrderRow {
   confirmedAt?: string
   /** Set when management has marked physical delivery complete. Status stays 'confirmed'. */
   deliveredAt?: string
+  /** Set on auto-created upgrade delivery orders — points to the parent upgrade payment order. */
+  sourceUpgradeOrderId?: number
+  /** Set on upgrade payment orders — the target tier in paise (e.g. 5_000_000 for ₹50k). Not a physical delivery. */
+  upgradeToValuePaise?: number
   /** True when the member's live addr_* columns form a complete delivery address. */
   hasDeliveryAddress?: boolean
 }

@@ -229,7 +229,16 @@ export function OrdersTab() {
     {
       key: 'product',
       header: t('admin.orders.colProduct'),
-      render: (r) => <span className="text-sm text-ink">{r.productName}</span>,
+      render: (r) => (
+        <div>
+          <span className="text-sm text-ink">{r.productName}</span>
+          {r.sourceUpgradeOrderId && (
+            <span className="ml-2 text-xs font-semibold bg-violet/15 text-violet px-1.5 py-0.5 rounded">
+              Upgrade Delivery #{r.sourceUpgradeOrderId}
+            </span>
+          )}
+        </div>
+      ),
     },
     {
       key: 'amount',
@@ -313,7 +322,16 @@ export function OrdersTab() {
     {
       key: 'product',
       header: t('admin.orders.colProduct'),
-      render: (r) => <span className="text-sm text-ink">{r.productName}</span>,
+      render: (r) => (
+        <div>
+          <span className="text-sm text-ink">{r.productName}</span>
+          {r.sourceUpgradeOrderId && (
+            <span className="ml-2 text-xs font-semibold bg-violet/15 text-violet px-1.5 py-0.5 rounded">
+              Upgrade Delivery #{r.sourceUpgradeOrderId}
+            </span>
+          )}
+        </div>
+      ),
     },
     {
       key: 'amount',
@@ -361,7 +379,16 @@ export function OrdersTab() {
     {
       key: 'product',
       header: t('admin.orders.colProduct'),
-      render: (r) => <span className="text-sm text-ink">{r.productName}</span>,
+      render: (r) => (
+        <div>
+          <span className="text-sm text-ink">{r.productName}</span>
+          {r.sourceUpgradeOrderId && (
+            <span className="ml-2 text-xs font-semibold bg-violet/15 text-violet px-1.5 py-0.5 rounded">
+              Upgrade Delivery #{r.sourceUpgradeOrderId}
+            </span>
+          )}
+        </div>
+      ),
     },
     {
       key: 'amount',
@@ -428,7 +455,16 @@ export function OrdersTab() {
     {
       key: 'product',
       header: t('admin.orders.colProduct'),
-      render: (r) => <span className="text-sm text-ink">{r.productName}</span>,
+      render: (r) => (
+        <div>
+          <span className="text-sm text-ink">{r.productName}</span>
+          {r.sourceUpgradeOrderId && (
+            <span className="ml-2 text-xs font-semibold bg-violet/15 text-violet px-1.5 py-0.5 rounded">
+              Upgrade Delivery #{r.sourceUpgradeOrderId}
+            </span>
+          )}
+        </div>
+      ),
     },
     {
       key: 'amount',

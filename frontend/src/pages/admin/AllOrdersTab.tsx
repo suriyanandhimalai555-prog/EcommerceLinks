@@ -87,6 +87,7 @@ export function AllOrdersTab() {
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
   const [productId, setProductId] = useState<number | ''>('')
+  const [physicalOnly, setPhysicalOnly] = useState(false)
   const [page, setPage] = useState(1)
   const [exporting, setExporting] = useState(false)
 
@@ -105,11 +106,12 @@ export function AllOrdersTab() {
     if (from) p.set('from', from)
     if (to) p.set('to', to)
     if (productId !== '') p.set('productId', String(productId))
+    if (physicalOnly) p.set('physicalOnly', 'true')
     return p.toString()
   }
 
   const { data: ordersPage, isPending } = useQuery<AdminOrdersPage>({
-    queryKey: ['admin-orders-all', q, status, from, to, productId, page],
+    queryKey: ['admin-orders-all', q, status, from, to, productId, physicalOnly, page],
     queryFn: () =>
       api.get(`/admin/orders/all?${buildSearch()}`).then((r) => r.data),
     placeholderData: keepPreviousData,
@@ -141,7 +143,11 @@ export function AllOrdersTab() {
         t('admin.orders.allColPhone'),
         t('admin.orders.colProduct'),
         `${t('admin.orders.colAmount')} (₹)`,
+        'Order Type',
+        'Physical Delivery',
         t('admin.orders.allColStatus'),
+        'Delivery Status',
+        'Delivered At',
         t('admin.orders.allColPaymentRef'),
         t('admin.orders.allColRejection'),
         t('admin.orders.colDate'),
@@ -153,7 +159,17 @@ export function AllOrdersTab() {
         r.memberPhone,
         r.productName,
         (r.totalPaise / 100).toFixed(2),
+        r.upgradeToValuePaise
+          ? `Upgrade Payment (₹${(r.upgradeToValuePaise / 100).toLocaleString('en-IN')} tier)`
+          : r.sourceUpgradeOrderId
+          ? `Upgrade Delivery (ref #${r.sourceUpgradeOrderId})`
+          : 'Regular',
+        r.upgradeToValuePaise ? 'No' : 'Yes',
         r.status,
+        r.status === 'confirmed' && !r.upgradeToValuePaise
+          ? (r.deliveredAt ? 'Delivered' : 'Pending Delivery')
+          : '',
+        r.deliveredAt ? formatDate(r.deliveredAt) : '',
         r.paymentRef ?? '',
         r.rejectionReason ?? '',
         formatDate(r.createdAt),
@@ -179,7 +195,21 @@ export function AllOrdersTab() {
     {
       key: 'product',
       header: t('admin.orders.colProduct'),
-      render: (r) => <span className="text-sm text-ink">{r.productName}</span>,
+      render: (r) => (
+        <div>
+          <span className="text-sm text-ink">{r.productName}</span>
+          {r.upgradeToValuePaise && (
+            <span className="ml-2 text-xs font-semibold bg-warning/15 text-warning px-1.5 py-0.5 rounded">
+              Upgrade Payment
+            </span>
+          )}
+          {r.sourceUpgradeOrderId && (
+            <span className="ml-2 text-xs font-semibold bg-violet/15 text-violet px-1.5 py-0.5 rounded">
+              Upgrade Delivery #{r.sourceUpgradeOrderId}
+            </span>
+          )}
+        </div>
+      ),
     },
     {
       key: 'amount',
@@ -212,7 +242,7 @@ export function AllOrdersTab() {
       header: '',
       align: 'right',
       render: (r) => {
-        if (r.status === 'confirmed' && !r.deliveredAt) {
+        if (r.status === 'confirmed' && !r.deliveredAt && !r.upgradeToValuePaise) {
           return (
             <button
               onClick={() => handleMarkDelivered(r)}
@@ -224,7 +254,7 @@ export function AllOrdersTab() {
             </button>
           )
         }
-        if (r.status === 'confirmed' && r.deliveredAt) {
+        if (r.status === 'confirmed' && r.deliveredAt && !r.upgradeToValuePaise) {
           return (
             <button
               onClick={() => setRevertTarget(r)}
@@ -325,6 +355,16 @@ export function AllOrdersTab() {
               ))}
             </select>
           </div>
+
+          <label className="flex items-center gap-2 text-sm text-ink-muted cursor-pointer select-none pb-0.5">
+            <input
+              type="checkbox"
+              checked={physicalOnly}
+              onChange={(e) => { setPhysicalOnly(e.target.checked); setPage(1) }}
+              className="accent-primary w-4 h-4"
+            />
+            Physical deliveries only
+          </label>
         </div>
       </div>
 

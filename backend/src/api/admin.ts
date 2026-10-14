@@ -2298,9 +2298,9 @@ export async function adminRoutes(app: FastifyInstance) {
 		// rows leave it once marked.
 		let whereClause: string;
 		if (statusFilter === "delivered") {
-			whereClause = "o.status = 'confirmed' AND o.delivered_at IS NOT NULL";
+			whereClause = "o.status = 'confirmed' AND o.delivered_at IS NOT NULL AND o.upgrade_to_value_paise IS NULL";
 		} else if (statusFilter === "confirmed") {
-			whereClause = "o.status = 'confirmed' AND o.delivered_at IS NULL";
+			whereClause = "o.status = 'confirmed' AND o.delivered_at IS NULL AND o.upgrade_to_value_paise IS NULL";
 		} else {
 			whereClause = "o.status = $1";
 		}
@@ -2325,6 +2325,7 @@ export async function adminRoutes(app: FastifyInstance) {
 			payment_ref: string | null;
 			confirmed_at: string | null;
 			delivered_at: string | null;
+			source_upgrade_order_id: string | null;
 			proof_keys: string[] | null;
 			// member addr_* columns for isCompleteAddress check
 			addr_recipient_name: string | null;
@@ -2340,6 +2341,7 @@ export async function adminRoutes(app: FastifyInstance) {
 			        o.product_id, p.name AS product_name,
 			        o.total_amount, o.status, o.created_at,
 			        o.payment_ref, o.confirmed_at, o.delivered_at,
+			        o.source_upgrade_order_id,
 			        array_agg(opp.s3_key ORDER BY opp.uploaded_at)
 			          FILTER (WHERE opp.s3_key IS NOT NULL) AS proof_keys,
 			        m.addr_recipient_name, m.addr_phone, m.addr_line1,
@@ -2353,7 +2355,7 @@ export async function adminRoutes(app: FastifyInstance) {
 			   LEFT JOIN order_payment_proofs opp ON opp.order_id = o.id
 			  WHERE ${whereClause}
 			  GROUP BY o.id, m.member_code, m.name, o.product_id, p.name,
-			           o.delivered_at,
+			           o.delivered_at, o.source_upgrade_order_id,
 			           m.addr_recipient_name, m.addr_phone, m.addr_line1,
 			           m.addr_city, m.addr_state, m.addr_pincode
 			  ORDER BY o.created_at DESC
@@ -2376,6 +2378,7 @@ export async function adminRoutes(app: FastifyInstance) {
 					paymentRef: r.payment_ref ?? undefined,
 					confirmedAt: r.confirmed_at ?? undefined,
 					deliveredAt: r.delivered_at ?? undefined,
+					sourceUpgradeOrderId: r.source_upgrade_order_id ? Number(r.source_upgrade_order_id) : undefined,
 					hasDeliveryAddress: isCompleteAddress(r),
 					paymentProofKeys: keys.length > 0 ? keys : undefined,
 					paymentProofUrls: paymentProofUrls.length > 0 ? paymentProofUrls : undefined,
@@ -2829,6 +2832,7 @@ export async function adminRoutes(app: FastifyInstance) {
 			productId?: string;
 			page?: string;
 			limit?: string;
+			physicalOnly?: string;
 		};
 
 		const q = (query.q ?? "").trim();
@@ -2897,6 +2901,9 @@ export async function adminRoutes(app: FastifyInstance) {
 			baseParams.push(productId);
 			conditions.push(`o.product_id = $${baseParams.length}`);
 		}
+		if (query.physicalOnly === "true") {
+			conditions.push(`o.upgrade_to_value_paise IS NULL`);
+		}
 
 		const where =
 			conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
@@ -2926,6 +2933,8 @@ export async function adminRoutes(app: FastifyInstance) {
 			created_at: string;
 			confirmed_at: string | null;
 			delivered_at: string | null;
+			source_upgrade_order_id: string | null;
+			upgrade_to_value_paise: string | null;
 			addr_recipient_name: string | null;
 			addr_phone: string | null;
 			addr_line1: string | null;
@@ -2937,6 +2946,7 @@ export async function adminRoutes(app: FastifyInstance) {
 			        o.product_id, p.name AS product_name,
 			        o.total_amount, o.status, o.payment_ref, o.rejection_reason,
 			        o.created_at, o.confirmed_at, o.delivered_at,
+			        o.source_upgrade_order_id, o.upgrade_to_value_paise,
 			        m.addr_recipient_name, m.addr_phone, m.addr_line1,
 			        m.addr_city, m.addr_state, m.addr_pincode
 			   FROM orders o
@@ -2963,6 +2973,8 @@ export async function adminRoutes(app: FastifyInstance) {
 				createdAt: r.created_at,
 				confirmedAt: r.confirmed_at ?? undefined,
 				deliveredAt: r.delivered_at ?? undefined,
+				sourceUpgradeOrderId: r.source_upgrade_order_id ? Number(r.source_upgrade_order_id) : undefined,
+				upgradeToValuePaise: r.upgrade_to_value_paise ? Number(r.upgrade_to_value_paise) : undefined,
 				hasDeliveryAddress: isCompleteAddress(r),
 			})),
 			total,
@@ -3348,6 +3360,63 @@ export async function adminRoutes(app: FastifyInstance) {
 		}
 
 		await confirmOrder(idempotencyKey, BigInt(orderId), paymentRef);
+
+		// Auto-create confirmed delivery orders for the extra physical units.
+		// ₹30k = 3 units total (1 at activation + 2 here); ₹50k = 5 units total.
+		// base_amount = 0 — payment is already on the upgrade order above.
+		// Idempotency key is deterministic so ON CONFLICT DO NOTHING handles retries.
+		const rawOldPaise = BigInt(mRows[0].package_value_paise ?? "0");
+		const canonicalOldPaise =
+			rawOldPaise >= 5_000_000n ? 5_000_000n :
+			rawOldPaise >= 3_000_000n ? 3_000_000n :
+			1_000_000n;
+		const newUnits = targetTierPaise / 1_000_000;
+		const oldUnits = Number(canonicalOldPaise / 1_000_000n);
+		const deltaUnits = newUnits - oldUnits;
+
+		if (deltaUnits > 0) {
+			const { rows: prodRows } = await pool().query<{ id: string }>(
+				`SELECT id FROM products WHERE active = TRUE AND upgrade_target_paise IS NULL LIMIT 1`,
+			);
+			const stdProductId = prodRows[0]?.id;
+
+			const { rows: addrRows } = await pool().query<{
+				addr_recipient_name: string | null;
+				addr_phone: string | null;
+				addr_line1: string | null;
+				addr_line2: string | null;
+				addr_city: string | null;
+				addr_state: string | null;
+				addr_pincode: string | null;
+			}>(
+				`SELECT addr_recipient_name, addr_phone, addr_line1, addr_line2,
+				        addr_city, addr_state, addr_pincode
+				   FROM members WHERE id = $1`,
+				[memberId],
+			);
+			const addr = addrRows[0];
+
+			for (let i = 0; i < deltaUnits; i++) {
+				const ikey = `upgrade-delivery:${orderId}:${i}`;
+				await pool().query(
+					`INSERT INTO orders
+					   (member_id, product_id, base_amount, gst_amount, total_amount,
+					    payment_ref, idempotency_key, status, confirmed_at,
+					    source_upgrade_order_id,
+					    ship_recipient_name, ship_phone, ship_line1, ship_line2,
+					    ship_city, ship_state, ship_pincode)
+					 VALUES ($1,$2,'0.00','0.00','0.00',$3,$4,'confirmed',now(),$5,$6,$7,$8,$9,$10,$11,$12)
+					 ON CONFLICT (idempotency_key) DO NOTHING`,
+					[
+						memberId, stdProductId, paymentRef, ikey,
+						orderId,
+						addr?.addr_recipient_name, addr?.addr_phone,
+						addr?.addr_line1, addr?.addr_line2,
+						addr?.addr_city, addr?.addr_state, addr?.addr_pincode,
+					],
+				);
+			}
+		}
 
 		await pool().query(
 			`INSERT INTO admin_audit_log
