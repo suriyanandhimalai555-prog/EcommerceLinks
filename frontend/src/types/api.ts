@@ -369,6 +369,40 @@ export interface CampaignPairsRes {
   summary: CampaignPairSummary
 }
 
+// ---- admin campaign pairs report (management-only read page) ----
+export interface CampaignPairsAdminSummary {
+  totalPairs: number
+  earners: number
+  totalBonusPaise: number
+  releasedCount: number
+  releasedBonusPaise: number
+  pendingCount: number
+  pendingBonusPaise: number
+  /** Sum of AVG coins held by all members in the current view (scope + package filter). */
+  totalCoins: number
+}
+
+export interface CampaignPairsAdminRow {
+  memberId: string
+  memberCode: string
+  name: string
+  /** Canonical paise tier: 1000000 / 3000000 / 5000000. */
+  packageValuePaise: number
+  pairs: number
+  bonusPaise: number
+  releasedPaise: number
+  pendingPaise: number
+  /** Total AVG coins held (grants + adjustments). */
+  coins: number
+}
+
+export interface CampaignPairsAdminRes {
+  summary: CampaignPairsAdminSummary
+  items: CampaignPairsAdminRow[]
+  /** Offset to pass for the next page; null when this is the last page. */
+  nextOffset: number | null
+}
+
 export interface Wallet {
   balancePaise: number
   deferredPaise: number

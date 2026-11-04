@@ -3539,6 +3539,166 @@ export async function adminRoutes(app: FastifyInstance) {
 		}
 	});
 
+	// ===== Campaign pairs report (management-only read page) =====
+	// Read-only aggregate view of the campaign's parallel pair-matching engine.
+	// No audit-log write (GET, non-mutating). Safe to remove after the campaign.
+	//
+	// Query params:
+	//   scope   "pairs" (default) = only members with matched campaign pairs (INNER JOIN)
+	//           "all"             = all active package holders, even with zero pairs (LEFT JOIN)
+	//   package ""  (default, no filter) | "1000000" | "3000000" | "5000000"  — paise tier
+	app.get("/campaign/pairs", auth, async (req, reply) => {
+		const actor = req.user as { sub: string };
+		if (!(await isManagement(actor.sub)))
+			return reply.status(403).send({ error: "Management only" });
+
+		const query = req.query as {
+			limit?: string; offset?: string; scope?: string; package?: string;
+		};
+		const limit  = Math.min(100, Math.max(1, parseInt(query.limit  ?? "50", 10) || 50));
+		const offset = Math.max(0,                parseInt(query.offset ?? "0",  10) || 0);
+
+		// scope: "pairs" keeps current INNER-JOIN behaviour; "all" LEFT-JOINs from members
+		const scope: "pairs" | "all" = query.scope === "all" ? "all" : "pairs";
+
+		// Package filter — canonical paise tiers only; 0 = no filter (passed as $1/$3)
+		const VALID_PKGS = new Set(["1000000", "3000000", "5000000"]);
+		const pkg = VALID_PKGS.has(query.package ?? "") ? Number(query.package) : 0;
+
+		// Coins expression: mirrors coinService.getMemberCoins — no extra GROUP BY needed
+		// because m.id is in GROUP BY and PostgreSQL evaluates scalar subqueries per-group.
+		const coinsExpr = `
+			(SELECT COALESCE(SUM(g.coins), 0) FROM avg_coin_grants  g WHERE g.member_id = m.id) +
+			(SELECT COALESCE(SUM(a.delta),  0) FROM coin_adjustments a WHERE a.member_id = m.id)`;
+
+		type SummaryRow = {
+			total_pairs: string; earners: string; total_bonus: string;
+			released_count: string; released_bonus: string;
+			pending_count: string; pending_bonus: string; total_coins: string;
+		};
+		type ItemRow = {
+			member_id: string; member_code: string; name: string;
+			package_value_paise: string; pairs: string;
+			total_bonus: string; released_bonus: string; pending_bonus: string; coins: string;
+		};
+
+		const [summaryRes, itemsRes] = await Promise.all([
+			// ── Summary ────────────────────────────────────────────────────────
+			scope === "pairs"
+				? pool().query<SummaryRow>(
+					`SELECT
+					   COUNT(*)                                                             AS total_pairs,
+					   COUNT(DISTINCT cpa.beneficiary_id)                                  AS earners,
+					   COALESCE(SUM(cpa.amount), 0)                                        AS total_bonus,
+					   COUNT(*) FILTER (WHERE cpa.status = 'released')                     AS released_count,
+					   COALESCE(SUM(cpa.amount) FILTER (WHERE cpa.status = 'released'), 0) AS released_bonus,
+					   COUNT(*) FILTER (WHERE cpa.status = 'pending')                      AS pending_count,
+					   COALESCE(SUM(cpa.amount) FILTER (WHERE cpa.status = 'pending'), 0)  AS pending_bonus,
+					   COALESCE((
+					     SELECT SUM(
+					       (SELECT COALESCE(SUM(g.coins), 0) FROM avg_coin_grants  g WHERE g.member_id = earner.id) +
+					       (SELECT COALESCE(SUM(a.delta),  0) FROM coin_adjustments a WHERE a.member_id = earner.id)
+					     )
+					     FROM (
+					       SELECT DISTINCT cpa2.beneficiary_id AS id
+					         FROM campaign_pair_accruals cpa2
+					         JOIN members m2 ON m2.id = cpa2.beneficiary_id
+					        WHERE ($1::bigint = 0 OR m2.package_value_paise = $1::bigint)
+					     ) AS earner
+					   ), 0) AS total_coins
+					 FROM campaign_pair_accruals cpa
+					 JOIN members m ON m.id = cpa.beneficiary_id
+					WHERE ($1::bigint = 0 OR m.package_value_paise = $1::bigint)`,
+					[pkg],
+				  )
+				: pool().query<SummaryRow>(
+					`SELECT
+					   COUNT(cpa.campaign_pair_id)                                                              AS total_pairs,
+					   COUNT(DISTINCT cpa.beneficiary_id)                                                       AS earners,
+					   COALESCE(SUM(cpa.amount), 0)                                                             AS total_bonus,
+					   COUNT(cpa.campaign_pair_id) FILTER (WHERE cpa.status = 'released')                       AS released_count,
+					   COALESCE(SUM(cpa.amount) FILTER (WHERE cpa.status = 'released'), 0)                      AS released_bonus,
+					   COUNT(cpa.campaign_pair_id) FILTER (WHERE cpa.status = 'pending')                        AS pending_count,
+					   COALESCE(SUM(cpa.amount) FILTER (WHERE cpa.status = 'pending'), 0)                       AS pending_bonus,
+					   COALESCE(SUM(
+					     (SELECT COALESCE(SUM(g.coins), 0) FROM avg_coin_grants  g WHERE g.member_id = m.id) +
+					     (SELECT COALESCE(SUM(a.delta),  0) FROM coin_adjustments a WHERE a.member_id = m.id)
+					   ), 0) AS total_coins
+					 FROM members m
+					 LEFT JOIN campaign_pair_accruals cpa ON cpa.beneficiary_id = m.id
+					WHERE m.package_value_paise >= 3000000
+					  AND ($1::bigint = 0 OR m.package_value_paise = $1::bigint)`,
+					[pkg],
+				  ),
+
+			// ── Items ──────────────────────────────────────────────────────────
+			scope === "pairs"
+				? pool().query<ItemRow>(
+					`SELECT cpa.beneficiary_id   AS member_id,
+					        m.member_code,
+					        m.name,
+					        m.package_value_paise,
+					        COUNT(*)             AS pairs,
+					        COALESCE(SUM(cpa.amount), 0)                                        AS total_bonus,
+					        COALESCE(SUM(cpa.amount) FILTER (WHERE cpa.status = 'released'), 0) AS released_bonus,
+					        COALESCE(SUM(cpa.amount) FILTER (WHERE cpa.status = 'pending'),  0) AS pending_bonus,
+					        ${coinsExpr}                                                         AS coins
+					   FROM campaign_pair_accruals cpa
+					   JOIN members m ON m.id = cpa.beneficiary_id
+					  WHERE ($3::bigint = 0 OR m.package_value_paise = $3::bigint)
+					  GROUP BY cpa.beneficiary_id, m.id, m.member_code, m.name, m.package_value_paise
+					  ORDER BY COUNT(*) DESC, cpa.beneficiary_id
+					  LIMIT $1 OFFSET $2`,
+					[limit, offset, pkg],
+				  )
+				: pool().query<ItemRow>(
+					`SELECT m.id                 AS member_id,
+					        m.member_code,
+					        m.name,
+					        m.package_value_paise,
+					        COUNT(cpa.campaign_pair_id)                                           AS pairs,
+					        COALESCE(SUM(cpa.amount), 0)                                          AS total_bonus,
+					        COALESCE(SUM(cpa.amount) FILTER (WHERE cpa.status = 'released'), 0)   AS released_bonus,
+					        COALESCE(SUM(cpa.amount) FILTER (WHERE cpa.status = 'pending'),  0)   AS pending_bonus,
+					        ${coinsExpr}                                                           AS coins
+					   FROM members m
+					   LEFT JOIN campaign_pair_accruals cpa ON cpa.beneficiary_id = m.id
+					  WHERE m.package_value_paise >= 3000000
+					    AND ($3::bigint = 0 OR m.package_value_paise = $3::bigint)
+					  GROUP BY m.id, m.member_code, m.name, m.package_value_paise
+					  ORDER BY coins DESC, COUNT(cpa.campaign_pair_id) DESC, m.id
+					  LIMIT $1 OFFSET $2`,
+					[limit, offset, pkg],
+				  ),
+		]);
+
+		const s = summaryRes.rows[0];
+		return {
+			summary: {
+				totalPairs:       Number(s.total_pairs),
+				earners:          Number(s.earners),
+				totalBonusPaise:  Number(toPaise(s.total_bonus)),
+				releasedCount:    Number(s.released_count),
+				releasedBonusPaise: Number(toPaise(s.released_bonus)),
+				pendingCount:     Number(s.pending_count),
+				pendingBonusPaise: Number(toPaise(s.pending_bonus)),
+				totalCoins:       Number(s.total_coins),
+			},
+			items: itemsRes.rows.map((r) => ({
+				memberId:         r.member_id,
+				memberCode:       r.member_code,
+				name:             r.name,
+				packageValuePaise: Number(r.package_value_paise),
+				pairs:            Number(r.pairs),
+				bonusPaise:       Number(toPaise(r.total_bonus)),
+				releasedPaise:    Number(toPaise(r.released_bonus)),
+				pendingPaise:     Number(toPaise(r.pending_bonus)),
+				coins:            Number(r.coins),
+			})),
+			nextOffset: itemsRes.rows.length === limit ? offset + limit : null,
+		};
+	});
+
 	// ===== Earnings overview (management-only read pages) =====
 
 	// GET /admin/cutoffs — list cutoff windows for the week selector on the earnings export
