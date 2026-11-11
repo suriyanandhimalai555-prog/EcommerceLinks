@@ -74,7 +74,7 @@ export const CFG = {
 	// AVG Coin Airdrop campaign window (ISO with +05:30 offset for Asia/Kolkata).
 	// Override via env vars to extend/close the window without redeploy.
 	CAMPAIGN_START_ISO: env("CAMPAIGN_START_ISO", "2026-10-02T00:00:00+05:30"),
-	CAMPAIGN_END_ISO:   env("CAMPAIGN_END_ISO",   "2026-11-10T23:59:59+05:30"),
+	CAMPAIGN_END_ISO:   env("CAMPAIGN_END_ISO",   "2026-11-11T23:59:59+05:30"),
 	// Package value paise thresholds and corresponding coin awards.
 	CAMPAIGN_TIER_30K_PAISE: 3000000,
 	CAMPAIGN_TIER_50K_PAISE: 5000000,
